@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.venv/
+env/
+
+# Node/Svelte
+node_modules/
+web/dist/
+web/.svelte-kit/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.pem
+*.key
+*.crt
+
+# Claude Comms runtime
+*.log
+*.jsonl
+notifications/
+state/
+locks/
+
+# OS
+Thumbs.db
+.DS_Store
