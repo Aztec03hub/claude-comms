@@ -7,54 +7,40 @@ const MOCKUPS = join(__dirname, '..', 'mockups');
 
 async function run() {
   const browser = await chromium.launch({ headless: true });
-  // Clear browser cache
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
-    bypassCSP: true,
-  });
-  const page = await context.newPage();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const logs = [];
   page.on('console', msg => logs.push(`[${msg.type()}] ${msg.text()}`));
 
-  // Use cache buster
-  console.log('Loading page with cache bust...');
-  await page.goto('http://localhost:5173/?t=' + Date.now(), { waitUntil: 'networkidle' });
-  await page.waitForTimeout(5000);
+  await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
 
-  // Check what version of the store is loaded
-  const hasSpreadFix = await page.evaluate(async () => {
-    const res = await fetch('/src/lib/mqtt-store.svelte.js');
-    const text = await res.text();
-    return text.includes('spread assignment');
-  });
-  console.log('Store has spread fix:', hasSpreadFix);
+  // Wait much longer for retained message flood to clear
+  console.log('Waiting 15s for retained messages to clear...');
+  await page.waitForTimeout(15000);
 
-  // Signal ready
+  // NOW signal ready (after retained flood is done)
   writeFileSync(join(__dirname, '..', '.crosstest-ready'), 'ready');
-  console.log('Signaled ready...');
+  console.log('Signaled ready. Waiting for MCP message...');
 
-  // Wait for messages
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 30; i++) {
     await page.waitForTimeout(1000);
     const cnt = await page.locator('.msg-row').count();
-    if (i % 3 === 0) console.log(`[${i+1}s] msg-rows: ${cnt}`);
+    if (i % 5 === 0) {
+      const chatMsgs = logs.filter(l => l.includes('conv/general/messages'));
+      console.log(`[${i+1}s] msg-rows: ${cnt}, MQTT chat msgs: ${chatMsgs.length}`);
+    }
     if (cnt > 0) {
       console.log(`Messages appeared at ${i+1}s!`);
       break;
     }
   }
 
-  // Check MQTT message debug logs
+  await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
+
+  // Print chat message logs
   const chatMsgs = logs.filter(l => l.includes('conv/general/messages'));
-  console.log(`\nMQTT chat messages received: ${chatMsgs.length}`);
+  console.log('\nChat message logs:', chatMsgs.length);
   chatMsgs.forEach(l => console.log('  ' + l));
 
-  // Check for handleChatMessage logs
-  const handleLogs = logs.filter(l => l.includes('handleChatMessage') || l.includes('pushed'));
-  console.log(`handleChatMessage logs: ${handleLogs.length}`);
-  handleLogs.forEach(l => console.log('  ' + l));
-
-  await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
   await browser.close();
 }
 run().catch(console.error);

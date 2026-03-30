@@ -275,10 +275,26 @@ class ClaudeCommsApp(App):
         key = data.get("key", "")
         if not key:
             return
+
+        status = data.get("status", "offline")
+
+        # Skip offline presence — don't track disconnected strangers.
+        # This prevents phantom participants from stale retained LWT messages.
+        if status == "offline":
+            # If we already have this participant, remove them
+            client_type = data.get("client", "unknown")
+            participant_key = f"{key}-{client_type}"
+            participant_list = self.query_one("#participant-sidebar", ParticipantList)
+            participant_list.remove_participant(participant_key)
+            return
+
         name = data.get("name", "") or f"user-{key}"
         ptype = data.get("type", "claude")
-        status = data.get("status", "offline")
         client_type = data.get("client", "unknown")
+
+        # Skip our own presence from the same client type
+        if key == self._key and client_type == "tui":
+            return
 
         # Use key-client as the participant map key so the same person
         # on different clients shows as separate entries.
