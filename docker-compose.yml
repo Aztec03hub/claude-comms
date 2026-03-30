@@ -1,0 +1,16 @@
+services:
+  claude-comms:
+    build: .
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+      - "9920:9920"
+      - "9921:9921"
+    volumes:
+      - comms-data:/root/.claude-comms
+    environment:
+      - CLAUDE_COMMS_PASSWORD=${CLAUDE_COMMS_PASSWORD:-changeme}
+    restart: unless-stopped
+
+volumes:
+  comms-data:

@@ -144,3 +144,86 @@ class FailingPublish:
 def failing_publish() -> FailingPublish:
     """Async publish callable that simulates broker failure."""
     return FailingPublish()
+
+
+# ---------------------------------------------------------------------------
+# E2E / Integration fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tmp_comms_dir(tmp_path: Path) -> Path:
+    """Temporary ~/.claude-comms/ directory structure.
+
+    Creates logs/, notifications/, and returns the base directory.
+    Useful for integration and E2E tests that need the full directory layout.
+    """
+    comms_dir = tmp_path / ".claude-comms"
+    comms_dir.mkdir()
+    (comms_dir / "logs").mkdir()
+    (comms_dir / "notifications").mkdir()
+    return comms_dir
+
+
+@pytest.fixture
+def e2e_config(tmp_comms_dir: Path) -> dict[str, Any]:
+    """Full config dict with temp directories for E2E tests.
+
+    Points logging.dir and other paths at the tmp_comms_dir to avoid
+    touching the real filesystem.
+    """
+    return {
+        "identity": {
+            "key": "e2e00001",
+            "name": "e2e-test",
+            "type": "human",
+        },
+        "broker": {
+            "mode": "host",
+            "host": "127.0.0.1",
+            "port": 1883,
+            "ws_host": "127.0.0.1",
+            "ws_port": 9001,
+            "auth": {
+                "enabled": False,
+                "username": "",
+                "password": "",
+            },
+        },
+        "mcp": {
+            "host": "127.0.0.1",
+            "port": 9920,
+            "auto_join": ["general"],
+        },
+        "web": {
+            "enabled": False,
+            "port": 9921,
+        },
+        "notifications": {
+            "hook_enabled": False,
+            "sound_enabled": False,
+        },
+        "logging": {
+            "dir": str(tmp_comms_dir / "logs"),
+            "format": "both",
+            "max_messages_replay": 1000,
+            "rotation": {"max_size_mb": 50, "max_files": 10},
+        },
+        "default_conversation": "general",
+    }
+
+
+@pytest.fixture
+def log_exporter_instance(tmp_comms_dir: Path) -> "LogExporter":
+    """Configured LogExporter with temp directories for testing.
+
+    Writes both .log and .jsonl formats to the tmp_comms_dir/logs/ directory.
+    """
+    from claude_comms.log_exporter import LogExporter
+
+    return LogExporter(
+        log_dir=tmp_comms_dir / "logs",
+        fmt="both",
+        max_size_mb=50,
+        max_files=10,
+    )
