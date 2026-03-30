@@ -133,12 +133,12 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
 
 def _resolve_password(config: dict[str, Any]) -> dict[str, Any]:
-    """Apply the password resolution chain.
+    """Apply the password resolution chain and return the updated config.
 
     Priority:
-    1. CLAUDE_COMMS_PASSWORD environment variable
-    2. YAML config broker.auth.password
-    3. Warn if both empty and auth is enabled
+    1. ``CLAUDE_COMMS_PASSWORD`` environment variable (highest)
+    2. ``broker.auth.password`` from YAML config
+    3. Emits a warning if both are empty and auth is enabled
     """
     env_password = os.environ.get(_ENV_PASSWORD_VAR, "")
 

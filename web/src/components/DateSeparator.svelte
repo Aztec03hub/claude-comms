@@ -8,7 +8,7 @@
 
 <div class="msg-row system" data-testid="date-separator" role="separator" aria-label="{label}">
   <div class="system-msg">
-    <span>
+    <span title="{new Date(ts).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}">
       <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity: 0.5;" aria-hidden="true"><circle cx="6" cy="6" r="5"/><path d="M6 3v3l2 1"/></svg>
       {label}
     </span>

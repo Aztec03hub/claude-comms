@@ -2,7 +2,7 @@
   let { count = 0 } = $props();
 </script>
 
-<div class="read-receipt">
+<div class="read-receipt" title="Read by {count} {count === 1 ? 'person' : 'people'}">
   <svg width="14" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
     <path d="M1 5l3 3 7-7"/>
     <path d="M4 5l3 3 7-7" opacity=".5"/>

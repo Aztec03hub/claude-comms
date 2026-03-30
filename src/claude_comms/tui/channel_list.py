@@ -1,7 +1,8 @@
-"""Channel list sidebar widget with unread badges.
+"""Channel list sidebar widget with unread badges and message previews.
 
 Displays a vertical list of conversation channels. The active channel
-is highlighted. Channels with unread messages show an amber badge count.
+is highlighted with a warm ember background. Channels with unread messages
+show an amber badge count. Each channel shows a preview of the last message.
 """
 
 from __future__ import annotations
@@ -23,18 +24,19 @@ class ChannelSelected(TMessage):
 
 
 class ChannelItem(Widget):
-    """A single channel entry in the sidebar."""
+    """A single channel entry in the sidebar with unread badge and preview."""
 
     DEFAULT_CSS = """
     ChannelItem {
-        height: 3;
+        height: auto;
+        min-height: 2;
+        max-height: 4;
         padding: 0 1;
-        layout: horizontal;
+        layout: vertical;
         color: #8a8a8a;
-        content-align: left middle;
     }
     ChannelItem:hover {
-        background: #2c2c2e;
+        background: #262628;
         color: #e8e4df;
     }
     ChannelItem.--active {
@@ -42,33 +44,64 @@ class ChannelItem(Widget):
         color: #d97706;
         text-style: bold;
     }
+    ChannelItem.--muted {
+        color: #555555;
+    }
     """
 
     is_active: reactive[bool] = reactive(False)
     unread_count: reactive[int] = reactive(0)
+    is_muted: reactive[bool] = reactive(False)
 
     def __init__(self, conv_id: str, **kwargs) -> None:
         super().__init__(**kwargs)
         self.conv_id = conv_id
-        self._name_label = Label(f"# {conv_id}", classes="channel-name-label")
-        self._badge = Label("", classes="unread-badge")
+        self._header_label = Label("", classes="channel-header-row")
+        self._preview_label = Label("", classes="channel-preview")
 
     def compose(self) -> ComposeResult:
-        yield self._name_label
-        yield self._badge
+        yield self._header_label
+        yield self._preview_label
+
+    def on_mount(self) -> None:
+        self._refresh_header()
+        self._preview_label.display = False
 
     def watch_is_active(self, active: bool) -> None:
         """Toggle the --active CSS class."""
         self.set_class(active, "--active")
 
+    def watch_is_muted(self, muted: bool) -> None:
+        """Toggle the --muted CSS class."""
+        self.set_class(muted, "--muted")
+        self._refresh_header()
+
     def watch_unread_count(self, count: int) -> None:
-        """Update the unread badge display."""
-        if count > 0:
-            self._badge.update(str(count) if count < 100 else "99+")
-            self._badge.display = True
-        else:
-            self._badge.update("")
-            self._badge.display = False
+        """Update the header display with badge."""
+        self._refresh_header()
+
+    def _refresh_header(self) -> None:
+        """Rebuild the header line with channel name, mute indicator, and badge."""
+        mute_icon = " \U0001f515" if self.is_muted else ""
+        badge = ""
+        if self.unread_count > 0:
+            badge_text = str(self.unread_count) if self.unread_count < 100 else "99+"
+            badge = f" [{badge_text}]"
+        self._header_label.update(f"# {self.conv_id}{mute_icon}{badge}")
+
+    def set_preview(self, sender: str, text: str) -> None:
+        """Set the last message preview text."""
+        # Truncate to fit sidebar
+        preview = f"{sender}: {text}"
+        if len(preview) > 22:
+            preview = preview[:20] + "\u2026"
+        self._preview_label.update(preview)
+        self._preview_label.display = True
+
+    def clear_preview(self) -> None:
+        """Hide the preview label."""
+        self._preview_label.update("")
+        self._preview_label.display = False
 
     def on_click(self) -> None:
         """Post a ChannelSelected message when clicked."""
@@ -80,10 +113,20 @@ class ChannelList(Vertical):
 
     DEFAULT_CSS = """
     ChannelList {
-        width: 24;
+        width: 26;
         dock: left;
-        background: #1c1c1e;
-        border-right: solid #2c2c2e;
+        background: #1a1a1c;
+        border-right: tall #2a2017;
+    }
+    .channel-header-row {
+        height: 1;
+        color: inherit;
+    }
+    .channel-preview {
+        height: 1;
+        color: #555555;
+        text-style: italic;
+        padding: 0 0 0 2;
     }
     """
 
@@ -132,6 +175,16 @@ class ChannelList(Vertical):
         """Reset the unread count (user switched to this channel)."""
         if conv_id in self._items:
             self._items[conv_id].unread_count = 0
+
+    def set_channel_preview(self, conv_id: str, sender: str, text: str) -> None:
+        """Update the last message preview for a channel."""
+        if conv_id in self._items:
+            self._items[conv_id].set_preview(sender, text)
+
+    def set_channel_muted(self, conv_id: str, muted: bool) -> None:
+        """Toggle the muted state for a channel."""
+        if conv_id in self._items:
+            self._items[conv_id].is_muted = muted
 
     def on_channel_item_channel_selected(self, event: ChannelSelected) -> None:
         """Bubble channel selection up — handled by the app."""

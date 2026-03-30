@@ -2,7 +2,7 @@
   let { domain = '', title = '', description = '' } = $props();
 </script>
 
-<div class="link-preview">
+<div class="link-preview" title="{domain} — {title}">
   <div class="link-preview-domain">{domain}</div>
   <div class="link-preview-title">{title}</div>
   {#if description}

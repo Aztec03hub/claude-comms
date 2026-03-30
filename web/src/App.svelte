@@ -456,7 +456,7 @@
     font-family: inherit;
   }
 
-  .header-members svg { opacity: 0.7; }
+  .header-members :global(svg) { opacity: 0.7; }
 
   .header-members:hover {
     border-color: var(--ember-700);

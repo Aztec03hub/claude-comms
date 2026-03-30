@@ -43,7 +43,7 @@
   <div class="search-panel-header">
     <div class="search-panel-top">
       <span class="search-panel-title">Search Messages</span>
-      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close" aria-label="Close search panel"><X size={16} strokeWidth={2} /></button>
+      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close" title="Close search" aria-label="Close search panel"><X size={16} strokeWidth={2} /></button>
     </div>
     <label for="search-panel-input-field" class="sr-only">Search messages</label>
     <input
@@ -63,6 +63,7 @@
           class:active={activeFilter === filter.toLowerCase()}
           onclick={() => activeFilter = filter.toLowerCase()}
           data-testid="search-filter-{filter.toLowerCase()}"
+          title="Filter by {filter.toLowerCase()}"
         >{filter}</button>
       {/each}
     </div>

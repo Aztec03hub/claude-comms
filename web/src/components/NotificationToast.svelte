@@ -21,7 +21,7 @@
     </div>
     <div class="toast-text">{text}</div>
   </div>
-  <button class="toast-close" onclick={dismiss} data-testid="toast-close" aria-label="Dismiss notification">&times;</button>
+  <button class="toast-close" onclick={dismiss} data-testid="toast-close" title="Dismiss" aria-label="Dismiss notification">&times;</button>
 </div>
 
 <style>

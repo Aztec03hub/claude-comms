@@ -17,9 +17,19 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
+from claude_comms.broker import MessageStore
 from claude_comms.mention import build_mention_prefix
 from claude_comms.message import Message, now_iso, validate_conv_id
 from claude_comms.participant import Participant, validate_key, validate_name
+
+# Type alias for the async MQTT publish callback
+from typing import Protocol
+
+
+class PublishFn(Protocol):
+    """Async callable that publishes a message to an MQTT topic."""
+
+    async def __call__(self, topic: str, payload: bytes) -> None: ...
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +296,7 @@ def tool_comms_leave(
 
 async def tool_comms_send(
     registry: ParticipantRegistry,
-    publish_fn: Any,  # async callable(topic, payload)
+    publish_fn: PublishFn,
     *,
     key: str,
     conversation: str,
@@ -355,7 +365,7 @@ async def tool_comms_send(
 
 def tool_comms_read(
     registry: ParticipantRegistry,
-    store: Any,  # MessageStore
+    store: MessageStore,
     *,
     key: str,
     conversation: str,
@@ -413,7 +423,7 @@ def tool_comms_read(
 
 def tool_comms_check(
     registry: ParticipantRegistry,
-    store: Any,  # MessageStore
+    store: MessageStore,
     *,
     key: str,
     conversation: str | None = None,
@@ -478,7 +488,7 @@ def tool_comms_members(
 
 def tool_comms_conversations(
     registry: ParticipantRegistry,
-    store: Any,  # MessageStore
+    store: MessageStore,
     *,
     key: str,
 ) -> dict[str, Any]:
@@ -531,7 +541,7 @@ def tool_comms_update_name(
 
 def tool_comms_history(
     registry: ParticipantRegistry,
-    store: Any,  # MessageStore
+    store: MessageStore,
     *,
     key: str,
     conversation: str,

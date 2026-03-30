@@ -15,7 +15,7 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -43,7 +43,7 @@ _PID_FILE = _DATA_DIR / "daemon.pid"
 _LOG_DIR = _DATA_DIR / "logs"
 
 
-def _require_config() -> dict:
+def _require_config() -> dict[str, Any]:
     """Load config, exiting with a helpful message if not initialised."""
     config_path = get_config_path()
     if not config_path.exists():

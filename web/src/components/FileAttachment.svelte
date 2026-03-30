@@ -24,7 +24,7 @@
   }
 </script>
 
-<div class="file-attachment" onclick={triggerDownload} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') triggerDownload(); }} role="button" tabindex="0" aria-label="Download {name}">
+<div class="file-attachment" onclick={triggerDownload} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') triggerDownload(); }} role="button" tabindex="0" title="{name} ({type.toUpperCase()}, {size})" aria-label="Download {name}">
   <div class="file-icon {iconClass}">
     <File size={18} strokeWidth={2} />
   </div>
@@ -36,7 +36,7 @@
       <span>{size}</span>
     </div>
   </div>
-  <button class="file-download" onclick={handleDownload} data-testid="file-download" aria-label="Download {name}">
+  <button class="file-download" onclick={handleDownload} data-testid="file-download" title="Download {name}" aria-label="Download {name}">
     <Download size={14} strokeWidth={2} />
   </button>
 </div>

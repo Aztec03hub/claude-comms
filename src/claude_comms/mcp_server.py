@@ -30,6 +30,7 @@ from claude_comms.broker import MessageDeduplicator, MessageStore, replay_jsonl_
 from claude_comms.config import load_config
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
+    PublishFn,
     tool_comms_check,
     tool_comms_conversations,
     tool_comms_history,
@@ -50,7 +51,7 @@ logger = logging.getLogger(__name__)
 _registry: ParticipantRegistry | None = None
 _store: MessageStore | None = None
 _deduplicator: MessageDeduplicator | None = None
-_publish_fn: Any = None  # async (topic, payload) -> None
+_publish_fn: PublishFn | None = None
 _config: dict[str, Any] | None = None
 
 
