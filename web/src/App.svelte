@@ -16,6 +16,7 @@
   import SearchPanel from './components/SearchPanel.svelte';
   import ThreadPanel from './components/ThreadPanel.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
+  import UserProfileView from './components/UserProfileView.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
   import { Users, Search, Pin, Settings } from 'lucide-svelte';
 
@@ -43,6 +44,8 @@
   let showSettingsPanel = $state(false);
   let showDeleteConfirm = $state(false);
   let deleteTarget = $state(null);
+  let showUserProfileView = $state(false);
+  let userProfileTarget = $state(null);
 
   // Connect on mount
   $effect(() => {

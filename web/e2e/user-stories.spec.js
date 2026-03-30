@@ -215,8 +215,8 @@ test.describe('User Stories', () => {
   test('Story 2: Team Discussion', async ({ page }) => {
     // Send first message
     await sendMessage('Hey, what learning rate should we use?');
-    const firstBubble = await getText('.bubble');
-    expect(firstBubble).toContain('what learning rate');
+    const firstBubbleText = await getText('.bubble');
+    expect(firstBubbleText).toContain('what learning rate');
 
     // Send second message
     await sendMessage('I was thinking 1e-4');
@@ -502,9 +502,10 @@ test.describe('User Stories', () => {
     // Click a member to open profile card
     // With mocked WebSocket, the member list uses the store's participants
     // Check for member items or user avatar in sidebar as fallback
-    const hasMemberItems = await exists('[data-testid^="member-"]');
+    // Use a more specific selector that excludes member-list itself
+    const hasMemberItems = await ce(`!!document.querySelector('[data-testid^="member-"]:not([data-testid="member-list"]):not([data-testid="members-online-section"]):not([data-testid="members-offline-section"])')`);
     if (hasMemberItems) {
-      await clickEl('[data-testid^="member-"]');
+      await clickEl('[data-testid^="member-"]:not([data-testid="member-list"]):not([data-testid="members-online-section"]):not([data-testid="members-offline-section"])');
       await delay(400);
 
       const profileCard = await exists('[data-testid="profile-card"]');
