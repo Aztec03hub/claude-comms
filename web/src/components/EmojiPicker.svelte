@@ -3,36 +3,36 @@
 
   let searchQuery = $state('');
   let activeCategory = $state('frequent');
-  let previewEmoji = $state({ emoji: '\uD83D\uDC4D', name: 'Thumbs Up', code: ':thumbsup:' });
+  let previewEmoji = $state({ emoji: '👍', name: 'Thumbs Up', code: ':thumbsup:' });
 
   const categories = [
-    { id: 'frequent', icon: '\uD83D\uDD53', label: 'Frequently used' },
-    { id: 'smileys', icon: '\uD83D\uDE00', label: 'Smileys' },
-    { id: 'people', icon: '\uD83D\uDC4B', label: 'People' },
-    { id: 'nature', icon: '\uD83C\uDF31', label: 'Nature' },
-    { id: 'food', icon: '\uD83C\uDF55', label: 'Food' },
-    { id: 'activities', icon: '\u26BD', label: 'Activities' },
-    { id: 'objects', icon: '\uD83D\uDCA1', label: 'Objects' },
-    { id: 'symbols', icon: '\u2764\uFE0F', label: 'Symbols' },
+    { id: 'frequent', icon: '🕓', label: 'Frequently used' },
+    { id: 'smileys', icon: '😀', label: 'Smileys' },
+    { id: 'people', icon: '👋', label: 'People' },
+    { id: 'nature', icon: '🌱', label: 'Nature' },
+    { id: 'food', icon: '🍕', label: 'Food' },
+    { id: 'activities', icon: '⚽', label: 'Activities' },
+    { id: 'objects', icon: '💡', label: 'Objects' },
+    { id: 'symbols', icon: '❤️', label: 'Symbols' },
   ];
 
   const frequentEmojis = [
-    { emoji: '\uD83D\uDC4D', name: 'Thumbs Up', code: ':thumbsup:' },
-    { emoji: '\uD83D\uDC4E', name: 'Thumbs Down', code: ':thumbsdown:' },
-    { emoji: '\u2764\uFE0F', name: 'Red Heart', code: ':heart:' },
-    { emoji: '\uD83D\uDE02', name: 'Joy', code: ':joy:' },
-    { emoji: '\uD83D\uDC40', name: 'Eyes', code: ':eyes:' },
-    { emoji: '\u26A1', name: 'Zap', code: ':zap:' },
-    { emoji: '\uD83C\uDF89', name: 'Party', code: ':tada:' },
-    { emoji: '\uD83D\uDE80', name: 'Rocket', code: ':rocket:' },
-    { emoji: '\uD83D\uDD25', name: 'Fire', code: ':fire:' },
-    { emoji: '\u2B50', name: 'Star', code: ':star:' },
-    { emoji: '\uD83D\uDCAF', name: '100', code: ':100:' },
-    { emoji: '\u2705', name: 'Check', code: ':white_check_mark:' },
-    { emoji: '\uD83D\uDE4F', name: 'Pray', code: ':pray:' },
-    { emoji: '\uD83E\uDD14', name: 'Thinking', code: ':thinking:' },
-    { emoji: '\uD83D\uDE4C', name: 'Raised Hands', code: ':raised_hands:' },
-    { emoji: '\uD83D\uDC4C', name: 'OK Hand', code: ':ok_hand:' },
+    { emoji: '👍', name: 'Thumbs Up', code: ':thumbsup:' },
+    { emoji: '👎', name: 'Thumbs Down', code: ':thumbsdown:' },
+    { emoji: '❤️', name: 'Red Heart', code: ':heart:' },
+    { emoji: '😂', name: 'Joy', code: ':joy:' },
+    { emoji: '👀', name: 'Eyes', code: ':eyes:' },
+    { emoji: '⚡', name: 'Zap', code: ':zap:' },
+    { emoji: '🎉', name: 'Party', code: ':tada:' },
+    { emoji: '🚀', name: 'Rocket', code: ':rocket:' },
+    { emoji: '🔥', name: 'Fire', code: ':fire:' },
+    { emoji: '⭐', name: 'Star', code: ':star:' },
+    { emoji: '💯', name: '100', code: ':100:' },
+    { emoji: '✅', name: 'Check', code: ':white_check_mark:' },
+    { emoji: '🙏', name: 'Pray', code: ':pray:' },
+    { emoji: '🤔', name: 'Thinking', code: ':thinking:' },
+    { emoji: '🙌', name: 'Raised Hands', code: ':raised_hands:' },
+    { emoji: '👌', name: 'OK Hand', code: ':ok_hand:' },
   ];
 
   function selectEmoji(emojiData) {

@@ -118,9 +118,8 @@
 <style>
   .input-area {
     padding: 12px 22px 18px;
-    background: rgba(14,14,16,0.85);
-    backdrop-filter: blur(16px) saturate(1.2);
-    box-shadow: 0 -2px 12px rgba(0,0,0,0.15);
+    border-top: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-base) 0%, #0e0e10 100%);
     position: relative;
     z-index: 2;
   }

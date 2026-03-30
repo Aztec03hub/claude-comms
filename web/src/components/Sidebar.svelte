@@ -23,13 +23,13 @@
 
   <div class="search-wrap">
     <input class="search-input" type="text" placeholder="Search conversations..." data-testid="sidebar-search">
-    <span class="search-kbd">\u2318K</span>
+    <span class="search-kbd">⌘K</span>
   </div>
 
   {#if store.starredChannels.length > 0}
     <div class="section-label" class:collapsed={starredCollapsed} data-testid="sidebar-starred-section">
-      <span class="star">\u2605</span> Starred
-      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle">\u25BE</button>
+      <span class="star">★</span> Starred
+      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle">▾</button>
     </div>
     {#if !starredCollapsed}
       <div class="channel-list" style="flex: none;">
@@ -66,7 +66,7 @@
 
   <div class="section-label" class:collapsed={convoCollapsed} data-testid="sidebar-conversations-section">
     Conversations
-    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle">\u25BE</button>
+    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle">▾</button>
   </div>
   {#if !convoCollapsed}
     <div class="channel-list">

@@ -113,7 +113,7 @@
   .msg-row.human { align-self: flex-end; flex-direction: row-reverse; }
   .msg-row.has-code { max-width: 80%; }
 
-  .msg-row + :global(.msg-row:not(.consecutive)) { margin-top: 14px; }
+  .msg-row + :global(.msg-row:not(.consecutive)) { margin-top: 12px; }
 
   .msg-row.consecutive.claude { padding-left: 52px; }
   .msg-row.consecutive.human { padding-right: 52px; }
@@ -194,15 +194,18 @@
     background: var(--bg-bubble-claude);
     border: 1px solid var(--border);
     border-radius: 4px 14px 14px 14px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.08);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
   }
 
   .msg-row.human .bubble {
     background: var(--bg-bubble-human);
     border: 1px solid rgba(180,83,9,0.2);
     border-radius: 14px 4px 14px 14px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.08), inset 0 0 24px rgba(245,158,11,0.015);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15), inset 0 0 20px rgba(245,158,11,0.02);
   }
+
+  .msg-row.consecutive.claude .bubble { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+  .msg-row.consecutive.human .bubble { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
 
   .mention {
     background: rgba(245,158,11,0.12);

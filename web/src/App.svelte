@@ -301,7 +301,7 @@
   .header-name {
     font-size: 15px;
     font-weight: 700;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.2px;
   }
 
   .header-sep {
@@ -331,6 +331,8 @@
     transition: var(--transition-fast);
     font-family: inherit;
   }
+
+  .header-members svg { opacity: 0.7; }
 
   .header-members:hover {
     border-color: var(--ember-700);
