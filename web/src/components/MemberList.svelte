@@ -267,11 +267,14 @@
   .member-name { font-size: 13px; font-weight: 500; display: flex; align-items: baseline; gap: 4px; }
 
   .member-client {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
-    color: var(--text-faint);
-    opacity: 0.7;
+    color: var(--text-muted);
     text-transform: lowercase;
+    background: var(--bg-surface);
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
   }
 
   .member-badge {
