@@ -40,4 +40,4 @@ locks/
 # OS
 Thumbs.db
 .DS_Store
-web/test-results/
+test-results/
