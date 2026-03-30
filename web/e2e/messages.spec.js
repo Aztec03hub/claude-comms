@@ -107,7 +107,7 @@ test.describe('Message sending, display, and input behavior', () => {
   test('6. message with @mention renders the mention with special styling', async ({ page }) => {
     await sendAndVerify(page, 'Hey @someone check this out');
 
-    const mention = page.locator('.mention').filter({ hasText: '@someone' });
+    const mention = page.locator('.mention').filter({ hasText: '@someone' }).last();
     await expect(mention).toBeVisible({ timeout: 10000 });
 
     const bg = await mention.evaluate(el => getComputedStyle(el).backgroundColor);

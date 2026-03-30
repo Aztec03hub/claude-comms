@@ -22,9 +22,11 @@
     class="profile-card"
     data-testid="profile-card"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
     role="dialog"
     aria-label="Profile card for {participant.name}"
     aria-modal="true"
+    tabindex="-1"
   >
     <div class="profile-card-banner"></div>
     <div class="profile-card-avatar" style="background: {color.gradient}">

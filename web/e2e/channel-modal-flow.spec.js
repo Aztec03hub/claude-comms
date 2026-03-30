@@ -88,9 +88,11 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   // ── 7. Backdrop click closes modal ────────────────────────────────────
   await openModal();
 
-  const viewportSize = page.viewportSize();
-  await page.mouse.click(viewportSize.width - 5, 5);
-  await expect(page.locator('[data-testid="channel-modal"]')).not.toBeVisible();
+  // The modal overlay covers the full viewport; click on the overlay element itself
+  // (not the inner dialog) to dismiss it
+  const modal2 = page.locator('[data-testid="channel-modal"]');
+  await modal2.click({ position: { x: 5, y: 5 } });
+  await expect(modal2).not.toBeVisible({ timeout: 5000 });
   await page.screenshot({ path: `${SCREENSHOT_DIR}/test-modal-07-backdrop-closed.png`, fullPage: true });
   console.log('PASS: 7. Backdrop click closes modal');
 

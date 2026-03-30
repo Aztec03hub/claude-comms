@@ -7,20 +7,21 @@
   @prop {Function} onToggleTheme - Callback invoked to toggle between dark and light themes.
 -->
 <script>
+  import { untrack } from 'svelte';
   import { X, User, Bell, Palette, Wifi } from 'lucide-svelte';
 
   let { store, theme = 'dark', onClose, onToggleTheme } = $props();
 
   const MAX_NAME_LENGTH = 50;
 
-  let displayName = $state(store?.userProfile?.name || 'Anonymous');
+  let displayName = $state(untrack(() => store?.userProfile?.name || 'Anonymous'));
   let nameError = $derived.by(() => {
     if (!displayName.trim()) return 'Name cannot be empty.';
     if (displayName.length > MAX_NAME_LENGTH) return 'Name must be ' + MAX_NAME_LENGTH + ' characters or fewer.';
     return '';
   });
   let desktopNotifications = $state(Notification?.permission === 'granted');
-  let inAppToasts = $state(store?.inAppToasts ?? true);
+  let inAppToasts = $state(untrack(() => store?.inAppToasts ?? true));
 
   function handleNameChange(e) {
     const val = e.target.value;

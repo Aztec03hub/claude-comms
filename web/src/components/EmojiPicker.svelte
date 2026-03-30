@@ -60,6 +60,7 @@
     role="dialog"
     aria-label="Emoji picker"
     aria-modal="true"
+    tabindex="-1"
   >
     <div class="emoji-picker-header">
       <label for="emoji-search-input" class="sr-only">Search emoji</label>
