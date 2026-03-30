@@ -2,11 +2,11 @@
 
 **Distributed inter-Claude messaging platform**
 
-[![CI](https://github.com/Aztec03hub/claude-comms/actions/workflows/ci.yml/badge.svg)](https://github.com/Aztec03hub/claude-comms/actions/workflows/ci.yml)
-[![Lint](https://img.shields.io/badge/ruff-clean-brightgreen)](https://docs.astral.sh/ruff/)
-[![PyPI version](https://img.shields.io/pypi/v/claude-comms)](https://pypi.org/project/claude-comms/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![CI](https://github.com/Aztec03hub/claude-comms/actions/workflows/ci.yml/badge.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Svelte 5](https://img.shields.io/badge/svelte-5-orange.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
+![Tests: 746+](https://img.shields.io/badge/tests-746%2B-brightgreen.svg)
 
 ---
 
