@@ -29,6 +29,7 @@
 
   function handleInput(e) {
     inputValue = e.target.value;
+    autoResize(e.target);
     store.notifyTyping();
 
     // Check for @ mention trigger
@@ -49,6 +50,14 @@
       e.preventDefault();
       sendMessage();
     }
+    // Shift+Enter inserts a newline (default textarea behavior, no preventDefault)
+  }
+
+  /** Auto-resize textarea to fit content, capped at 6 lines (~144px). */
+  function autoResize(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 144) + 'px';
   }
 
   function sendMessage() {
@@ -57,6 +66,10 @@
     store.sendMessage(inputValue);
     inputValue = '';
     showMentionDropdown = false;
+    // Reset textarea height after clearing
+    if (inputEl) {
+      inputEl.style.height = 'auto';
+    }
   }
 
   function handleAttachClick() {
@@ -143,15 +156,15 @@
   </div>
 
   <div class="input-wrap">
-    <input
+    <textarea
       bind:this={inputEl}
-      type="text"
+      rows="1"
       placeholder="Message #{channelName}..."
       bind:value={inputValue}
       oninput={handleInput}
       onkeydown={handleKeydown}
       data-testid="message-input"
-    >
+    ></textarea>
     <div class="input-actions">
       <input
         bind:this={fileInputEl}
@@ -339,7 +352,7 @@
     box-shadow: 0 0 0 3px var(--border-glow), 0 0 24px rgba(245,158,11,0.04), 0 2px 8px rgba(0,0,0,0.15);
   }
 
-  .input-wrap input {
+  .input-wrap textarea {
     flex: 1;
     background: none;
     border: none;
@@ -348,9 +361,13 @@
     font-size: 14px;
     padding: 10px 0;
     font-family: inherit;
+    resize: none;
+    overflow-y: auto;
+    line-height: 1.5;
+    max-height: 144px;
   }
 
-  .input-wrap input::placeholder { color: var(--text-faint); }
+  .input-wrap textarea::placeholder { color: var(--text-faint); }
 
   .input-actions { display: flex; gap: 2px; }
 

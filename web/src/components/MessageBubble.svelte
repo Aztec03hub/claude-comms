@@ -13,40 +13,68 @@
 -->
 <script>
   import Avatar from './Avatar.svelte';
+  import CodeBlock from './CodeBlock.svelte';
   import MessageActions from './MessageActions.svelte';
   import ReactionBar from './ReactionBar.svelte';
   import ReadReceipt from './ReadReceipt.svelte';
   import LinkPreview from './LinkPreview.svelte';
+  import { Lock } from 'lucide-svelte';
   import { formatTime, parseMentions, getParticipantColor } from '../lib/utils.js';
 
   // URL regex for detecting links in message text
   const LINK_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
 
+  // Regex to split on fenced code blocks: ```lang\n...\n```
+  const CODE_BLOCK_REGEX = /```(\w*)\n([\s\S]*?)```/g;
+
   /**
-   * Parse message body into segments: text, mention, and link.
-   * First splits on mentions, then splits text segments on URLs.
+   * Parse message body into segments: text, mention, link, and codeblock.
+   * First splits on fenced code blocks, then on mentions, then on URLs.
    */
   function parseBody(body) {
-    const mentionSegments = parseMentions(body);
+    // Step 1: Split on fenced code blocks
+    const topSegments = [];
+    let lastIdx = 0;
+    let cbMatch;
+    CODE_BLOCK_REGEX.lastIndex = 0;
+    while ((cbMatch = CODE_BLOCK_REGEX.exec(body)) !== null) {
+      if (cbMatch.index > lastIdx) {
+        topSegments.push({ type: 'text', value: body.slice(lastIdx, cbMatch.index) });
+      }
+      topSegments.push({ type: 'codeblock', language: cbMatch[1] || '', code: cbMatch[2] });
+      lastIdx = cbMatch.index + cbMatch[0].length;
+    }
+    if (lastIdx < body.length) {
+      topSegments.push({ type: 'text', value: body.slice(lastIdx) });
+    }
+
+    // Step 2: For text segments, split on mentions then URLs
     const result = [];
-    for (const seg of mentionSegments) {
-      if (seg.type !== 'text') {
+    for (const seg of topSegments) {
+      if (seg.type === 'codeblock') {
         result.push(seg);
         continue;
       }
-      // Split text segments on URLs
-      let lastIndex = 0;
-      let match;
-      LINK_REGEX.lastIndex = 0;
-      while ((match = LINK_REGEX.exec(seg.value)) !== null) {
-        if (match.index > lastIndex) {
-          result.push({ type: 'text', value: seg.value.slice(lastIndex, match.index) });
+      const mentionSegments = parseMentions(seg.value);
+      for (const mseg of mentionSegments) {
+        if (mseg.type !== 'text') {
+          result.push(mseg);
+          continue;
         }
-        result.push({ type: 'link', value: match[0] });
-        lastIndex = match.index + match[0].length;
-      }
-      if (lastIndex < seg.value.length) {
-        result.push({ type: 'text', value: seg.value.slice(lastIndex) });
+        // Split text segments on URLs
+        let lastIndex = 0;
+        let match;
+        LINK_REGEX.lastIndex = 0;
+        while ((match = LINK_REGEX.exec(mseg.value)) !== null) {
+          if (match.index > lastIndex) {
+            result.push({ type: 'text', value: mseg.value.slice(lastIndex, match.index) });
+          }
+          result.push({ type: 'link', value: match[0] });
+          lastIndex = match.index + match[0].length;
+        }
+        if (lastIndex < mseg.value.length) {
+          result.push({ type: 'text', value: mseg.value.slice(lastIndex) });
+        }
       }
     }
     return result;
@@ -56,6 +84,7 @@
 
   let isHuman = $derived(message.sender.type === 'human');
   let isMine = $derived(message.sender.key === currentUser?.key);
+  let isTargeted = $derived(message.recipients && message.recipients.length > 0);
   let senderColor = $derived(getParticipantColor(message.sender.key));
   let bodySegments = $derived(parseBody(message.body));
   let hasCode = $derived(message.body.includes('```'));
@@ -93,6 +122,7 @@
   class:human={isHuman}
   class:consecutive
   class:has-code={hasCode}
+  class:targeted={isTargeted}
   oncontextmenu={handleContext}
   data-testid="message-{message.id}"
   data-message-id={message.id}
@@ -125,12 +155,21 @@
       </div>
     {/if}
 
-    <div class="bubble">
+    {#if isTargeted}
+      <div class="targeted-label">
+        <Lock size={10} />
+        <span>Targeted message</span>
+      </div>
+    {/if}
+
+    <div class="bubble" class:bubble-targeted={isTargeted}>
       {#each bodySegments as seg}
         {#if seg.type === 'mention'}
           <span class="mention">{seg.value}</span>
         {:else if seg.type === 'link'}
           <a class="inline-link" href={seg.value} target="_blank" rel="noopener noreferrer">{seg.value}</a>
+        {:else if seg.type === 'codeblock'}
+          <CodeBlock language={seg.language} code={seg.code} />
         {:else}
           {seg.value}
         {/if}
@@ -367,4 +406,21 @@
 
   .msg-row.human .hover-time { left: auto; right: -60px; }
   .msg-row:hover .hover-time { opacity: 1; }
+
+  /* ── Targeted (whisper) messages ── */
+  .targeted-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--text-faint);
+    padding: 0 4px 2px;
+    opacity: 0.7;
+  }
+
+  .bubble-targeted {
+    border-style: dashed !important;
+    border-color: rgba(148, 130, 100, 0.3) !important;
+    background: rgba(148, 130, 100, 0.04) !important;
+  }
 </style>

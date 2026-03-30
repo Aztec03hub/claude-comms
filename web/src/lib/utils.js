@@ -74,23 +74,28 @@ export function formatDateSeparator(isoString) {
 export function parseMentions(body) {
   if (!body) return [];
 
-  // Match @mention that is preceded by start-of-string, whitespace, or another @
+  // First, strip the MCP-generated [@name1, @name2] prefix since it duplicates
+  // the recipients metadata.  The bracket prefix is for human readability in
+  // raw payloads; the web UI shows a "targeted" indicator instead.
+  const stripped = body.replace(/^\[(@[\w-]+(?:\s*,\s*@[\w-]+)*)\]\s*/, '');
+
+  // Match @mention preceded by start-of-string, whitespace, or another @
   // This ensures "@foo@bar" is parsed as two mentions, and "email@host" is not
   const mentionRegex = /(?:^|(?<=[\s@]))@[\w-]+/g;
   const segments = [];
   let lastIndex = 0;
   let match;
 
-  while ((match = mentionRegex.exec(body)) !== null) {
+  while ((match = mentionRegex.exec(stripped)) !== null) {
     if (match.index > lastIndex) {
-      segments.push({ type: 'text', value: body.slice(lastIndex, match.index) });
+      segments.push({ type: 'text', value: stripped.slice(lastIndex, match.index) });
     }
     segments.push({ type: 'mention', value: match[0] });
     lastIndex = match.index + match[0].length;
   }
 
-  if (lastIndex < body.length) {
-    segments.push({ type: 'text', value: body.slice(lastIndex) });
+  if (lastIndex < stripped.length) {
+    segments.push({ type: 'text', value: stripped.slice(lastIndex) });
   }
 
   // Filter out empty text segments that can occur with adjacent mentions

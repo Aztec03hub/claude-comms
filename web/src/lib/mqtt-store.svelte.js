@@ -110,11 +110,17 @@ export class MqttChatStore {
     }
   }
 
+  /** Stale participant TTL in milliseconds (60 seconds). */
+  static PARTICIPANT_TTL_MS = 60000;
+
   /**
    * Fetch the participant list from the REST API for a given channel.
    * Merges server-side participants (TUI, MCP clients) into the local
    * participants map so they appear in the member sidebar even when
    * MQTT presence bridging between TCP and WebSocket transports fails.
+   *
+   * Also expires stale non-self participants that haven't been seen
+   * by the server in the last TTL window (60 seconds).
    * @param {string} channel - The channel to fetch participants for.
    */
   async #fetchParticipants(channel) {
@@ -124,10 +130,15 @@ export class MqttChatStore {
       const data = await res.json();
       if (!Array.isArray(data.participants)) return;
 
+      const now = Date.now();
+      // Track which composite keys the server reports as active
+      const serverKeys = new Set();
+
       for (const p of data.participants) {
         // Server-side registry doesn't track client type — default to 'mcp'
         const clientType = p.client || 'mcp';
         const compositeKey = p.key + '-' + clientType;
+        serverKeys.add(compositeKey);
 
         // Don't overwrite our own web entry
         if (p.key === this.userProfile.key && clientType === 'web') continue;
@@ -140,7 +151,22 @@ export class MqttChatStore {
           type: p.type,
           client: clientType,
           status: this.participants[compositeKey]?.status || 'online',
+          lastSeen: now,
         };
+      }
+
+      // Expire stale participants not reported by the server and not "self"
+      const selfWebKey = this.userProfile.key + '-web';
+      for (const [compositeKey, p] of Object.entries(this.participants)) {
+        if (compositeKey === selfWebKey) continue;
+        if (serverKeys.has(compositeKey)) continue;
+
+        // If participant was not in the server response and their lastSeen
+        // has exceeded the TTL, mark them offline or remove them
+        const lastSeen = p.lastSeen || 0;
+        if (now - lastSeen > MqttChatStore.PARTICIPANT_TTL_MS) {
+          delete this.participants[compositeKey];
+        }
       }
     } catch {
       // Participant fetch failed — not critical, MQTT presence still works
