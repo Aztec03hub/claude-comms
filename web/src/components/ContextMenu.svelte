@@ -4,8 +4,8 @@
   // Clamp position to keep menu within viewport
   const MENU_WIDTH = 200;
   const MENU_HEIGHT = 290; // approximate height of all items
-  let clampedX = $derived(Math.min(x, window.innerWidth - MENU_WIDTH - 8));
-  let clampedY = $derived(Math.min(y, window.innerHeight - MENU_HEIGHT - 8));
+  let clampedX = $derived(Math.max(8, Math.min(x, window.innerWidth - MENU_WIDTH - 8)));
+  let clampedY = $derived(Math.max(8, Math.min(y, window.innerHeight - MENU_HEIGHT - 8)));
 
   function handleAction(action) {
     onAction({ action, message });

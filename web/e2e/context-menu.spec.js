@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:5176';
+// Uses baseURL from playwright.config.js (default: http://localhost:5173)
 
 // Single consolidated test to avoid repeated page loads under heavy system load.
 // Runs all 9 context menu checks sequentially in one page session.
@@ -8,7 +8,7 @@ test('Right-click context menu - full functional test', async ({ page, context }
   test.setTimeout(300000);
 
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto(BASE_URL);
+  await page.goto('/');
   await page.waitForSelector('.input-area', { timeout: 60000 });
 
   // Helper: send a message
