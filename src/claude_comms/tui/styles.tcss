@@ -1,0 +1,208 @@
+/* Claude Comms TUI — Carbon Ember palette
+ *
+ * Background:  #141416 (very dark)
+ * Surface:     #1c1c1e
+ * Border:      #2c2c2e
+ * Text:        #e8e4df (warm white)
+ * Dim text:    #8a8a8a
+ * Accent:      #d97706 (amber/gold)
+ * Sender colors:
+ *   emerald  #34d399
+ *   amber    #fbbf24
+ *   bright   #f59e0b
+ *   rose     #fb7185
+ */
+
+Screen {
+    background: #141416;
+    color: #e8e4df;
+}
+
+/* ---------- Three-column layout ---------- */
+
+#app-grid {
+    layout: horizontal;
+    height: 1fr;
+}
+
+/* Left sidebar — channel list */
+#channel-sidebar {
+    width: 24;
+    dock: left;
+    background: #1c1c1e;
+    border-right: solid #2c2c2e;
+}
+
+#channel-sidebar .sidebar-title {
+    text-style: bold;
+    color: #d97706;
+    padding: 1 1 0 1;
+}
+
+/* Right sidebar — participant list */
+#participant-sidebar {
+    width: 22;
+    dock: right;
+    background: #1c1c1e;
+    border-left: solid #2c2c2e;
+}
+
+#participant-sidebar .sidebar-title {
+    text-style: bold;
+    color: #d97706;
+    padding: 1 1 0 1;
+}
+
+/* Center — chat area */
+#chat-area {
+    width: 1fr;
+    height: 1fr;
+    layout: vertical;
+}
+
+/* Channel header bar */
+#channel-header {
+    height: 3;
+    background: #1c1c1e;
+    border-bottom: solid #2c2c2e;
+    padding: 0 1;
+    content-align: left middle;
+    color: #e8e4df;
+}
+
+#channel-header .channel-name {
+    text-style: bold;
+    color: #d97706;
+}
+
+/* Chat view — scrollable message area */
+#chat-view {
+    height: 1fr;
+    background: #141416;
+    padding: 0 1;
+    scrollbar-color: #2c2c2e;
+    scrollbar-color-hover: #d97706;
+    scrollbar-color-active: #fbbf24;
+}
+
+/* Message input area */
+#message-input-area {
+    height: auto;
+    max-height: 6;
+    dock: bottom;
+    background: #1c1c1e;
+    border-top: solid #2c2c2e;
+    padding: 0 1;
+}
+
+#message-input {
+    background: #141416;
+    color: #e8e4df;
+    border: round #2c2c2e;
+    padding: 0 1;
+    height: auto;
+    max-height: 4;
+}
+
+#message-input:focus {
+    border: round #d97706;
+}
+
+/* ---------- Channel list items ---------- */
+
+.channel-item {
+    height: 3;
+    padding: 0 1;
+    color: #8a8a8a;
+}
+
+.channel-item:hover {
+    background: #2c2c2e;
+    color: #e8e4df;
+}
+
+.channel-item.--active {
+    background: #2c2c2e;
+    color: #d97706;
+    text-style: bold;
+}
+
+.channel-name-label {
+    width: 1fr;
+}
+
+.unread-badge {
+    color: #141416;
+    background: #d97706;
+    text-style: bold;
+    min-width: 3;
+    text-align: center;
+}
+
+/* ---------- Participant list items ---------- */
+
+.participant-item {
+    height: 1;
+    padding: 0 1;
+    color: #e8e4df;
+}
+
+.participant-item.--offline {
+    color: #8a8a8a;
+}
+
+/* Presence dots rendered inline via Rich markup */
+
+/* ---------- Message bubbles ---------- */
+
+.message-panel {
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+.system-message {
+    text-align: center;
+    color: #8a8a8a;
+    text-style: italic;
+    margin: 1 4;
+}
+
+/* ---------- Autocomplete dropdown ---------- */
+
+#autocomplete-list {
+    layer: overlay;
+    background: #1c1c1e;
+    border: round #2c2c2e;
+    max-height: 8;
+    display: none;
+}
+
+#autocomplete-list.--visible {
+    display: block;
+}
+
+.autocomplete-item {
+    padding: 0 1;
+    height: 1;
+    color: #e8e4df;
+}
+
+.autocomplete-item:hover {
+    background: #2c2c2e;
+    color: #d97706;
+}
+
+.autocomplete-item.--selected {
+    background: #d97706;
+    color: #141416;
+}
+
+/* ---------- Footer status bar ---------- */
+
+#status-bar {
+    height: 1;
+    dock: bottom;
+    background: #1c1c1e;
+    color: #8a8a8a;
+    padding: 0 1;
+}

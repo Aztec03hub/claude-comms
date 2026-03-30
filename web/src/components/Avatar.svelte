@@ -1,0 +1,61 @@
+<script>
+  import { getInitials } from '../lib/utils.js';
+
+  let { name, gradient, status = null, size = 34, onClick = null } = $props();
+
+  let initials = $derived(getInitials(name));
+</script>
+
+<div
+  class="avatar"
+  style="background: {gradient}; width: {size}px; height: {size}px; font-size: {Math.round(size * 0.32)}px;"
+  onclick={onClick}
+  role={onClick ? 'button' : undefined}
+  tabindex={onClick ? 0 : undefined}
+>
+  {initials}
+  {#if status}
+    <div class="status-indicator" class:online={status === 'online'} class:offline={status === 'offline'} class:idle={status === 'idle'}></div>
+  {/if}
+</div>
+
+<style>
+  .avatar {
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: #0a0a0c;
+    margin-top: 3px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: var(--transition-fast);
+    cursor: pointer;
+    position: relative;
+  }
+
+  .avatar:hover {
+    transform: scale(1.08);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  }
+
+  .status-indicator {
+    position: absolute;
+    bottom: -1px;
+    right: -1px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 2px solid var(--bg-sidebar);
+    transition: var(--transition-med);
+  }
+
+  .status-indicator.online {
+    background: var(--ember-400);
+    box-shadow: 0 0 6px rgba(245,158,11,0.35);
+  }
+
+  .status-indicator.idle { background: var(--gold); }
+  .status-indicator.offline { background: var(--text-faint); }
+</style>
