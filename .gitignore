@@ -37,7 +37,16 @@ notifications/
 state/
 locks/
 
+# Testing/Coverage
+.coverage
+htmlcov/
+test-results/
+web/playwright-report/
+
+# Linters/Type checkers
+.ruff_cache/
+.mypy_cache/
+
 # OS
 Thumbs.db
 .DS_Store
-test-results/
