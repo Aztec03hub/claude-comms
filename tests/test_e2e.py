@@ -831,3 +831,360 @@ class TestFullE2EFlow:
         assert len(replayed) == 4
         assert replayed[0]["body"] == "Hey Claude, how are you?"
         assert replayed[-1]["body"] == "Name changed! Still me though."
+
+
+# ===================================================================
+# Round 5: Gap tests — error handling, edge cases, untested paths
+# ===================================================================
+
+
+class TestErrorHandlingPaths:
+    """Test error handling paths that were previously uncovered."""
+
+    @pytest.mark.asyncio
+    async def test_send_to_invalid_conversation(self) -> None:
+        """Sending to a conversation with invalid ID should return error."""
+        registry = ParticipantRegistry()
+        broker = MockBroker()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = await tool_comms_send(
+            registry, broker.publish,
+            key=r["key"], conversation="INVALID!CONV",
+            message="Hello",
+        )
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_send_with_empty_body(self) -> None:
+        """Empty or whitespace-only message body should be rejected."""
+        registry = ParticipantRegistry()
+        broker = MockBroker()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        for body in ["", "   ", "\n\t"]:
+            result = await tool_comms_send(
+                registry, broker.publish,
+                key=r["key"], conversation="general",
+                message=body,
+            )
+            assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_send_with_unregistered_key(self) -> None:
+        """Using an unregistered key should return error."""
+        registry = ParticipantRegistry()
+        broker = MockBroker()
+        result = await tool_comms_send(
+            registry, broker.publish,
+            key="deadbeef", conversation="general",
+            message="Hello",
+        )
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_send_with_invalid_key_format(self) -> None:
+        """Malformed key should return error."""
+        registry = ParticipantRegistry()
+        broker = MockBroker()
+        result = await tool_comms_send(
+            registry, broker.publish,
+            key="ZZZ", conversation="general",
+            message="Hello",
+        )
+        assert result.get("error") is True
+
+    def test_read_with_invalid_key(self) -> None:
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        result = tool_comms_read(registry, store, key="ZZZZZZZZ", conversation="general")
+        assert result.get("error") is True
+
+    def test_check_with_invalid_key(self) -> None:
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        result = tool_comms_check(registry, store, key="ZZZZZZZZ")
+        assert result.get("error") is True
+
+    def test_members_with_invalid_conv(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_members(registry, key=r["key"], conversation="BAD!")
+        assert result.get("error") is True
+
+    def test_history_with_invalid_conv(self) -> None:
+        from claude_comms.mcp_tools import tool_comms_history
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_history(
+            registry, store, key=r["key"], conversation="BAD!",
+        )
+        assert result.get("error") is True
+
+    def test_leave_with_invalid_conv(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_leave(registry, key=r["key"], conversation="BAD!")
+        assert result.get("error") is True
+
+    def test_join_with_reserved_conv_id(self) -> None:
+        """Joining a reserved conversation ID should return error."""
+        registry = ParticipantRegistry()
+        for reserved in ["system", "meta"]:
+            result = tool_comms_join(
+                registry, name="alice", conversation=reserved,
+            )
+            assert result.get("error") is True
+
+
+class TestLogExporterEdgeCases:
+    """Test edge cases in log exporter formatting."""
+
+    def test_format_log_entry_empty_dict(self) -> None:
+        from claude_comms.log_exporter import format_log_entry
+        result = format_log_entry({})
+        assert result == "[EMPTY MESSAGE]"
+
+    def test_format_log_entry_missing_sender(self) -> None:
+        from claude_comms.log_exporter import format_log_entry
+        msg = {"ts": "2026-03-13T14:00:00-05:00", "body": "no sender"}
+        result = format_log_entry(msg)
+        assert "unknown" in result
+        assert "no sender" in result
+
+    def test_format_log_entry_missing_ts(self) -> None:
+        from claude_comms.log_exporter import format_log_entry
+        msg = {
+            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+            "body": "no timestamp",
+        }
+        result = format_log_entry(msg)
+        assert "UNKNOWN TIME" in result
+        assert "no timestamp" in result
+
+    def test_format_log_entry_invalid_ts(self) -> None:
+        from claude_comms.log_exporter import format_log_entry
+        msg = {
+            "ts": "not-a-timestamp",
+            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+            "body": "bad ts",
+        }
+        result = format_log_entry(msg)
+        # Should fall back to using raw ts string
+        assert "not-a-timestamp" in result
+
+    def test_format_log_entry_sender_not_dict(self) -> None:
+        from claude_comms.log_exporter import format_log_entry
+        msg = {
+            "ts": "2026-03-13T14:00:00-05:00",
+            "sender": "not-a-dict",
+            "body": "weird sender",
+        }
+        result = format_log_entry(msg)
+        assert "unknown" in result
+
+    def test_format_presence_event_none_name(self) -> None:
+        from claude_comms.log_exporter import format_presence_event
+        result = format_presence_event(None, "aabbccdd", "joined")
+        assert "unknown" in result
+        assert "joined" in result
+
+    def test_format_presence_event_none_key(self) -> None:
+        from claude_comms.log_exporter import format_presence_event
+        result = format_presence_event("alice", None, "left")
+        assert "????????" in result
+        assert "left" in result
+
+    def test_format_presence_event_invalid_ts(self) -> None:
+        from claude_comms.log_exporter import format_presence_event
+        result = format_presence_event("alice", "aabbccdd", "joined", "not-a-date")
+        # Should fall back to current time, not crash
+        assert "alice" in result
+        assert "joined" in result
+
+    def test_format_log_header_no_ts(self) -> None:
+        from claude_comms.log_exporter import format_log_header
+        header = format_log_header("my-conv")
+        assert "CONVERSATION: my-conv" in header
+        assert "CREATED:" in header
+
+
+class TestMultiParticipantEdgeCases:
+    """Test multi-participant scenarios with edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_targeted_to_self(self) -> None:
+        """Sending a targeted message to yourself."""
+        registry = ParticipantRegistry()
+        broker = MockBroker()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+
+        result = await tool_comms_send(
+            registry, broker.publish,
+            key=r["key"], conversation="general",
+            message="Note to self",
+            recipients=["alice"],
+        )
+        assert result["status"] == "sent"
+        msg = Message.model_validate(broker.get_messages()[0])
+        assert msg.is_for(r["key"])
+
+    @pytest.mark.asyncio
+    async def test_targeted_by_key_and_name(self) -> None:
+        """Target recipients by mixed keys and names."""
+        registry = ParticipantRegistry()
+        broker = MockBroker()
+        r1 = tool_comms_join(registry, name="alice", conversation="general")
+        r2 = tool_comms_join(registry, name="bob", conversation="general")
+
+        result = await tool_comms_send(
+            registry, broker.publish,
+            key=r1["key"], conversation="general",
+            message="Mixed targeting",
+            recipients=["bob", r2["key"]],  # both resolve to bob
+        )
+        assert result["status"] == "sent"
+        # Should deduplicate to a single recipient
+        assert len(result["recipients"]) == 1
+        assert r2["key"] in result["recipients"]
+
+    def test_read_updates_cursor_correctly(self) -> None:
+        """Reading should update the read cursor to the latest message."""
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+
+        for i in range(3):
+            store.add("general", {
+                "id": f"cur-{i}",
+                "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                "sender": {"key": "other123", "name": "x", "type": "claude"},
+                "body": f"msg {i}", "conv": "general",
+            })
+
+        tool_comms_read(registry, store, key=r["key"], conversation="general")
+        cursor = registry.get_cursor(r["key"], "general")
+        assert cursor == "2026-03-13T14:02:00-05:00"
+
+        # Add more messages
+        store.add("general", {
+            "id": "cur-3", "ts": "2026-03-13T14:03:00-05:00",
+            "sender": {"key": "other123", "name": "x", "type": "claude"},
+            "body": "msg 3", "conv": "general",
+        })
+
+        check = tool_comms_check(registry, store, key=r["key"])
+        assert check["total_unread"] == 1  # only the new message
+
+    @pytest.mark.asyncio
+    async def test_broker_publish_exception_handled(self) -> None:
+        """Various exception types from publish should be handled."""
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+
+        async def timeout_pub(topic, payload):
+            raise TimeoutError("Connection timed out")
+
+        result = await tool_comms_send(
+            registry, timeout_pub,
+            key=r["key"], conversation="general",
+            message="will timeout",
+        )
+        assert result.get("error") is True
+
+    def test_conversations_with_unread_counts(self) -> None:
+        """Verify unread counts in conversations listing."""
+        from claude_comms.mcp_tools import tool_comms_conversations
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        tool_comms_join(registry, key=r["key"], conversation="dev")
+
+        # Add messages to both conversations
+        for i in range(3):
+            store.add("general", {
+                "id": f"gen-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                "sender": {"key": "other123", "name": "x", "type": "claude"},
+                "body": f"gen {i}", "conv": "general",
+            })
+        store.add("dev", {
+            "id": "dev-0", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "other123", "name": "x", "type": "claude"},
+            "body": "dev msg", "conv": "dev",
+        })
+
+        result = tool_comms_conversations(registry, store, key=r["key"])
+        conv_map = {c["conversation"]: c for c in result["conversations"]}
+        assert conv_map["general"]["unread_count"] == 3
+        assert conv_map["dev"]["unread_count"] == 1
+
+        # Read general, then check again
+        tool_comms_read(registry, store, key=r["key"], conversation="general")
+        result2 = tool_comms_conversations(registry, store, key=r["key"])
+        conv_map2 = {c["conversation"]: c for c in result2["conversations"]}
+        assert conv_map2["general"]["unread_count"] == 0
+        assert conv_map2["dev"]["unread_count"] == 1
+
+
+class TestReplayAndExporterIntegration:
+    """Test the full cycle: write via LogExporter, replay via replay_jsonl_logs."""
+
+    def test_write_then_replay(self, tmp_comms_dir: Path) -> None:
+        """Messages written by LogExporter should be replayable."""
+        log_dir = tmp_comms_dir / "logs"
+        exporter = LogExporter(log_dir=log_dir, fmt="both")
+
+        for i in range(5):
+            exporter.write_message({
+                "id": f"wr-{i}",
+                "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "writer", "type": "claude"},
+                "body": f"Written message {i}",
+                "conv": "general",
+            })
+
+        # Replay into fresh store
+        store = replay_jsonl_logs(log_dir=log_dir)
+        msgs = store.get("general")
+        assert len(msgs) == 5
+        assert msgs[0]["body"] == "Written message 0"
+        assert msgs[4]["body"] == "Written message 4"
+
+    def test_write_replay_dedup_integration(self, tmp_comms_dir: Path) -> None:
+        """After replay, duplicate IDs should be caught by shared deduplicator."""
+        log_dir = tmp_comms_dir / "logs"
+        dedup = MessageDeduplicator()
+        exporter = LogExporter(log_dir=log_dir, fmt="jsonl", deduplicator=dedup)
+
+        msg = {
+            "id": "replay-dedup-001",
+            "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "first write", "conv": "general",
+        }
+        exporter.write_message(msg)
+
+        # Create a new deduplicator and replay
+        dedup2 = MessageDeduplicator()
+        replay_jsonl_logs(log_dir=log_dir, deduplicator=dedup2)
+
+        # The replayed ID should now be a duplicate in dedup2
+        assert dedup2.is_duplicate("replay-dedup-001") is True
+
+    def test_multiconv_write_replay(self, tmp_comms_dir: Path) -> None:
+        """Multiple conversations written and replayed."""
+        log_dir = tmp_comms_dir / "logs"
+        exporter = LogExporter(log_dir=log_dir, fmt="jsonl")
+
+        for conv in ["alpha", "beta", "gamma"]:
+            for i in range(3):
+                exporter.write_message({
+                    "id": f"{conv}-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": f"{conv} msg {i}", "conv": conv,
+                })
+
+        store = replay_jsonl_logs(log_dir=log_dir)
+        assert set(store.conversations()) == {"alpha", "beta", "gamma"}
+        for conv in ["alpha", "beta", "gamma"]:
+            assert len(store.get(conv)) == 3
