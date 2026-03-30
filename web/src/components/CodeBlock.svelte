@@ -38,7 +38,7 @@
   .code-block-wrap {
     margin-top: 10px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
+    border: 1px solid #222225;
     background: #0e0e11;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
@@ -50,15 +50,15 @@
     justify-content: space-between;
     padding: 7px 14px;
     background: #141417;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid #222225;
     font-size: 11px;
-    color: var(--text-faint);
+    color: #3d3a36;
     font-family: 'SF Mono', Consolas, monospace;
   }
 
   .code-lang {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
+    background: #1c1c1f;
+    border: 1px solid #222225;
     border-radius: 4px;
     padding: 1px 8px;
     font-size: 10px;
@@ -70,9 +70,9 @@
 
   .code-copy-btn {
     background: none;
-    border: 1px solid var(--border);
+    border: 1px solid #222225;
     border-radius: var(--radius-xs);
-    color: var(--text-faint);
+    color: #3d3a36;
     cursor: pointer;
     padding: 3px 10px;
     font-size: 10px;
@@ -84,14 +84,14 @@
   }
 
   .code-copy-btn:hover {
-    background: var(--bg-elevated);
-    color: var(--text-primary);
-    border-color: var(--text-faint);
+    background: #252528;
+    color: #ede9e3;
+    border-color: #3d3a36;
   }
 
   .code-copy-btn.copied {
-    color: var(--ember-300);
-    border-color: var(--ember-600);
+    color: #fbbf24;
+    border-color: #b45309;
   }
 
   .code-block {
@@ -116,7 +116,7 @@
   }
 
   .code-block .line:hover .line-num {
-    color: var(--ember-500);
+    color: #d97706;
     opacity: 1;
   }
 
@@ -125,7 +125,7 @@
     width: 28px;
     flex-shrink: 0;
     text-align: right;
-    color: var(--text-faint);
+    color: #3d3a36;
     margin-right: 16px;
     opacity: 0.5;
   }
