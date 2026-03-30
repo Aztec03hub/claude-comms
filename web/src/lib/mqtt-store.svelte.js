@@ -1,8 +1,12 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
 
-const BROKER_URL = 'ws://localhost:9001/mqtt';
-const MCP_API_URL = 'http://localhost:9920';
+// Derive URLs from the current page hostname so CORS always matches.
+// If the user accesses via 127.0.0.1, API/WS calls go to 127.0.0.1.
+// If via localhost, they go to localhost. No more cross-origin mismatches.
+const _host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const BROKER_URL = `ws://${_host}:9001/mqtt`;
+const MCP_API_URL = `http://${_host}:9920`;
 const TOPIC_PREFIX = 'claude-comms';
 const TYPING_TTL_MS = 5000;
 const BASE_RECONNECT_MS = 3000;
@@ -298,30 +302,20 @@ export class MqttChatStore {
         this.userProfile.key = identity.key;
         this.userProfile.name = identity.name;
         this.userProfile.type = identity.type;
-        // Cache in localStorage for offline fallback — always overwrite
-        safeStorage.setItem('claude-comms-user-key', identity.key);
-        safeStorage.setItem('claude-comms-user-name', identity.name);
-      } else {
-        // API returned non-OK — clear stale localStorage to force re-fetch next time
-        safeStorage.removeItem('claude-comms-user-key');
       }
     } catch {
-      // Daemon not running or CORS blocked — log for debugging
       console.error('[claude-comms] Failed to fetch identity from', MCP_API_URL + '/api/identity');
     }
 
-    // localStorage fallback if daemon fetch didn't populate the key
+    // If identity fetch failed (shouldn't happen — daemon serves this page),
+    // generate a temporary key. No localStorage caching — the daemon config
+    // is the single source of truth for identity.
     if (!this.userProfile.key) {
-      const stored = safeStorage.getItem('claude-comms-user-key');
-      if (stored) {
-        this.userProfile.key = stored;
-      } else {
-        this.userProfile.key = generateKey();
-        safeStorage.setItem('claude-comms-user-key', this.userProfile.key);
-      }
+      this.userProfile.key = generateKey();
+      this.userProfile.name = 'Anonymous';
     }
 
-    // Also restore user name from localStorage if not set by daemon
+    // Restore user name from localStorage only (not key — key comes from daemon)
     if (!this.userProfile.name || this.userProfile.name === 'Phil') {
       const storedName = safeStorage.getItem('claude-comms-user-name');
       if (storedName) this.userProfile.name = storedName;
