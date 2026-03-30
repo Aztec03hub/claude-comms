@@ -28,6 +28,7 @@ from pydantic import Field
 
 from claude_comms.broker import MessageDeduplicator, MessageStore, replay_jsonl_logs
 from claude_comms.config import load_config
+from claude_comms.participant import CONNECTION_TYPES, ConnectionInfo
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     PublishFn,
@@ -139,6 +140,8 @@ async def _mqtt_subscriber(
     msg_topic = "claude-comms/conv/+/messages"
     presence_topic = "claude-comms/conv/+/presence/+"
     system_topic = "claude-comms/system/participants/+"
+    # New presence topic: claude-comms/presence/{key}/{client}-{instanceId}
+    new_presence_topic = "claude-comms/presence/+/+"
 
     while True:
         try:
@@ -150,6 +153,7 @@ async def _mqtt_subscriber(
                 await client.subscribe(msg_topic, qos=1)
                 await client.subscribe(presence_topic, qos=1)
                 await client.subscribe(system_topic, qos=1)
+                await client.subscribe(new_presence_topic, qos=1)
                 logger.info("MCP subscriber connected to %s:%d", host, port)
                 async for mqtt_msg in client.messages:
                     try:
@@ -158,6 +162,9 @@ async def _mqtt_subscriber(
                             if isinstance(mqtt_msg.payload, bytes)
                             else str(mqtt_msg.payload)
                         )
+                        # Skip empty retained messages (used for cleanup)
+                        if not payload.strip():
+                            continue
                         data = json.loads(payload)
                         topic_str = str(mqtt_msg.topic)
                         parts = topic_str.split("/")
@@ -180,7 +187,51 @@ async def _mqtt_subscriber(
                                 except Exception:
                                     logger.warning("Failed to write message to log", exc_info=True)
 
-                        # Handle presence — auto-register participants
+                        # Handle NEW presence topic
+                        # Topic: claude-comms/presence/{key}/{client}-{instanceId}
+                        # parts: ['claude-comms', 'presence', '{key}', '{client}-{instanceId}']
+                        elif len(parts) == 4 and parts[1] == "presence":
+                            key = data.get("key", "") or parts[2]
+                            name = data.get("name", "")
+                            status = data.get("status", "offline")
+                            client_type = data.get("client", "")
+                            instance_id = data.get("instanceId")
+                            p_type = data.get("type", "claude")
+                            ts = data.get("ts", "")
+
+                            # Validate client type against allowed list
+                            if not client_type or client_type not in CONNECTION_TYPES:
+                                continue
+
+                            # Build connection key from topic or payload
+                            conn_key = parts[3]  # e.g. "web-3f2a"
+
+                            if not key or not name:
+                                continue
+
+                            if status == "online" and _registry:
+                                # Ensure participant exists in registry
+                                _registry.join(
+                                    name, "general", key=key, participant_type=p_type
+                                )
+                                p = _registry.get(key)
+                                if p:
+                                    p.client = client_type
+                                    p.connections[conn_key] = ConnectionInfo(
+                                        client=client_type,
+                                        instance_id=instance_id,
+                                        since=p.connections[conn_key].since if conn_key in p.connections else (ts or ""),
+                                        last_seen=ts or "",
+                                    )
+                            elif status == "offline" and _registry:
+                                p = _registry.get(key)
+                                if p:
+                                    p.connections.pop(conn_key, None)
+                                    # If no connections left, clear client field
+                                    if not p.connections:
+                                        p.client = None
+
+                        # Handle OLD presence — auto-register participants
                         # Topic: claude-comms/conv/{channel}/presence/{key}
                         # parts: ['claude-comms', 'conv', '{channel}', 'presence', '{key}']
                         elif (len(parts) >= 5 and parts[3] == "presence") or (
@@ -190,7 +241,9 @@ async def _mqtt_subscriber(
                             name = data.get("name", "")
                             status = data.get("status", "offline")
                             client_type = data.get("client", "unknown")
+                            instance_id = data.get("instanceId")
                             p_type = data.get("type", "claude")
+                            ts = data.get("ts", "")
                             # Only register participants that declare a known client type.
                             # Skip 'unknown' to avoid stale retained presence from old sessions.
                             if key and name and status == "online" and client_type != "unknown" and _registry:
@@ -199,14 +252,28 @@ async def _mqtt_subscriber(
                                 _registry.join(
                                     name, conv, key=key, participant_type=p_type
                                 )
-                                # Store client type for API response
+                                # Store client type and connection info
                                 p = _registry.get(key)
                                 if p:
-                                    p.client = client_type  # type: ignore[attr-defined]
+                                    p.client = client_type
+                                    # Track connection if client type is valid
+                                    if client_type in CONNECTION_TYPES:
+                                        conn_key = f"{client_type}-{instance_id}" if instance_id else client_type
+                                        p.connections[conn_key] = ConnectionInfo(
+                                            client=client_type,
+                                            instance_id=instance_id,
+                                            since=p.connections[conn_key].since if conn_key in p.connections else (ts or ""),
+                                            last_seen=ts or "",
+                                        )
                             elif key and status == "offline" and _registry:
                                 existing = _registry.get(key)
                                 if existing:
-                                    _registry.leave(key, "general")
+                                    # Remove specific connection if instanceId provided
+                                    if client_type in CONNECTION_TYPES:
+                                        conn_key = f"{client_type}-{instance_id}" if instance_id else client_type
+                                        existing.connections.pop(conn_key, None)
+                                    if not existing.connections:
+                                        _registry.leave(key, "general")
 
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning("Malformed MQTT message, skipping")

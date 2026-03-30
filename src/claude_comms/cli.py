@@ -397,7 +397,7 @@ def start(
                     )
                 participants = get_channel_participants(channel)
                 return JSONResponse(
-                    {"channel": channel, "participants": participants},
+                    {"version": 2, "channel": channel, "participants": participants},
                     headers={
                         "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
