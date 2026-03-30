@@ -130,7 +130,7 @@ class TestGetChannelParticipants:
             p = result[0]
             assert set(p.keys()) == {"key", "name", "type", "client", "status"}
             assert p["name"] == "alice"
-            assert p["client"] == "mcp"
+            assert p["client"] == "unknown"
             assert p["status"] == "online"
             assert p["type"] == "claude"
         finally:

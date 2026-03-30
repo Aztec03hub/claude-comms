@@ -192,7 +192,7 @@ class TestGetChannelParticipants:
             mod._registry = original
 
     def test_returns_participants_with_client_field(self):
-        """Participants should include 'client': 'mcp' field."""
+        """Participants should include 'client' field."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
@@ -207,7 +207,7 @@ class TestGetChannelParticipants:
             assert len(result) == 1
             p = result[0]
             assert p["name"] == "alice"
-            assert p["client"] == "mcp"
+            assert p["client"] == "unknown"
             assert p["status"] == "online"
             assert "key" in p
             assert "type" in p
@@ -471,7 +471,7 @@ class TestClientTypeInPresence:
     """Tests for the 'client' field in participant/presence data."""
 
     def test_participant_response_includes_client_mcp(self):
-        """get_channel_participants always sets client='mcp'."""
+        """get_channel_participants returns the participant's client field."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
@@ -484,7 +484,7 @@ class TestClientTypeInPresence:
 
             result = get_channel_participants("general")
             assert len(result) == 1
-            assert result[0]["client"] == "mcp"
+            assert result[0]["client"] == "unknown"
         finally:
             mod._registry = original
 

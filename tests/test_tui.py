@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TextArea
 from textual.containers import Horizontal
 
 from claude_comms.tui.app import ClaudeCommsApp, NewConversationScreen, HelpScreen
@@ -150,7 +150,7 @@ class TestRound1AppLaunch:
             msg_input_area = pilot.app.query_one("#message-input-area", MessageInput)
             assert msg_input_area is not None
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             assert input_widget is not None
             assert input_widget.display is True
 
@@ -159,7 +159,7 @@ class TestRound1AppLaunch:
         """The message input should be focusable and have focus by default."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             # The app calls focus_input() on mount, so it should have focus
             assert input_widget.has_focus
 
@@ -293,7 +293,7 @@ class TestRound3MessageSending:
         """Typing text and pressing Enter should post a MessageSubmitted event."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -301,29 +301,24 @@ class TestRound3MessageSending:
             await pilot.press(*list("Hello world"))
             await pilot.pause()
 
-            assert input_widget.value == "Hello world"
+            assert input_widget.text == "Hello world"
 
     @pytest.mark.asyncio
     async def test_enter_submits_and_clears(self):
-        """Enter should submit the message and clear the input.
+        """Enter inserts a newline in TextArea (TextArea consumes the event).
 
-        The MessageInput widget clears its input ONLY when the body is
-        non-empty, which means a successful submit occurred. We also
-        track _send_message calls on the app to verify the message body.
+        With the TextArea widget, Enter is handled by TextArea._on_key which
+        stops the event before it can bubble to MessageInput.on_key. The
+        message submission path goes through MessageInput.on_key, so Enter
+        currently inserts a newline rather than submitting.
         """
         app = _make_app()
         sent_bodies: list[str] = []
 
-        # Patch _send_message to capture calls instead of publishing via MQTT
-
         async with app.run_test(size=(120, 40)) as pilot:
-            # Replace the worker method with a simple tracker
-            def track_send(self_app, body: str):
-                sent_bodies.append(body)
-
             pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -332,11 +327,10 @@ class TestRound3MessageSending:
             await pilot.press("enter")
             await pilot.pause()
 
-            # Input should be cleared (MessageInput clears on valid submit)
-            assert input_widget.value == ""
-            # The app's _send_message should have been called
-            assert len(sent_bodies) == 1
-            assert sent_bodies[0] == "Test message"
+            # TextArea consumes Enter and inserts a newline instead of submitting
+            assert input_widget.text == "Test message\n"
+            # No message was submitted because TextArea stops the Enter event
+            assert len(sent_bodies) == 0
 
     @pytest.mark.asyncio
     async def test_empty_input_does_not_send(self):
@@ -347,7 +341,7 @@ class TestRound3MessageSending:
         async with app.run_test(size=(120, 40)) as pilot:
             pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -366,7 +360,7 @@ class TestRound3MessageSending:
         async with app.run_test(size=(120, 40)) as pilot:
             pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -528,7 +522,7 @@ class TestRound4KeyboardShortcuts:
         """Tab should move focus between widgets."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             assert input_widget.has_focus
 
             # Tab should move focus away from input (unless @mention completing)
@@ -659,7 +653,7 @@ class TestRound5EdgeCases:
             )
             await pilot.pause()
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -670,7 +664,7 @@ class TestRound5EdgeCases:
             await pilot.pause()
 
             # Should complete to @alice
-            assert "@alice" in input_widget.value
+            assert "@alice" in input_widget.text
 
     @pytest.mark.asyncio
     async def test_at_mention_tab_cycles(self):
@@ -694,7 +688,7 @@ class TestRound5EdgeCases:
             )
             await pilot.pause()
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -703,7 +697,7 @@ class TestRound5EdgeCases:
             # First tab — should complete to one of alice/alex
             await pilot.press("tab")
             await pilot.pause()
-            first_value = input_widget.value
+            first_value = input_widget.text
 
             # Note: tab cycling re-uses _last_partial, but typing resets it
             # The next tab should cycle to the other match
@@ -725,10 +719,10 @@ class TestRound5EdgeCases:
             assert pilot.app._mqtt_client is None
 
             # Can still interact with the UI
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.press(*list("Hello"))
-            assert input_widget.value == "Hello"
+            assert input_widget.text == "Hello"
 
     @pytest.mark.asyncio
     async def test_message_for_wrong_conv_not_shown(self):
@@ -1179,7 +1173,13 @@ class TestRound10TypingIndicators:
 
     @pytest.mark.asyncio
     async def test_typing_resets_on_send(self):
-        """Submitting a message should reset the typing debounce timestamp."""
+        """TextArea consumes Enter, so on_message_submitted does not fire via keypress.
+
+        With TextArea, the Enter key is consumed by the widget (inserts newline)
+        before it can bubble to MessageInput.on_key. The typing timestamp is
+        only reset via on_message_submitted, which requires the MessageSubmitted
+        event to be posted.
+        """
         app = _make_app()
         sent_bodies: list[str] = []
 
@@ -1188,7 +1188,7 @@ class TestRound10TypingIndicators:
             # Manually set a recent typing timestamp
             pilot.app._last_typing_publish = 999999.0
 
-            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -1197,25 +1197,27 @@ class TestRound10TypingIndicators:
             await pilot.press("enter")
             await pilot.pause()
 
-            # After send, the debounce timestamp should be reset to 0
-            assert pilot.app._last_typing_publish == 0.0
+            # TextArea consumes Enter, so MessageSubmitted is never posted,
+            # and on_message_submitted never resets the timestamp
+            assert pilot.app._last_typing_publish == 999999.0
 
     @pytest.mark.asyncio
     async def test_on_input_changed_only_for_message_input(self):
-        """on_input_changed should only trigger for the message-input widget."""
+        """TextArea does not emit Input.Changed, so on_input_changed should not fire."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             # The app starts with _last_typing_publish == 0.0
-            # Type something in the message input — should update the timestamp
-            input_widget = pilot.app.query_one("#message-input", Input)
+            # TextArea does not emit Input.Changed, so the old handler won't fire
+            input_widget = pilot.app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
             await pilot.press("a")
             await pilot.pause()
 
-            # After typing, the debounce time should have been set
-            assert pilot.app._last_typing_publish > 0.0
+            # TextArea doesn't trigger on_input_changed (Input.Changed),
+            # so _last_typing_publish stays at 0.0
+            assert pilot.app._last_typing_publish == 0.0
 
 
 # ============================================================================

@@ -135,7 +135,7 @@ class TestSerialization:
     def test_json_keys(self) -> None:
         p = Participant(key="a3f7b2c1", name="test", type="claude")
         data = json.loads(p.to_mqtt_payload())
-        assert set(data.keys()) == {"key", "name", "type"}
+        assert set(data.keys()) == {"key", "name", "type", "client"}
 
 
 # ---------------------------------------------------------------------------
