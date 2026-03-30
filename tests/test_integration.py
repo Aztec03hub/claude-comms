@@ -1506,3 +1506,301 @@ class TestTokenAwarePaginationIntegration:
         )
         assert result["count"] < 100
         assert result["has_more"] is True
+
+
+# ===================================================================
+# Round 3: Log Exporter — dual format, rotation, dedup, validation
+# ===================================================================
+
+
+class TestLogExporterDualFormat:
+    """Test dual format output (text + JSONL) side by side."""
+
+    def _make_msg(self, msg_id="test-dual-001", conv="general"):
+        return {
+            "id": msg_id,
+            "ts": "2026-03-13T14:23:45.123-05:00",
+            "sender": {"key": "a3f7b2c1", "name": "claude-test", "type": "claude"},
+            "body": "Dual format test message",
+            "conv": conv,
+            "recipients": None,
+            "reply_to": None,
+        }
+
+    def test_both_files_written_simultaneously(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        exporter.write_message(self._make_msg())
+        assert (tmp_path / "general.log").exists()
+        assert (tmp_path / "general.jsonl").exists()
+
+    def test_text_file_has_header_and_entry(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        exporter.write_message(self._make_msg())
+        content = (tmp_path / "general.log").read_text()
+        assert "CONVERSATION: general" in content
+        assert "=" * 80 in content
+        assert "@claude-test" in content
+        assert "Dual format test message" in content
+
+    def test_jsonl_file_has_valid_json(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        exporter.write_message(self._make_msg())
+        line = (tmp_path / "general.jsonl").read_text().strip()
+        data = json.loads(line)
+        assert data["id"] == "test-dual-001"
+        assert data["body"] == "Dual format test message"
+
+    def test_multiple_conversations_separate_files(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        exporter.write_message(self._make_msg(msg_id="conv-a-1", conv="alpha"))
+        exporter.write_message(self._make_msg(msg_id="conv-b-1", conv="beta"))
+        for ext in [".log", ".jsonl"]:
+            assert (tmp_path / f"alpha{ext}").exists()
+            assert (tmp_path / f"beta{ext}").exists()
+
+    def test_presence_event_only_in_text(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        exporter.write_presence("general", "alice", "a1b2c3d4", "joined")
+        # Presence goes to .log only, not .jsonl
+        assert (tmp_path / "general.log").exists()
+        content = (tmp_path / "general.log").read_text()
+        assert "alice" in content
+        assert "joined the conversation" in content
+        # JSONL should not exist since no messages were written
+        if (tmp_path / "general.jsonl").exists():
+            jsonl_content = (tmp_path / "general.jsonl").read_text().strip()
+            assert jsonl_content == ""  # empty if it exists
+
+
+class TestLogExporterRotation:
+    """Test log file rotation."""
+
+    def test_rotation_triggers_on_size(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=3)
+        exporter.max_size_bytes = 50  # Very small to trigger rotation
+
+        for i in range(10):
+            msg = {
+                "id": f"rot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "A" * 100, "conv": "general",
+            }
+            exporter.write_message(msg)
+
+        # Main file should exist
+        assert (tmp_path / "general.jsonl").exists()
+        # At least one rotated file should exist
+        rotated = list(tmp_path.glob("general.jsonl.*"))
+        assert len(rotated) >= 1
+
+    def test_rotation_max_files_respected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=2)
+        exporter.max_size_bytes = 10
+
+        for i in range(20):
+            msg = {
+                "id": f"maxrot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "B" * 200, "conv": "general",
+            }
+            exporter.write_message(msg)
+
+        rotated = list(tmp_path.glob("general.jsonl.*"))
+        assert len(rotated) <= 2
+
+    def test_rotation_disabled_when_max_size_zero(self, tmp_path: Path) -> None:
+        """max_size_mb=0 means max_size_bytes=0, which disables rotation."""
+        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=3)
+        # Don't override max_size_bytes — leave at 0 to test disabled
+
+        for i in range(5):
+            msg = {
+                "id": f"norot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "C" * 100, "conv": "general",
+            }
+            exporter.write_message(msg)
+
+        rotated = list(tmp_path.glob("general.jsonl.*"))
+        assert len(rotated) == 0  # No rotation occurred
+
+    def test_text_rotation(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text", max_size_mb=0, max_files=3)
+        exporter.max_size_bytes = 50
+
+        for i in range(10):
+            msg = {
+                "id": f"trot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "D" * 100, "conv": "general",
+            }
+            exporter.write_message(msg)
+
+        assert (tmp_path / "general.log").exists()
+        rotated = list(tmp_path.glob("general.log.*"))
+        assert len(rotated) >= 1
+
+
+class TestLogExporterDedup:
+    """Test deduplication via MessageDeduplicator in LogExporter."""
+
+    def test_duplicate_message_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl")
+        msg = {
+            "id": "dup-001", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "original", "conv": "general",
+        }
+        assert exporter.write_message(msg) is True
+        assert exporter.write_message(msg) is False
+        lines = (tmp_path / "general.jsonl").read_text().strip().split("\n")
+        assert len(lines) == 1
+
+    def test_shared_deduplicator_across_exporters(self, tmp_path: Path) -> None:
+        dedup = MessageDeduplicator()
+        exp1 = LogExporter(log_dir=tmp_path / "exp1", fmt="jsonl", deduplicator=dedup)
+        exp2 = LogExporter(log_dir=tmp_path / "exp2", fmt="jsonl", deduplicator=dedup)
+        msg = {
+            "id": "shared-001", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "shared", "conv": "general",
+        }
+        assert exp1.write_message(msg) is True
+        assert exp2.write_message(msg) is False  # blocked by shared dedup
+
+    def test_message_without_id_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl")
+        msg = {
+            "id": "", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "no id", "conv": "general",
+        }
+        assert exporter.write_message(msg) is False
+
+
+class TestLogExporterConvIdValidation:
+    """Test conversation ID validation in LogExporter (path traversal prevention)."""
+
+    def test_path_traversal_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        msg = {
+            "id": "evil-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "evil", "conv": "../../etc/passwd",
+        }
+        assert exporter.write_message(msg) is False
+
+    def test_uppercase_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        msg = {
+            "id": "upper-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "upper", "conv": "MyChat",
+        }
+        assert exporter.write_message(msg) is False
+
+    def test_reserved_system_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        msg = {
+            "id": "sys-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "sys", "conv": "system",
+        }
+        assert exporter.write_message(msg) is False
+
+    def test_reserved_meta_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        msg = {
+            "id": "meta-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "meta", "conv": "meta",
+        }
+        assert exporter.write_message(msg) is False
+
+    def test_empty_conv_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="both")
+        msg = {
+            "id": "empty-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "empty", "conv": "",
+        }
+        assert exporter.write_message(msg) is False
+
+    def test_presence_with_invalid_conv_rejected(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text")
+        assert exporter.write_presence("../evil", "alice", "aabbccdd", "joined") is False
+
+    def test_valid_conv_ids(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl")
+        for conv_id in ["general", "dev", "a", "my-project-123"]:
+            msg = {
+                "id": f"valid-{conv_id}", "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "valid", "conv": conv_id,
+            }
+            assert exporter.write_message(msg) is True
+
+
+class TestGrepPatternsOnLogs:
+    """Verify grep patterns work on generated log files."""
+
+    def test_grep_by_sender_name(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text")
+        for name, key, msg_id in [
+            ("alice", "a1b2c3d4", "g1"),
+            ("bob", "e5f6a7b8", "g2"),
+        ]:
+            exporter.write_message({
+                "id": msg_id, "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": key, "name": name, "type": "claude"},
+                "body": f"From {name}", "conv": "general",
+            })
+        content = (tmp_path / "general.log").read_text()
+        lines = content.split("\n")
+        assert any("@alice" in l for l in lines)
+        assert any("@bob" in l for l in lines)
+
+    def test_grep_by_participant_key(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text")
+        exporter.write_message({
+            "id": "gk-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "deadbeef", "name": "test", "type": "claude"},
+            "body": "find by key", "conv": "general",
+        })
+        content = (tmp_path / "general.log").read_text()
+        assert "(deadbeef)" in content
+
+    def test_grep_by_message_content(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text")
+        exporter.write_message({
+            "id": "gc-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "UNIQUE_GREP_TOKEN_XYZ", "conv": "general",
+        })
+        content = (tmp_path / "general.log").read_text()
+        assert "UNIQUE_GREP_TOKEN_XYZ" in content
+
+    def test_grep_by_date_pattern(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text")
+        exporter.write_message({
+            "id": "gd-1", "ts": "2026-03-13T14:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "dated", "conv": "general",
+        })
+        content = (tmp_path / "general.log").read_text()
+        import re
+        # Pattern: ^[2026-03-13 should match message lines
+        lines = content.split("\n")
+        dated_lines = [l for l in lines if re.match(r"^\[2026-03-13", l)]
+        assert len(dated_lines) >= 1
+
+    def test_grep_presence_events(self, tmp_path: Path) -> None:
+        exporter = LogExporter(log_dir=tmp_path, fmt="text")
+        exporter.write_presence("general", "alice", "a1b2c3d4", "joined")
+        exporter.write_presence("general", "alice", "a1b2c3d4", "left")
+        content = (tmp_path / "general.log").read_text()
+        import re
+        lines = content.split("\n")
+        # Pattern: ^--- matches presence events
+        presence_lines = [l for l in lines if re.match(r"^--- ", l)]
+        assert len(presence_lines) == 2
