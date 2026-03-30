@@ -7,7 +7,7 @@
 <script>
   import { onMount } from 'svelte';
   import { X, SearchX, Search as SearchIcon } from 'lucide-svelte';
-  import { getParticipantColor, getInitials, formatTime } from '../lib/utils.js';
+  import { getParticipantColor, getInitials, formatTime, sanitizeHtml } from '../lib/utils.js';
 
   let { store, onClose } = $props();
 
@@ -69,9 +69,11 @@
   }
 
   function highlightMatch(text, query) {
-    if (!query) return text;
-    const regex = new RegExp('(' + query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-    return text.replace(regex, '<mark>$1</mark>');
+    if (!query) return sanitizeHtml(text);
+    const escaped = sanitizeHtml(text);
+    const sanitizedQuery = sanitizeHtml(query);
+    const regex = new RegExp('(' + sanitizedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    return escaped.replace(regex, '<mark>$1</mark>');
   }
 </script>
 

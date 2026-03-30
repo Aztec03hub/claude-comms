@@ -315,6 +315,8 @@ def start(
                 get_channel_participants,
             )
 
+            cors_origin = f"http://localhost:{web_port}"
+
             async def _api_messages(request: Request) -> JSONResponse:
                 """GET /api/messages/{channel}?count=50 — return recent history."""
                 channel = request.path_params["channel"]
@@ -327,7 +329,7 @@ def start(
                 return JSONResponse(
                     {"channel": channel, "count": len(msgs), "messages": msgs},
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": cors_origin,
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -338,7 +340,7 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": cors_origin,
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -354,7 +356,7 @@ def start(
                         "type": identity.get("type", "human"),
                     },
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": cors_origin,
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -365,7 +367,7 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": cors_origin,
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -378,7 +380,7 @@ def start(
                 return JSONResponse(
                     {"channel": channel, "participants": participants},
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": cors_origin,
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -389,7 +391,7 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": cors_origin,
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
