@@ -10,11 +10,13 @@
 [ERROR] Failed to load resource: net::ERR_FAILED
 [ERROR] Access to fetch at 'http://localhost:9920/api/participants/random' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
 [ERROR] Failed to load resource: net::ERR_FAILED
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/test-channel' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
 [ERROR] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
 [ERROR] Failed to load resource: net::ERR_FAILED
 
 --- Interaction Results ---
-  1. Clicked 4 sidebar channels
+  1. Clicked 5 sidebar channels
   2. Switched to general
   3. Sent 3 messages
   4. Search panel open: true
