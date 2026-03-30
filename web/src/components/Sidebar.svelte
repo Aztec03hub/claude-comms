@@ -514,6 +514,7 @@
   }
 
   .user-profile {
+    margin-top: auto;
     padding: 14px;
     border-top: 1px solid var(--border);
     display: flex;
@@ -522,6 +523,7 @@
     background: linear-gradient(180deg, transparent, rgba(0,0,0,0.15));
     cursor: pointer;
     transition: background 0.15s ease;
+    flex-shrink: 0;
   }
 
   .user-profile:hover {

@@ -316,10 +316,14 @@ def start(
             )
             from claude_comms.message import validate_conv_id
 
-            # Allow both localhost and 127.0.0.1 — browsers treat them as different origins
+            # Allow both localhost and 127.0.0.1, plus common Vite dev ports
             cors_origins = [
                 f"http://localhost:{web_port}",
                 f"http://127.0.0.1:{web_port}",
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:5174",
+                "http://127.0.0.1:5174",
             ]
 
             async def _api_messages(request: Request) -> JSONResponse:

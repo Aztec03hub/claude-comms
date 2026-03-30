@@ -355,15 +355,22 @@
     flex: 1;
     background: none;
     border: none;
-    outline: none;
+    outline: none !important;
+    box-shadow: none !important;
     color: var(--text-primary);
     font-size: 14px;
-    padding: 10px 0;
+    padding: 8px 0;
     font-family: inherit;
     resize: none;
     overflow-y: auto;
     line-height: 1.5;
-    max-height: 144px;
+    min-height: 44px;
+    max-height: 180px;
+  }
+
+  .input-wrap textarea:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
   }
 
   .input-wrap textarea::placeholder { color: var(--text-faint); }
