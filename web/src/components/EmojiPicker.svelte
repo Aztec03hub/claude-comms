@@ -1,7 +1,5 @@
 <script>
-  import { Popover } from 'bits-ui';
-
-  let { onSelect, onClose, open = $bindable(true) } = $props();
+  let { onSelect, onClose } = $props();
 
   let searchQuery = $state('');
   let activeCategory = $state('frequent');
@@ -42,29 +40,19 @@
     onSelect(emojiData);
   }
 
-  function handleOpenChange(isOpen) {
-    if (!isOpen) {
-      onClose();
-    }
-  }
+  import { onMount } from 'svelte';
+
+  onMount(() => { searchInput?.focus(); });
 </script>
 
-<Popover.Root
-  bind:open
-  onOpenChange={handleOpenChange}
->
-  <Popover.Content
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="emoji-backdrop" onclick={onClose}>
+  <div
     class="emoji-picker"
     data-testid="emoji-picker"
-    onOpenAutoFocus={(e) => {
-      e.preventDefault();
-      searchInput?.focus();
-    }}
-    onCloseAutoFocus={(e) => {
-      e.preventDefault();
-    }}
-    side="top"
-    sideOffset={8}
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
+    role="dialog"
   >
     <div class="emoji-picker-header">
       <input
@@ -105,16 +93,21 @@
         <div class="emoji-preview-code">{previewEmoji.code}</div>
       </div>
     </div>
-  </Popover.Content>
-</Popover.Root>
+  </div>
+</div>
 
 <style>
-  :global([data-popover-content][data-testid="emoji-picker"]) {
-    position: fixed !important;
-    bottom: 120px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    top: auto !important;
+  .emoji-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+  }
+
+  .emoji-picker {
+    position: fixed;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 100;
     width: 340px;
     background: rgba(37, 37, 40, 0.95);
