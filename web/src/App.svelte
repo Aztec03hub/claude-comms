@@ -179,7 +179,18 @@
 
   function handleEmojiSelect(emojiData) {
     if (emojiPickerTarget) {
+      // Opened from React button on a message — add reaction
       store.addReaction(emojiPickerTarget.id, emojiData.emoji);
+    } else {
+      // Opened from input emoji button — insert emoji into message input
+      const input = document.querySelector('[data-testid="message-input"]');
+      if (input) {
+        const start = input.selectionStart || input.value.length;
+        input.value = input.value.slice(0, start) + emojiData.emoji + input.value.slice(start);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+        input.selectionStart = input.selectionEnd = start + emojiData.emoji.length;
+      }
     }
     showEmojiPicker = false;
     emojiPickerTarget = null;
