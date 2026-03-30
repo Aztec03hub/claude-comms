@@ -64,7 +64,7 @@
     <div class="sidebar-divider"></div>
   {/if}
 
-  <div class="section-label" class:collapsed={convoCollapsed}>
+  <div class="section-label" class:collapsed={convoCollapsed} data-testid="sidebar-conversations-section">
     Conversations
     <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle">\u25BE</button>
   </div>

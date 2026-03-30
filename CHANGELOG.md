@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Playwright Browser E2E Tests
+
+- **Playwright test suite** (`web/e2e/`) -- 46 browser E2E tests across 8 test files covering: app loading (5), sidebar interactions (8), chat area (6), panel open/close (6), modal interactions (7), member list (6), context menu (5), and JS console error monitoring (3). Runs against Chromium headless with auto-started Vite dev server.
+- **`playwright.config.js`** -- Headless Chromium, screenshots on failure, video on failure, 1 retry, 30s timeout, built-in web server config
+- **npm test scripts** -- `test` (headless), `test:ui` (Playwright UI mode), `test:headed` (visible browser)
+- **`data-testid` attributes** -- Added to all interactive Svelte components for reliable test selectors
+
+### Fixed
+
+#### Bugs Found by Playwright E2E Tests
+
+- **Search panel covers header buttons** -- Chat header had `z-index: 2` while search panel had `z-index: 50`, making header buttons unclickable when search was open. Raised header to `z-index: 101`.
+- **Escape key doesn't close channel creation modal** -- ChannelModal only handled Escape on the name input's `onkeydown`, not globally. Added `<svelte:window onkeydown>` handler.
+- **Messages don't appear without MQTT broker** -- `sendMessage()` only published to MQTT with no local echo. Added immediate local store update via `#handleChatMessage()` with deduplication, and removed the broker-required guard so the UI works offline.
+- **Toast notifications never auto-dismiss** -- `addToast`/`dismissToast` used in-place array mutations (`push`/`splice`) on `$state` arrays inside `setTimeout` closures, which didn't reliably trigger Svelte 5 reactivity. Switched to immutable updates (`[...arr]`/`filter()`).
+
 #### Batch 4: Docker, CI, and Integration Tests
 
 - **`Dockerfile`** -- Multi-stage build: Stage 1 (`node:22-slim`) compiles the Svelte web UI, Stage 2 (`python:3.12-slim`) installs the Python package. Exposes ports 1883 (MQTT TCP), 9001 (MQTT WS), 9920 (MCP), 9921 (Web UI). Health check probes MQTT broker every 30s.

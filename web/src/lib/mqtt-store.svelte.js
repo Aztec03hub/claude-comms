@@ -157,7 +157,7 @@ export class MqttChatStore {
    * @param {string|null} replyTo
    */
   sendMessage(body, replyTo = null) {
-    if (!body.trim() || !this.#client) return;
+    if (!body.trim()) return;
 
     const msg = {
       id: generateUUID(),
@@ -174,7 +174,13 @@ export class MqttChatStore {
     };
 
     const topic = TOPIC_PREFIX + '/conv/' + this.activeChannel + '/messages';
-    this.#client.publish(topic, JSON.stringify(msg), { qos: 1 });
+
+    // Local echo: add message immediately so it appears even without broker
+    this.#handleChatMessage(this.activeChannel, msg);
+
+    if (this.#client && this.connected) {
+      this.#client.publish(topic, JSON.stringify(msg), { qos: 1 });
+    }
 
     // Stop typing indicator
     this.#publishTyping(false);

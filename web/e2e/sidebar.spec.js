@@ -16,16 +16,14 @@ test.describe('Sidebar interactions', () => {
   });
 
   test('clicking a channel highlights it (has active class)', async ({ page }) => {
-    // Click the second channel in the conversations list
-    const channels = page.locator('[data-testid="sidebar-conversations-section"] ~ .channel-list [data-testid^="channel-item-"]');
-    const count = await channels.count();
-    expect(count).toBeGreaterThan(1);
+    // Click a channel that is not currently active
+    // Use "random" channel which is not starred and should be unique in the list
+    const randomChannel = page.locator('[data-testid="channel-item-random"]');
+    await expect(randomChannel.first()).toBeVisible();
 
-    // Find a channel that is not currently active
-    const secondChannel = channels.nth(1);
-    await secondChannel.click();
+    await randomChannel.first().click();
 
-    await expect(secondChannel).toHaveClass(/active/);
+    await expect(randomChannel.first()).toHaveClass(/active/);
   });
 
   test('clicking a channel updates the header channel name', async ({ page }) => {

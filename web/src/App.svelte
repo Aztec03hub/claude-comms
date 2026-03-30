@@ -60,16 +60,14 @@
   });
 
   function addToast(toast) {
-    toasts.push(toast);
+    toasts = [...toasts, toast];
     setTimeout(() => {
-      const idx = toasts.findIndex(t => t.id === toast.id);
-      if (idx >= 0) toasts.splice(idx, 1);
+      toasts = toasts.filter(t => t.id !== toast.id);
     }, 5000);
   }
 
   function dismissToast(id) {
-    const idx = toasts.findIndex(t => t.id === id);
-    if (idx >= 0) toasts.splice(idx, 1);
+    toasts = toasts.filter(t => t.id !== id);
   }
 
   function handleOpenThread(message) {
@@ -274,7 +272,7 @@
     align-items: center;
     gap: 12px;
     position: relative;
-    z-index: 51;
+    z-index: 101;
     background: rgba(17,17,19,0.8);
     backdrop-filter: blur(16px) saturate(1.2);
   }

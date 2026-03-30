@@ -28,9 +28,7 @@ test.describe('Member list', () => {
     const onlineCount = await onlineSection.count();
     const offlineCount = await offlineSection.count();
 
-    // If no broker, there may be no sections (no participants)
-    // If broker is running, we expect at least one section
-    // Either way, the member-list container should exist
+    // The member-list container should exist regardless
     const memberSidebar = page.locator('[data-testid="member-list"]');
     await expect(memberSidebar).toBeVisible();
 
@@ -44,8 +42,9 @@ test.describe('Member list', () => {
     }
   });
 
-  test('clicking a member opens profile card', async ({ page }) => {
-    const members = page.locator('[data-testid^="member-"]');
+  test('clicking a member opens profile card (if members exist)', async ({ page }) => {
+    // Members with data-testid="member-{key}" (not member-list or members-*)
+    const members = page.locator('.member');
     const count = await members.count();
 
     if (count > 0) {
@@ -61,7 +60,7 @@ test.describe('Member list', () => {
   });
 
   test('profile card has name, role, action buttons', async ({ page }) => {
-    // Open profile via user profile avatar in sidebar
+    // Open profile via user profile avatar in sidebar (always available)
     const userAvatar = page.locator('.user-avatar-wrap');
     await userAvatar.click();
 
@@ -92,10 +91,11 @@ test.describe('Member list', () => {
     const profileCard = page.locator('[data-testid="profile-card"]');
     await expect(profileCard).toBeVisible();
 
-    // Click backdrop
+    // Click backdrop (the profile-backdrop element covers the full screen)
     const backdrop = page.locator('[data-testid="profile-card-close"]');
+    // Click far from the card to hit the backdrop
     await backdrop.click({ position: { x: 600, y: 300 } });
 
-    await expect(page.locator('[data-testid="profile-card-close"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="profile-card"]')).not.toBeVisible();
   });
 });
