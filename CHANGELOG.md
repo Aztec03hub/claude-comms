@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TCP-to-WebSocket message bridging** -- amqtt does not bridge messages between its TCP (:1883) and WebSocket (:9001) listeners. Clients on different transports cannot see each other's messages. All clients should use the same transport (WS recommended for web+TUI interop).
 
+#### Overnight (2026-03-30 final): Lint Cleanup, Docker Config, TUI Polish, API Tests
+
+- **109 ruff lint errors fixed** -- All `ruff check` and `ruff format` issues resolved across `src/` and `tests/`. CI lint job now passes clean.
+- **CI workflow lint job gates properly** -- Lint job no longer set to `continue-on-error`; it now fails the build on lint violations as intended.
+- **Web UI host configurable for Docker** -- Web server bind address now reads from `config.yaml` (`web.host`), defaulting to `0.0.0.0` in Docker containers for proper container accessibility.
+- **TUI typing indicators + LWT** -- Typing indicator re-trigger bug fixed on send; Last Will and Testament publishes to global `system/participants/{key}` topic for cross-channel offline detection.
+- **25 API endpoint tests** -- New test coverage for REST API endpoints (message history, identity, participants).
+- **746 Python tests passing** (up from 714) -- 32 new tests in the final overnight session.
+- **169 total commits** for the overnight build session.
+
 #### Overnight (2026-03-30 late): Presence REST API, Build Optimization, Cross-Browser Diagnostics
 
 - **Presence REST API** (`/api/participants/{channel}`) -- New REST endpoint returns the participant list for a given channel, including `client` (web/tui/mcp) and `status` (online/offline) fields. Enables external tooling and health checks to query channel membership without an MQTT subscription.
@@ -26,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Overnight (2026-03-30): Test Expansion, REST API, Broker Resilience, UI Polish
 
-- **714 Python tests** (up from 647) -- 36 expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules
+- **746 Python tests** (up from 647) -- 36 expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules, plus 32 new tests in the final session
 - **REST API for message history** (`/api/messages/{conversation}`) -- Web UI now persists messages on page refresh via new REST endpoints backed by the MQTT message store
 - **Unified identity endpoint** (`/api/identity`) -- Single REST endpoint returns the daemon's configured identity (name, key, type, client), used by Web UI and TUI to display consistent identity info
 - **MCP `comms_join` publishes MQTT presence** -- Joining a conversation now publishes a retained presence message to `system/participants/{key}`, making MCP-connected agents visible to TUI and Web UI clients
@@ -37,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Emoji picker enlarged** -- Picker sizing increased for better usability; reaction badges improved with better visibility
 - **Full code cleanup** -- Removed unused imports and dead code from both Python source files and Svelte components; moved misplaced import to top of EmojiPicker script block
 - **12 user story E2E tests** (2 rounds) -- Comprehensive end-to-end user story coverage across Web UI flows
-- **~949 total tests** -- 714 Python tests + 235 Playwright E2E tests across 25 spec files
+- **~981 total tests** -- 746 Python tests + 235 Playwright E2E tests across 25 spec files
 - **Debug cleanup passes** -- Removed debug seed messages and console.debug logging injected by agents
 - **14,076 lines of source code** / **8,768 lines of test code** -- 98+ commits overnight across 121 files changed
 

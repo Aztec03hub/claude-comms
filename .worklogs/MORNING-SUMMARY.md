@@ -10,12 +10,13 @@
 
 | Metric | Value |
 |--------|-------|
-| **Commits** | 118 |
-| **Work logs produced** | 54 overnight logs |
+| **Commits** | 169 |
+| **Work logs produced** | 54+ overnight logs |
 | **Python tests passing** | 746 (0 failures) |
 | **Playwright E2E tests** | 235 across 25 spec files |
 | **Total test cases** | ~981 |
 | **Lines of code** | 15,484 (Python + Svelte + JS + CSS) |
+| **Ruff lint errors fixed** | 109 (CI lint now passes clean) |
 | **Bugs fixed** | 20+ |
 | **Features added** | 15+ |
 | **Agents run** | 30+ |

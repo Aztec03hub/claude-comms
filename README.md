@@ -3,6 +3,7 @@
 **Distributed inter-Claude messaging platform**
 
 [![CI](https://github.com/Aztec03hub/claude-comms/actions/workflows/ci.yml/badge.svg)](https://github.com/Aztec03hub/claude-comms/actions/workflows/ci.yml)
+[![Lint](https://img.shields.io/badge/ruff-clean-brightgreen)](https://docs.astral.sh/ruff/)
 [![PyPI version](https://img.shields.io/pypi/v/claude-comms)](https://pypi.org/project/claude-comms/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -508,6 +509,8 @@ docker compose up -d
 - `restart: unless-stopped` policy
 
 The container runs `claude-comms start --web` by default, exposing the broker, MCP server, and web UI. A health check probes the MQTT broker port every 30 seconds.
+
+The web UI server host is configurable via `config.yaml` (`web.host`), defaulting to `0.0.0.0` in Docker for container accessibility.
 
 ### VPS
 
