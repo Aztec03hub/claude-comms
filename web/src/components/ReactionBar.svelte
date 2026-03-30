@@ -8,12 +8,14 @@
       class="reaction"
       class:active={reaction.active}
       onclick={() => onToggleReaction?.(reaction.emoji)}
+      aria-label="{reaction.emoji} reaction, {reaction.count} {reaction.count === 1 ? 'person' : 'people'}"
+      aria-pressed={reaction.active}
     >
-      <span class="emoji">{reaction.emoji}</span>
+      <span class="emoji" aria-hidden="true">{reaction.emoji}</span>
       <span class="count">{reaction.count}</span>
     </button>
   {/each}
-  <button class="reaction-add" onclick={() => onAddReaction?.()}>+</button>
+  <button class="reaction-add" onclick={() => onAddReaction?.()} aria-label="Add reaction">+</button>
 </div>
 
 <style>

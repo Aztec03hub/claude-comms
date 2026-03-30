@@ -24,7 +24,6 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="msg-row"
   class:claude={!isHuman}
@@ -33,6 +32,8 @@
   class:has-code={hasCode}
   oncontextmenu={handleContext}
   data-testid="message-{message.id}"
+  role="article"
+  aria-label="Message from {message.sender.name}"
 >
   {#if !consecutive}
     <Avatar

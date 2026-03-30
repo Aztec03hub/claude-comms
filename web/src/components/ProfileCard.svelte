@@ -9,14 +9,14 @@
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} />
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="profile-backdrop" onclick={onClose} data-testid="profile-card-close">
+<div class="profile-backdrop" onclick={onClose} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClose(); }} role="presentation" data-testid="profile-card-close">
   <div
     class="profile-card"
     data-testid="profile-card"
     onclick={(e) => e.stopPropagation()}
     role="dialog"
+    aria-label="Profile card for {participant.name}"
+    aria-modal="true"
   >
     <div class="profile-card-banner"></div>
     <div class="profile-card-avatar" style="background: {color.gradient}">

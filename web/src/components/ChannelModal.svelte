@@ -64,8 +64,10 @@
             class="toggle-switch"
             class:active={isPrivate}
             onclick={() => isPrivate = !isPrivate}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); isPrivate = !isPrivate; } }}
             role="switch"
             aria-checked={isPrivate}
+            aria-label="Private channel"
             tabindex="0"
             data-testid="channel-modal-private-toggle"
           ></div>

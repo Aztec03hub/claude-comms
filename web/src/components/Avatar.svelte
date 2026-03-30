@@ -14,6 +14,7 @@
     onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
     role="button"
     tabindex="0"
+    aria-label="View profile for {name}"
     data-testid="avatar"
   >
     {initials}

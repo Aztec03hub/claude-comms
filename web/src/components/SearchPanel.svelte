@@ -39,14 +39,15 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="search-panel" data-testid="search-panel">
+<div class="search-panel" data-testid="search-panel" role="search" aria-label="Search messages">
   <div class="search-panel-header">
     <div class="search-panel-top">
       <span class="search-panel-title">Search Messages</span>
-      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close"><X size={16} strokeWidth={2} /></button>
+      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close" aria-label="Close search panel"><X size={16} strokeWidth={2} /></button>
     </div>
+    <label for="search-panel-input-field" class="sr-only">Search messages</label>
     <input
+      id="search-panel-input-field"
       class="search-panel-input"
       type="text"
       placeholder="Search..."

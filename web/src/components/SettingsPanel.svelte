@@ -29,10 +29,10 @@
   }
 </script>
 
-<div class="settings-panel" data-testid="settings-panel">
+<div class="settings-panel" data-testid="settings-panel" role="complementary" aria-label="Settings">
   <div class="settings-header">
     <span class="settings-title">Settings</span>
-    <button class="settings-close" onclick={onClose} data-testid="settings-panel-close">
+    <button class="settings-close" onclick={onClose} data-testid="settings-panel-close" aria-label="Close settings panel">
       <X size={16} strokeWidth={2} />
     </button>
   </div>

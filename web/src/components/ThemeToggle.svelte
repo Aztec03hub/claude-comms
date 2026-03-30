@@ -3,7 +3,7 @@
   let { mode = 'dark', onToggle } = $props();
 </script>
 
-<button class="theme-toggle" onclick={onToggle} title="Toggle theme" data-testid="theme-toggle">
+<button class="theme-toggle" onclick={onToggle} title="Toggle theme" aria-label="Toggle theme, currently {mode}" data-testid="theme-toggle">
   {#if mode === 'dark'}
     <Sun size={16} strokeWidth={2} />
   {:else}

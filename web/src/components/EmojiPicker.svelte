@@ -45,17 +45,20 @@
   onMount(() => { searchInput?.focus(); });
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="emoji-backdrop" onclick={onClose}>
+<div class="emoji-backdrop" onclick={onClose} onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} role="presentation">
   <div
     class="emoji-picker"
     data-testid="emoji-picker"
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
     role="dialog"
+    aria-label="Emoji picker"
+    aria-modal="true"
   >
     <div class="emoji-picker-header">
+      <label for="emoji-search-input" class="sr-only">Search emoji</label>
       <input
+        id="emoji-search-input"
         class="emoji-search"
         type="text"
         placeholder="Search emoji..."
@@ -83,6 +86,7 @@
           onclick={() => selectEmoji(emojiData)}
           onmouseenter={() => previewEmoji = emojiData}
           data-testid="emoji-item"
+          aria-label={emojiData.name}
         >{emojiData.emoji}</button>
       {/each}
     </div>

@@ -72,6 +72,9 @@
   bind:this={messagesEl}
   onscroll={handleScroll}
   data-testid="chat-view"
+  role="log"
+  aria-label="Chat messages"
+  aria-live="polite"
 >
   {#if messages.length === 0}
     <div class="empty-state">

@@ -6,15 +6,14 @@
   // Escape handled by App.svelte global handler
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="pinned-panel" data-testid="pinned-panel">
+<div class="pinned-panel" data-testid="pinned-panel" role="complementary" aria-label="Pinned messages">
   <div class="pinned-header">
     <div class="pinned-title">
       <Pin size={14} strokeWidth={2} />
       Pinned Messages
       <span class="pinned-count">{messages.length}</span>
     </div>
-    <button class="pinned-close" onclick={onClose} data-testid="pinned-panel-close"><X size={16} strokeWidth={2} /></button>
+    <button class="pinned-close" onclick={onClose} data-testid="pinned-panel-close" aria-label="Close pinned messages panel"><X size={16} strokeWidth={2} /></button>
   </div>
   <div class="pinned-list">
     {#each messages as msg (msg.id)}

@@ -20,7 +20,7 @@
 <div class="code-block-wrap">
   <div class="code-block-header">
     <span class="code-lang">{language || 'code'}</span>
-    <button class="code-copy-btn" class:copied onclick={copyCode}>
+    <button class="code-copy-btn" class:copied onclick={copyCode} aria-label={copied ? 'Copied to clipboard' : 'Copy code to clipboard'}>
       {#if copied}
         <Check size={12} strokeWidth={2} />
         Copied!

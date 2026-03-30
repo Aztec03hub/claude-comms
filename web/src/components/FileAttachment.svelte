@@ -24,8 +24,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="file-attachment" onclick={triggerDownload} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') triggerDownload(); }} role="button" tabindex="0">
+<div class="file-attachment" onclick={triggerDownload} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') triggerDownload(); }} role="button" tabindex="0" aria-label="Download {name}">
   <div class="file-icon {iconClass}">
     <File size={18} strokeWidth={2} />
   </div>
@@ -37,7 +36,7 @@
       <span>{size}</span>
     </div>
   </div>
-  <button class="file-download" onclick={handleDownload} data-testid="file-download">
+  <button class="file-download" onclick={handleDownload} data-testid="file-download" aria-label="Download {name}">
     <Download size={14} strokeWidth={2} />
   </button>
 </div>

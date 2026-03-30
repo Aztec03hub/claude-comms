@@ -22,14 +22,14 @@
   }
 </script>
 
-<div class="thread-panel" data-testid="thread-panel">
+<div class="thread-panel" data-testid="thread-panel" role="complementary" aria-label="Thread replies">
   <div class="thread-header">
     <div class="thread-title">
       <MessageSquare size={16} strokeWidth={2} />
       Thread
     </div>
     <span class="thread-reply-count">{messages.length} replies</span>
-    <button class="thread-close" onclick={onClose} data-testid="thread-panel-close"><X size={16} strokeWidth={2} /></button>
+    <button class="thread-close" onclick={onClose} data-testid="thread-panel-close" aria-label="Close thread panel"><X size={16} strokeWidth={2} /></button>
   </div>
 
   <div class="thread-parent">
@@ -63,7 +63,9 @@
 
   <div class="thread-input">
     <div class="thread-input-wrap">
+      <label for="thread-reply-input-field" class="sr-only">Reply in thread</label>
       <input
+        id="thread-reply-input-field"
         type="text"
         placeholder="Reply in thread..."
         bind:value={replyText}

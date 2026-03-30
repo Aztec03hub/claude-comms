@@ -4,14 +4,14 @@
   let { message, onReply, onReact, onMore } = $props();
 </script>
 
-<div class="msg-actions" data-testid="message-actions">
-  <button class="msg-action-btn" title="Reply" onclick={onReply} data-testid="action-reply">
+<div class="msg-actions" data-testid="message-actions" role="toolbar" aria-label="Message actions">
+  <button class="msg-action-btn" title="Reply" aria-label="Reply to message" onclick={onReply} data-testid="action-reply">
     <Reply size={14} />
   </button>
-  <button class="msg-action-btn" title="React" onclick={onReact} data-testid="action-react">
+  <button class="msg-action-btn" title="React" aria-label="Add reaction" onclick={onReact} data-testid="action-react">
     <Smile size={14} />
   </button>
-  <button class="msg-action-btn" title="More" onclick={onMore} data-testid="action-more">
+  <button class="msg-action-btn" title="More" aria-label="More actions" aria-haspopup="true" onclick={onMore} data-testid="action-more">
     <Ellipsis size={14} />
   </button>
 </div>

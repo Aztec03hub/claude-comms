@@ -4,7 +4,7 @@
   let { count = 0, onClick } = $props();
 </script>
 
-<button class="scroll-bottom" title="Scroll to bottom" onclick={onClick} data-testid="scroll-to-bottom">
+<button class="scroll-bottom" title="Scroll to bottom" aria-label="Scroll to bottom{count > 0 ? `, ${count} unread messages` : ''}" onclick={onClick} data-testid="scroll-to-bottom">
   <ChevronDown size={16} />
   {#if count > 0}
     <span class="badge">{count}</span>
