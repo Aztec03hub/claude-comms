@@ -316,7 +316,11 @@ def start(
             )
             from claude_comms.message import validate_conv_id
 
-            cors_origin = f"http://localhost:{web_port}"
+            # Allow both localhost and 127.0.0.1 — browsers treat them as different origins
+            cors_origins = [
+                f"http://localhost:{web_port}",
+                f"http://127.0.0.1:{web_port}",
+            ]
 
             async def _api_messages(request: Request) -> JSONResponse:
                 """GET /api/messages/{channel}?count=50 — return recent history."""
@@ -335,7 +339,7 @@ def start(
                 return JSONResponse(
                     {"channel": channel, "count": len(msgs), "messages": msgs},
                     headers={
-                        "Access-Control-Allow-Origin": cors_origin,
+                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -346,7 +350,7 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": cors_origin,
+                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -362,7 +366,7 @@ def start(
                         "type": identity.get("type", "human"),
                     },
                     headers={
-                        "Access-Control-Allow-Origin": cors_origin,
+                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -373,7 +377,7 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": cors_origin,
+                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -391,7 +395,7 @@ def start(
                 return JSONResponse(
                     {"channel": channel, "participants": participants},
                     headers={
-                        "Access-Control-Allow-Origin": cors_origin,
+                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -402,7 +406,7 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": cors_origin,
+                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
