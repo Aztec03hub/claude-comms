@@ -6,16 +6,15 @@
 
 **The Svelte 5 reactivity bug is FIXED.** Messages now render instantly as chat bubbles when sent. The root cause was a `ConnectionStatus` component with a `$effect` that triggered an infinite re-render loop, preventing `$derived` stores from recalculating. The fix (commit `81da3b8`) eliminated the effect loop, and `$derived.by()` with explicit dependency reads + synchronous immutable reassignment in `#handleChatMessage()` completed the solution. Verified with Playwright -- 3 messages sent in `#general`, all rendered immediately. Channel switching isolates messages correctly. Mentions highlight properly.
 
-## Overnight Stats
+## Final Overnight Stats
 
 | Metric | Value |
 |--------|-------|
-| **Commits** | 169 |
-| **Work logs produced** | 54+ overnight logs |
+| **Commits** | 154 |
+| **Work logs produced** | 70 overnight logs |
 | **Python tests passing** | 746 (0 failures) |
-| **Playwright E2E tests** | 235 across 25 spec files |
-| **Total test cases** | ~981 |
-| **Lines of code** | 15,484 (Python + Svelte + JS + CSS) |
+| **Playwright E2E tests** | 28 spec files |
+| **Lines of code** | 15,835 (Python + Svelte + JS + CSS) |
 | **Ruff lint errors fixed** | 109 (CI lint now passes clean) |
 | **Bugs fixed** | 20+ |
 | **Features added** | 15+ |
@@ -59,6 +58,13 @@
 - 12 E2E user story flows
 - 67 TUI-specific tests
 - Broker lifecycle, MCP tools, REST API, pagination coverage
+
+### Security & Documentation
+- **Security audit** -- full review of XSS, auth, CORS, injection, and path traversal
+- **XSS fix** -- patched search highlight to prevent script injection
+- **CORS restriction** -- locked down to web UI origin only
+- **CONTRIBUTING.md** -- added comprehensive contributor guide (dev setup, style guides, testing, gotchas)
+- **Performance audit** -- 8 findings documented (bundle sizes, anti-patterns)
 
 ### Polish
 - Accessibility: ARIA on 21 components
