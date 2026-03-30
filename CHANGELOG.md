@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Overnight: Comprehensive Test Expansion (661+ total tests)
+
+- **504 Python tests** (up from 360) -- 113 new MQTT integration tests across 5 rounds: broker lifecycle (31), MCP tools logic (43), log exporter (24), CLI commands (19), gap coverage for error handling and edge cases (27)
+- **19 new CLI tests** (`tests/test_cli.py`) -- init config creation, name options, key generation, force overwrite, status commands, env var overrides, deep merge
+- **43 new TUI tests** (`tests/test_tui.py`) using Textual's `app.run_test()` with `Pilot` -- app rendering, channel switching, message sending, keyboard shortcuts (Ctrl+Q/N/K), edge cases (long messages, unicode, code blocks, @mention tab completion, unread badges, presence updates)
+- **60 new comprehensive web E2E tests** (`web/e2e/overnight-comprehensive.spec.js`) -- 9 rounds covering sidebar, header, input, messages, panels, modals, member list, theme/responsive, keyboard
+- **19 new members/theme/responsive tests** (`web/e2e/overnight-members-theme.spec.js`) -- member list, profile card (7 tests), theme toggle (3 tests), responsive layout at 5 viewpoints (5 tests)
+- **10 new accessibility Playwright tests** (`web/e2e/a11y-keyboard.spec.js`) -- Tab focus movement, focus-visible rings, Enter activation, Escape handling, ARIA roles verification, sr-only class verification
+
+#### Overnight: Accessibility Overhaul
+
+- **ARIA roles added to 21 components** -- `role="log"` on ChatView, `role="article"` on MessageBubble, `role="toolbar"` on MessageActions, `role="search"` on SearchPanel, `role="complementary"` on PinnedPanel/ThreadPanel/SettingsPanel, `role="status"`/`role="alert"` on ConnectionStatus, `role="alert"` on NotificationToast, `role="separator"` on DateSeparator, `role="presentation"` on backdrops, `aria-modal`/`aria-label` on dialogs
+- **All 7 svelte-ignore a11y suppressions removed** -- replaced with proper semantic roles and keyboard handlers (FileAttachment, MessageBubble, PinnedPanel, EmojiPicker, ProfileCard x2, SearchPanel)
+- **`.sr-only` utility class** added to `app.css` for screen reader labels on emoji search, search input, and thread reply input
+- **`aria-hidden="true"`** on decorative elements: DateSeparator SVGs, ReadReceipt SVGs, ConnectionStatus dots, ReactionBar emoji spans
+- **`aria-label` on all icon-only buttons** -- ThemeToggle, ScrollToBottom, CodeBlock copy, ReactionBar buttons with emoji name + count, Avatar with profile name
+- **`aria-pressed` state** on ReactionBar toggle buttons
+- **Enhanced `focus-visible` CSS rules** -- 2px outline + box-shadow on buttons, inputs, textareas, and ARIA interactive roles
+
+#### Overnight: TUI Improvements
+
+- **12 sender colors** -- expanded from 8 to 12 (ember, gold, teal, rose, emerald, sky, violet, pink, bright amber, light blue, purple, green)
+- **Sender type icons** -- robot emoji for Claude, person emoji for human
+- **Channel message previews** -- last message preview under each channel name (sender: text, truncated to 22 chars) with `set_channel_preview()` API
+- **Muted channel indicator** -- bell-off emoji with `--muted` CSS class and `set_channel_muted()` API
+- **Unread badges** -- inline count display in channel header row
+- **New `StatusBar` widget** (`tui/status_bar.py`) -- connection state (green/red dot), active channel with `#` prefix, participant count, typing indicators ("pencil username is typing..." in amber italic), current user identity
+- **@mention highlighting** in amber/gold throughout message text
+- **Warmer Carbon Ember styling** -- ember-tinted borders (`#2a2017`), updated sidebar backgrounds (`#1a1a1c`), themed Footer key hints, 1px scrollbar
+
+#### Overnight: Web UI Polish
+
+- **Improved empty states** -- ChatView shows MessageSquare icon with pulsing double-ring animation; SearchPanel shows contextual empty states for before-search and no-results
+- **Improved connection states** -- animated bouncing dots during connecting, retry countdown with RefreshCw icon during disconnect, spinning reconnect indicator
+- **Tooltips added** to SearchPanel close/filters, NotificationToast dismiss, FileAttachment download, DateSeparator (full date), LinkPreview, ReadReceipt
+- **ScrollToBottom entrance animation** -- spring slide-up, hover bounce, badge animation
+- **Toast progress bar** -- amber gradient countdown bar for auto-dismiss timing
+- **CodeBlock theme-independence** -- visual regression fix ensuring code blocks render correctly across themes
+
 #### Sprint 2: bits-ui Component Migration (Batch 1)
 
 - **ContextMenu -> bits-ui ContextMenu** -- `ContextMenu.Root`/`Content`/`Item`/`Separator` with controlled open state, Floating UI viewport-aware positioning (replaces manual clamping), arrow key navigation between items, Enter/Space activation, Escape/click-outside dismiss via bits-ui layers, `data-highlighted` keyboard focus state
@@ -80,6 +119,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **6 Python modules hardened** -- `participant.py` and `message.py` validators accept `None` safely; `log_exporter.py` handles missing/malformed fields gracefully; `hook_installer.py` validates inputs and wraps file I/O in try/except; `broker.py` validates `generate_client_id()` inputs; `mcp_server.py` replaces bare `assert` with proper `RuntimeError` (asserts are stripped with `python -O`)
 
 ### Fixed
+
+#### Overnight Bug Fixes
+
+- **TUI Ctrl+K binding conflict** -- Textual's built-in `Input` widget binds `ctrl+k` to `delete_right_all`, intercepting the app-level Ctrl+K conversation switching shortcut. Fixed by adding `priority=True` to the binding in `app.py`.
+- **Unused CSS selector** -- `.header-members svg` in App.svelte was unused because Svelte scopes CSS; changed to `.header-members :global(svg)` to pierce scoping.
 
 #### Bugs Found by Parallel Testing Agents
 
@@ -332,7 +376,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 ### Project Stats
 
 - **64 source files** across Python, Svelte, JS, CSS, and shell scripts
-- **464 total tests**: 360 Python (10 test modules, ~0.5s) + 104 Playwright browser E2E (16 spec files) with **120+ test screenshots**
+- **661+ total tests**: 504 Python (12 test modules, ~0.5s) + 43 TUI (Textual run_test) + 114+ Playwright browser E2E (19 spec files) with **120+ test screenshots**
 - **10 parallel testing agents** deployed for comprehensive functional browser testing, finding and fixing **12 bugs**
 - **Zero JS runtime errors** confirmed across all interaction types
 - **27 Svelte components** (26 in `components/` + `App.svelte`) with **60+ `data-testid` attributes**

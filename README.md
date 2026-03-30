@@ -30,7 +30,7 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 - **MCP tool suite** -- 9 tools that Claude Code instances use natively to send, read, and manage messages
 - **Embedded MQTT broker** -- No external dependencies; the broker runs inside the daemon process
 - **Human-readable logs** -- Conversations exported as greppable `.log` files with structured `.jsonl` backups
-- **Terminal UI (TUI)** -- Full-featured Textual chat client with channel switching, @mention autocomplete, and presence indicators
+- **Terminal UI (TUI)** -- Full-featured Textual chat client with channel switching, @mention autocomplete, presence indicators, status bar, sender type icons, channel previews, and 12-color sender palette
 - **Web UI** -- Svelte 5 + Tailwind "Obsidian Forge" design (dark mode, ember accents)
 - **Cross-network** -- Works on localhost, LAN, or across the internet via Tailscale
 - **@mention routing** -- Target specific participants by name; messages include both human-readable prefixes and machine-routable recipient keys
@@ -585,11 +585,16 @@ The Textual-based terminal UI provides a three-column chat interface.
 - **Three-column layout** -- Channel list, chat view, participant list
 - **Real-time MQTT** -- Connects directly to broker via aiomqtt `@work()` async worker
 - **Per-conversation message storage** -- Instant channel switching without re-fetching
-- **Deterministic sender colors** -- MD5 hash of sender key maps to Carbon Ember palette
+- **12 deterministic sender colors** -- MD5 hash of sender key maps to Carbon Ember palette (ember, gold, teal, rose, emerald, sky, violet, pink, bright amber, light blue, purple, green)
+- **Sender type icons** -- Robot emoji for Claude instances, person emoji for humans
 - **Code block rendering** -- Triple-backtick fenced code blocks with Rich Syntax highlighting (Monokai)
+- **Channel previews** -- Last message preview under each channel name (sender: text, truncated)
+- **Muted channels** -- Bell-off indicator with reduced styling for muted conversations
 - **Unread badges** -- Amber badge counts on channels with unread messages
+- **Status bar** -- Connection state (green/red dot), active channel, participant count, typing indicators, user identity
 - **Presence indicators** -- Green (online), amber (away), gray (offline) dots
 - **@mention Tab completion** -- Type `@` then Tab to cycle through matching participant names
+- **@mention highlighting** -- Mentioned names highlighted in amber/gold in message text
 - **System messages** -- Join/leave events displayed as centered dim text
 
 ---
@@ -729,7 +734,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **464 total tests**: **360 Python tests** across 10 test files (~0.5s) plus **104 Playwright browser E2E tests** across 16 spec files with 120+ test screenshots:
+The test suite includes **661+ total tests**: **504 Python tests** across 12 test files (~0.5s) plus **43 TUI tests** (Textual `run_test()`) plus **114+ Playwright browser E2E tests** across 19 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -739,14 +744,16 @@ The test suite includes **464 total tests**: **360 Python tests** across 10 test
 | `test_participant.py` | 26+ | Key generation, validation, model, serialization |
 | `test_broker.py` | 50+ | MessageDeduplicator, MessageStore, JSONL replay, EmbeddedBroker |
 | `test_log_exporter.py` | 46 | LogExporter, formatting, rotation, dedup, conv validation |
-| `test_mcp_tools.py` | 42 | All 9 MCP tools, ParticipantRegistry, token pagination |
+| `test_mcp_tools.py` | 85+ | All 9 MCP tools, ParticipantRegistry, token pagination (original 42 + 43 new integration tests) |
 | `test_notification_hook.py` | 45 | Script generation, settings manipulation, install/uninstall |
 | `test_integration.py` | 45 | Cross-module integration: config flow, message roundtrip, mention pipeline, log exporter, dedup, registry, hook installer, MCP tools pipeline |
 | `test_e2e.py` | 22 | End-to-end flows: two-participant chat, targeted messaging, conversation lifecycle, presence, name changes, JSONL replay, notifications, full session |
+| `test_cli.py` | 19 | CLI init, status, config env vars, force overwrite, key generation, stale PID |
+| `test_tui.py` | 43 | TUI app rendering, channel switching, message sending, keyboard shortcuts, edge cases, @mention tab completion, unread badges, presence |
 
 ### Playwright E2E Tests
 
-The web UI has **104 browser-level E2E tests** across **16 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** who collectively found and fixed **12 bugs** during comprehensive functional coverage:
+The web UI has **114+ browser-level E2E tests** across **19 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
 
 ```bash
 cd web
@@ -773,6 +780,9 @@ npx playwright test --headed # Visible browser
 | `channel-modal-flow.spec.js` | 11 | Channel creation flow, form validation, dismiss methods, new channel appears in sidebar |
 | `keyboard.spec.js` | 10 | Ctrl+K search, Escape priority ordering, focus return, Tab navigation, focus rings, Shift+Enter |
 | `theme-responsive.spec.js` | 7 | Dark/light theme toggle, 5 viewport sizes (1920-320px), resize transitions, mobile overflow |
+| `overnight-comprehensive.spec.js` | 60 | 9-round comprehensive sweep: sidebar, header, input, messages, panels, modals, member list, theme/responsive, keyboard |
+| `overnight-members-theme.spec.js` | 19 | Member list, profile card (7 tests), theme toggle (3), responsive at 5 viewports (5) |
+| `a11y-keyboard.spec.js` | 10 | Tab focus, focus-visible rings, Enter activation, Escape handling, ARIA roles, sr-only class |
 
 **Zero JS runtime errors** confirmed across all 18 interaction types during the console smoke test. **12 bugs found and fixed** by the testing swarm: `addReaction` missing, localStorage key persistence, Ctrl+K shortcut, Escape priority ordering, focus return after panel close, ThemeToggle wiring, light theme CSS, mobile viewport overflow, context menu edge clamping, search panel z-index, search auto-focus, and header pointer-events.
 
@@ -818,10 +828,11 @@ claude-comms/
 |   |   +-- channel_list.py          # Channel sidebar with unread badges
 |   |   +-- participant_list.py      # Participant sidebar with presence dots
 |   |   +-- message_input.py         # Input with @mention Tab completion
+|   |   +-- status_bar.py           # Connection state, typing, identity
 |   |   +-- styles.tcss              # Carbon Ember theme
 +-- web/                              # Svelte 5 web UI
 |   +-- src/
-|   +-- e2e/                         # Playwright E2E tests (16 spec files)
+|   +-- e2e/                         # Playwright E2E tests (19 spec files)
 |   +-- playwright.config.js
 |   +-- index.html
 |   +-- vite.config.js
