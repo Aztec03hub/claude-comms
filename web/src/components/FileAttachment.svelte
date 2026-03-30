@@ -1,16 +1,31 @@
 <script>
   import { File, Download } from 'lucide-svelte';
 
-  let { name = '', type = 'file', size = '' } = $props();
+  let { name = '', type = 'file', size = '', url = '' } = $props();
 
   let iconClass = $derived(
     type === 'pdf' ? 'pdf' :
     type === 'doc' || type === 'docx' ? 'doc' :
     type === 'image' || type === 'png' || type === 'jpg' ? 'img' : ''
   );
+
+  function handleDownload(e) {
+    e.stopPropagation();
+    triggerDownload();
+  }
+
+  function triggerDownload() {
+    const a = document.createElement('a');
+    a.href = url || '#';
+    a.download = name || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 </script>
 
-<div class="file-attachment">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="file-attachment" onclick={triggerDownload} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') triggerDownload(); }} role="button" tabindex="0">
   <div class="file-icon {iconClass}">
     <File size={18} strokeWidth={2} />
   </div>
@@ -22,7 +37,7 @@
       <span>{size}</span>
     </div>
   </div>
-  <button class="file-download">
+  <button class="file-download" onclick={handleDownload} data-testid="file-download">
     <Download size={14} strokeWidth={2} />
   </button>
 </div>

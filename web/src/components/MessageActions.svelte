@@ -1,7 +1,7 @@
 <script>
   import { Reply, Smile, Ellipsis } from 'lucide-svelte';
 
-  let { message, onReply, onReact } = $props();
+  let { message, onReply, onReact, onMore } = $props();
 </script>
 
 <div class="msg-actions" data-testid="message-actions">
@@ -11,7 +11,7 @@
   <button class="msg-action-btn" title="React" onclick={onReact} data-testid="action-react">
     <Smile size={14} />
   </button>
-  <button class="msg-action-btn" title="More" data-testid="action-more">
+  <button class="msg-action-btn" title="More" onclick={onMore} data-testid="action-more">
     <Ellipsis size={14} />
   </button>
 </div>

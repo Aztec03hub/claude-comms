@@ -273,6 +273,67 @@ export class MqttChatStore {
   }
 
   /**
+   * Mark a channel as having unread messages from a specific message.
+   * @param {object} message
+   */
+  markUnread(message) {
+    const ch = this.channels.find(c => c.id === (message.channel || message.conv || this.activeChannel));
+    if (ch) {
+      ch.unreadFrom = message.id;
+      ch.unread = Math.max(ch.unread, 1);
+    }
+  }
+
+  /**
+   * Delete a message by ID (immutable update for Svelte 5 reactivity).
+   * @param {string} messageId
+   */
+  deleteMessage(messageId) {
+    this.messages = this.messages.filter(m => m.id !== messageId);
+  }
+
+  /**
+   * Toggle muted flag on a channel.
+   * @param {string} channelId
+   */
+  muteChannel(channelId) {
+    const ch = this.channels.find(c => c.id === channelId);
+    if (ch) ch.muted = !ch.muted;
+  }
+
+  /**
+   * Forward a message body to a target channel by re-publishing it.
+   * @param {object} message
+   * @param {string} targetChannelId
+   */
+  forwardMessage(message, targetChannelId) {
+    const prevChannel = this.activeChannel;
+    const msg = {
+      id: generateUUID(),
+      ts: new Date().toISOString(),
+      sender: {
+        key: this.userProfile.key,
+        name: this.userProfile.name,
+        type: this.userProfile.type
+      },
+      recipients: null,
+      body: message.body,
+      reply_to: null,
+      conv: targetChannelId,
+      forwarded_from: message.id
+    };
+
+    const topic = TOPIC_PREFIX + '/conv/' + targetChannelId + '/messages';
+
+    // Local echo
+    this.#handleChatMessage(targetChannelId, msg);
+
+    if (this.#client && this.connected) {
+      this.#client.publish(topic, JSON.stringify(msg), { qos: 1 });
+    }
+  }
+
+  /**
    * Search messages across all channels.
    * @param {string} query
    * @returns {Array}

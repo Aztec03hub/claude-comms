@@ -6,8 +6,11 @@
 
   let inputValue = $state('');
   let showMentionDropdown = $state(false);
+  let showFormatHelp = $state(false);
+  let attachNotice = $state('');
   let mentionQuery = $state('');
   let inputEl = $state(null);
+  let fileInputEl = $state(null);
 
   function handleInput(e) {
     inputValue = e.target.value;
@@ -38,6 +41,39 @@
     store.sendMessage(inputValue);
     inputValue = '';
     showMentionDropdown = false;
+  }
+
+  function handleAttachClick() {
+    fileInputEl?.click();
+  }
+
+  function handleFileSelected(e) {
+    const file = e.target.files?.[0];
+    if (file) {
+      attachNotice = `File sharing coming soon`;
+      setTimeout(() => { attachNotice = ''; }, 3000);
+    }
+    // Reset so the same file can be re-selected
+    e.target.value = '';
+  }
+
+  function toggleFormatHelp() {
+    showFormatHelp = !showFormatHelp;
+  }
+
+  function insertSnippet() {
+    const template = "```language\n// code here\n```";
+    const cursorPos = inputEl?.selectionStart ?? inputValue.length;
+    const before = inputValue.slice(0, cursorPos);
+    const after = inputValue.slice(cursorPos);
+    inputValue = before + template + after;
+    showFormatHelp = false;
+    // Focus and place cursor after insertion
+    setTimeout(() => {
+      inputEl?.focus();
+      const newPos = cursorPos + template.length;
+      inputEl?.setSelectionRange(newPos, newPos);
+    }, 0);
   }
 
   function handleMentionSelect(name) {
@@ -72,12 +108,19 @@
   {/if}
 
   <div class="input-toolbar">
-    <button class="input-toolbar-btn">
-      <Type size={12} />
-      Format
-    </button>
+    <div class="toolbar-btn-wrap">
+      <button class="input-toolbar-btn" onclick={toggleFormatHelp} data-testid="input-format">
+        <Type size={12} />
+        Format
+      </button>
+      {#if showFormatHelp}
+        <div class="format-help" data-testid="format-help">
+          <code>**bold**</code>&nbsp;&nbsp;<code>*italic*</code>&nbsp;&nbsp;<code>`code`</code>&nbsp;&nbsp;<code>```code block```</code>
+        </div>
+      {/if}
+    </div>
     <div class="input-toolbar-divider"></div>
-    <button class="input-toolbar-btn">
+    <button class="input-toolbar-btn" onclick={insertSnippet} data-testid="input-snippet">
       <Code size={12} />
       Snippet
     </button>
@@ -94,7 +137,14 @@
       data-testid="message-input"
     >
     <div class="input-actions">
-      <button class="btn-icon" title="Attach file" data-testid="input-attach">
+      <input
+        bind:this={fileInputEl}
+        type="file"
+        class="hidden-file-input"
+        onchange={handleFileSelected}
+        data-testid="input-file-hidden"
+      />
+      <button class="btn-icon" title="Attach file" onclick={handleAttachClick} data-testid="input-attach">
         <Paperclip size={18} />
       </button>
       <button class="btn-icon" title="Add emoji" onclick={onOpenEmoji} data-testid="input-emoji">
@@ -105,6 +155,10 @@
       <SendHorizontal size={16} />
     </button>
   </div>
+
+  {#if attachNotice}
+    <div class="attach-notice" data-testid="attach-notice">{attachNotice}</div>
+  {/if}
 
   {#if showMentionDropdown}
     <MentionDropdown
@@ -186,6 +240,44 @@
     width: 1px;
     height: 14px;
     background: var(--border);
+  }
+
+  .toolbar-btn-wrap {
+    position: relative;
+  }
+
+  .format-help {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    z-index: 20;
+  }
+
+  .format-help code {
+    background: var(--bg-surface);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--ember-300);
+  }
+
+  .hidden-file-input {
+    display: none;
+  }
+
+  .attach-notice {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    padding: 4px 4px 0;
   }
 
   .input-wrap {

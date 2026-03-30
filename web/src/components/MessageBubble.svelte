@@ -5,7 +5,7 @@
   import ReadReceipt from './ReadReceipt.svelte';
   import { formatTime, parseMentions, getParticipantColor } from '../lib/utils.js';
 
-  let { message, consecutive = false, currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact } = $props();
+  let { message, consecutive = false, currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onMore } = $props();
 
   let isHuman = $derived(message.sender.type === 'human');
   let isMine = $derived(message.sender.key === currentUser?.key);
@@ -89,6 +89,15 @@
     {message}
     onReply={() => onOpenThread(message)}
     onReact={() => onReact?.(message)}
+    onMore={(e) => {
+      const btn = e?.currentTarget || e?.target;
+      if (btn) {
+        const rect = btn.getBoundingClientRect();
+        onContextMenu({ x: rect.left, y: rect.bottom + 4, message });
+      } else {
+        onContextMenu({ x: 0, y: 0, message });
+      }
+    }}
   />
 
   {#if consecutive}

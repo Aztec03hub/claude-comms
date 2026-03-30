@@ -3,20 +3,42 @@
   import { getInitials, getParticipantColor } from '../lib/utils.js';
 
   let { online = [], offline = [], typingUsers = {}, onShowProfile } = $props();
+
+  let showSearch = $state(false);
+  let searchQuery = $state('');
+
+  let filteredOnline = $derived(
+    searchQuery ? online.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())) : online
+  );
+  let filteredOffline = $derived(
+    searchQuery ? offline.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())) : offline
+  );
 </script>
 
 <aside class="sidebar-right" data-testid="member-list">
   <div class="members-header">
     <span>Members ({online.length + offline.length})</span>
-    <button class="members-search-btn" title="Search members">
+    <button class="members-search-btn" title="Search members" data-testid="members-search-btn" onclick={() => { showSearch = !showSearch; if (!showSearch) searchQuery = ''; }}>
       <Search size={12} />
     </button>
   </div>
 
-  {#if online.length > 0}
-    <div class="members-section" data-testid="members-online-section">Online ({online.length})</div>
+  {#if showSearch}
+    <div class="members-search-bar">
+      <input
+        class="members-search-input"
+        type="text"
+        placeholder="Search members..."
+        bind:value={searchQuery}
+        data-testid="members-search-input"
+      />
+    </div>
+  {/if}
+
+  {#if filteredOnline.length > 0}
+    <div class="members-section" data-testid="members-online-section">Online ({filteredOnline.length})</div>
     <div class="members-list">
-      {#each online as member (member.key)}
+      {#each filteredOnline as member (member.key)}
         {@const color = getParticipantColor(member.key)}
         {@const isTyping = typingUsers[member.key]?.typing}
         <div
@@ -49,10 +71,10 @@
     </div>
   {/if}
 
-  {#if offline.length > 0}
-    <div class="members-section" style="margin-top: 8px" data-testid="members-offline-section">Offline ({offline.length})</div>
+  {#if filteredOffline.length > 0}
+    <div class="members-section" style="margin-top: 8px" data-testid="members-offline-section">Offline ({filteredOffline.length})</div>
     <div class="members-list">
-      {#each offline as member (member.key)}
+      {#each filteredOffline as member (member.key)}
         <div
           class="member"
           onclick={() => onShowProfile(member)}
@@ -130,6 +152,33 @@
   .members-search-btn:hover {
     color: var(--text-secondary);
     background: var(--bg-surface);
+  }
+
+  .members-search-bar {
+    padding: 4px 12px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .members-search-input {
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+    transition: var(--transition-fast);
+  }
+
+  .members-search-input:focus {
+    border-color: var(--ember-600);
+    box-shadow: 0 0 0 2px rgba(245,158,11,0.15);
+  }
+
+  .members-search-input::placeholder {
+    color: var(--text-faint);
   }
 
   .members-section {

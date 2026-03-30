@@ -1,7 +1,7 @@
 <script>
   import { Hash, VolumeX, Plus, Settings } from 'lucide-svelte';
 
-  let { store, onCreateChannel, onShowProfile } = $props();
+  let { store, onCreateChannel, onShowProfile, onMuteChannel, onOpenSettings } = $props();
 
   let starredCollapsed = $state(false);
   let convoCollapsed = $state(false);
@@ -43,6 +43,7 @@
             class="channel-item"
             class:active={channel.id === store.activeChannel}
             class:unread={channel.unread > 0}
+            class:muted={channel.muted}
             onclick={() => handleChannelClick(channel.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
             role="button"
@@ -57,9 +58,17 @@
               <div class="ch-preview">{channel.topic || ''}</div>
             </div>
             <div class="ch-meta">
+              {#if channel.muted}
+                <VolumeX size={12} class="ch-muted-icon" />
+              {/if}
               {#if channel.unread > 0}
                 <span class="ch-badge">{channel.unread}</span>
               {/if}
+            </div>
+            <div class="ch-actions">
+              <button class="ch-action-btn" title={channel.muted ? 'Unmute' : 'Mute'} onclick={(e) => { e.stopPropagation(); onMuteChannel(channel.id); }} data-testid="channel-mute-{channel.id}">
+                <VolumeX size={10} />
+              </button>
             </div>
           </div>
         {/each}
@@ -80,6 +89,7 @@
           class="channel-item"
           class:active={channel.id === store.activeChannel}
           class:unread={channel.unread > 0}
+          class:muted={channel.muted}
           onclick={() => handleChannelClick(channel.id)}
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
           role="button"
@@ -94,12 +104,15 @@
             <div class="ch-preview">{channel.topic || ''}</div>
           </div>
           <div class="ch-meta">
+            {#if channel.muted}
+              <VolumeX size={12} class="ch-muted-icon" />
+            {/if}
             {#if channel.unread > 0}
               <span class="ch-badge">{channel.unread}</span>
             {/if}
           </div>
           <div class="ch-actions">
-            <button class="ch-action-btn" title="Mute" onclick={(e) => e.stopPropagation()}>
+            <button class="ch-action-btn" title={channel.muted ? 'Unmute' : 'Mute'} onclick={(e) => { e.stopPropagation(); onMuteChannel(channel.id); }} data-testid="channel-mute-{channel.id}">
               <VolumeX size={10} />
             </button>
           </div>
@@ -128,7 +141,7 @@
       <div class="uname">{store.userProfile.name}</div>
       <div class="ustatus">Online</div>
     </div>
-    <button class="user-settings" title="User settings">
+    <button class="user-settings" title="User settings" onclick={() => onOpenSettings()}>
       <Settings size={16} />
     </button>
   </div>
@@ -322,6 +335,8 @@
   }
 
   .channel-item:hover { background: var(--bg-surface); }
+  .channel-item.muted { opacity: 0.5; }
+  .channel-item.muted:hover { opacity: 0.75; }
 
   .channel-item.active {
     background: var(--bg-surface);

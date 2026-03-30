@@ -11,9 +11,11 @@
   import EmojiPicker from './components/EmojiPicker.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
   import ProfileCard from './components/ProfileCard.svelte';
+  import ConfirmDialog from './components/ConfirmDialog.svelte';
   import PinnedPanel from './components/PinnedPanel.svelte';
   import SearchPanel from './components/SearchPanel.svelte';
   import ThreadPanel from './components/ThreadPanel.svelte';
+  import SettingsPanel from './components/SettingsPanel.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
   import { Users, Search, Pin, Settings } from 'lucide-svelte';
 
@@ -37,6 +39,10 @@
   let toasts = $state([]);
   let threadParent = $state(null);
   let emojiPickerTarget = $state(null);
+  let showMemberList = $state(true);
+  let showSettingsPanel = $state(false);
+  let showDeleteConfirm = $state(false);
+  let deleteTarget = $state(null);
 
   // Connect on mount
   $effect(() => {
@@ -72,6 +78,8 @@
         showProfileCard = false;
       } else if (showPinnedPanel) {
         showPinnedPanel = false;
+      } else if (showSettingsPanel) {
+        showSettingsPanel = false;
       } else if (showSearchPanel) {
         showSearchPanel = false;
       } else if (showThreadPanel) {
@@ -148,6 +156,14 @@
     else if (action === 'react') {
       emojiPickerTarget = message;
       showEmojiPicker = true;
+    } else if (action === 'forward') {
+      navigator.clipboard.writeText(message.body);
+      addToast({ id: 'fwd-' + Date.now(), sender: { name: 'System', key: 'system', type: 'system' }, channel: store.activeChannel, text: 'Forwarding coming soon' });
+    } else if (action === 'unread') {
+      store.markUnread(message);
+    } else if (action === 'delete') {
+      deleteTarget = message;
+      showDeleteConfirm = true;
     }
   }
 
@@ -177,6 +193,8 @@
     {store}
     onCreateChannel={() => showChannelModal = true}
     onShowProfile={handleShowProfile}
+    onMuteChannel={(channelId) => store.muteChannel(channelId)}
+    onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
   />
 
   <main class="center">
@@ -187,7 +205,7 @@
       <span class="header-name" data-testid="header-channel-name">{store.activeChannel}</span>
       <span class="header-sep"></span>
       <span class="header-topic">{store.activeChannelMeta?.topic || ''}</span>
-      <button class="header-members" type="button" data-testid="header-members-count">
+      <button class="header-members" type="button" data-testid="header-members-count" onclick={() => showMemberList = !showMemberList}>
         <Users size={12} strokeWidth={2} />
         {store.onlineCount + store.offlineParticipants.length}
       </button>
@@ -199,7 +217,7 @@
           <Pin size={16} strokeWidth={2} />
         </button>
         <ThemeToggle mode={theme} onToggle={toggleTheme} />
-        <button class="header-btn" title="Settings" data-testid="header-settings-btn">
+        <button class="header-btn" title="Settings" onclick={() => showSettingsPanel = !showSettingsPanel} data-testid="header-settings-btn">
           <Settings size={16} strokeWidth={2} />
         </button>
       </div>
@@ -240,6 +258,14 @@
       />
     {/if}
 
+    {#if showSettingsPanel}
+      <SettingsPanel
+        {store}
+        {theme}
+        onClose={() => showSettingsPanel = false}
+      />
+    {/if}
+
     <MessageInput
       {store}
       channelName={store.activeChannel}
@@ -248,12 +274,14 @@
     />
   </main>
 
-  <MemberList
-    online={store.onlineParticipants}
-    offline={store.offlineParticipants}
-    typingUsers={store.typingUsers}
-    onShowProfile={handleShowProfile}
-  />
+  {#if showMemberList}
+    <MemberList
+      online={store.onlineParticipants}
+      offline={store.offlineParticipants}
+      typingUsers={store.typingUsers}
+      onShowProfile={handleShowProfile}
+    />
+  {/if}
 </div>
 
 {#if showChannelModal}
@@ -284,6 +312,17 @@
   <ProfileCard
     participant={profileCardTarget}
     onClose={() => showProfileCard = false}
+  />
+{/if}
+
+{#if showDeleteConfirm && deleteTarget}
+  <ConfirmDialog
+    title="Delete Message"
+    message="Are you sure you want to delete this message? This action cannot be undone."
+    confirmLabel="Delete"
+    confirmDanger={true}
+    onConfirm={() => { store.deleteMessage(deleteTarget.id); showDeleteConfirm = false; deleteTarget = null; }}
+    onCancel={() => { showDeleteConfirm = false; deleteTarget = null; }}
   />
 {/if}
 
