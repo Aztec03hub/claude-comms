@@ -234,11 +234,12 @@ export class MqttChatStore {
       this.#subscribeAll();
       this.#publishPresence('online');
       // Add ourselves to the participant list so we appear in the member sidebar
-      this.participants[this.userProfile.key] = {
+      this.participants[this.userProfile.key + '-web'] = {
         key: this.userProfile.key,
         name: this.userProfile.name,
         type: this.userProfile.type,
         status: 'online',
+        client: 'web',
       };
       // Fetch message history from the REST API so messages survive page refresh
       this.#fetchHistory(this.activeChannel);
@@ -683,8 +684,11 @@ export class MqttChatStore {
   }
 
   #handlePresence(msg) {
-    // Skip our own presence messages — we manage our own status locally.
-    if (msg.key === this.userProfile.key) return;
+    const clientType = msg.client || 'unknown';
+    const participantKey = msg.key + '-' + clientType;
+
+    // Skip our own web presence messages — we manage our own status locally.
+    if (msg.key === this.userProfile.key && clientType === 'web') return;
 
     // Skip stale offline presence (retained LWT from old sessions)
     // Only add offline participants if they were seen recently (5 min)
@@ -696,11 +700,12 @@ export class MqttChatStore {
     // Skip if key looks like a random old session key and status is offline
     if (msg.status === 'offline') return; // Don't track offline strangers at all
 
-    this.participants[msg.key] = {
+    this.participants[participantKey] = {
       key: msg.key,
       name: msg.name,
       type: msg.type,
       status: msg.status,
+      client: clientType,
       ts: msg.ts || new Date().toISOString()
     };
   }
@@ -734,12 +739,15 @@ export class MqttChatStore {
 
   #handleParticipantRegistry(msg) {
     if (msg.key) {
-      this.participants[msg.key] = {
-        ...this.participants[msg.key],
+      const clientType = msg.client || 'unknown';
+      const participantKey = msg.key + '-' + clientType;
+      this.participants[participantKey] = {
+        ...this.participants[participantKey],
         key: msg.key,
         name: msg.name,
         type: msg.type,
-        status: msg.status || this.participants[msg.key]?.status || 'offline'
+        client: clientType,
+        status: msg.status || this.participants[participantKey]?.status || 'offline'
       };
     }
   }
@@ -838,6 +846,7 @@ export class MqttChatStore {
       name: this.userProfile.name,
       type: this.userProfile.type,
       status,
+      client: 'web',
       ts: new Date().toISOString()
     }), { qos: 1, retain: true });
   }
