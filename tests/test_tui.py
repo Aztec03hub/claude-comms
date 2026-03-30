@@ -1237,3 +1237,405 @@ class TestRound11LWT:
             assert pilot.app._type == "human"
             # The active conv determines the LWT topic
             assert pilot.app._active_conv == "general"
+
+
+# ============================================================================
+# Round 12: _handle_presence coverage
+# ============================================================================
+
+
+class TestRound12HandlePresence:
+    """Test _handle_presence with various status values and edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_online_adds_participant(self):
+        """An online presence payload should add a participant to the list."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "key": "peer0001",
+                "name": "peer-alice",
+                "type": "claude",
+                "status": "online",
+                "client": "mcp",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/peer0001"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            assert "peer0001-mcp" in participant_list._items
+            item = participant_list._items["peer0001-mcp"]
+            assert item.participant_name == "peer-alice"
+            assert item.presence == PresenceState.ONLINE
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_away_sets_away_state(self):
+        """An 'away' status should set the participant to AWAY presence."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "key": "peer0002",
+                "name": "peer-bob",
+                "type": "human",
+                "status": "away",
+                "client": "web",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/peer0002"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            assert "peer0002-web" in participant_list._items
+            assert participant_list._items["peer0002-web"].presence == PresenceState.AWAY
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_offline_removes_participant(self):
+        """An offline presence should remove the participant from the list."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            # First add a participant
+            participant_list.set_participant(
+                key="peer0003-mcp",
+                name="peer-charlie",
+                participant_type="claude",
+                presence=PresenceState.ONLINE,
+                client_type="mcp",
+            )
+            await pilot.pause()
+            assert "peer0003-mcp" in participant_list._items
+
+            # Now send offline presence
+            payload = json.dumps({
+                "key": "peer0003",
+                "name": "peer-charlie",
+                "type": "claude",
+                "status": "offline",
+                "client": "mcp",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/peer0003"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            assert "peer0003-mcp" not in participant_list._items
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_skips_own_tui(self):
+        """Our own presence from the TUI client should be skipped."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            initial_count = len(participant_list._items)
+
+            payload = json.dumps({
+                "key": "tkey0001",
+                "name": "test-user",
+                "type": "human",
+                "status": "online",
+                "client": "tui",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/tkey0001"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            # Should NOT add a duplicate entry for ourselves
+            assert len(participant_list._items) == initial_count
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_allows_own_key_different_client(self):
+        """Our key from a different client type (e.g. web) should be added."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "key": "tkey0001",
+                "name": "test-user",
+                "type": "human",
+                "status": "online",
+                "client": "web",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/tkey0001"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            assert "tkey0001-web" in participant_list._items
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_invalid_json_ignored(self):
+        """Invalid JSON payloads should be silently ignored."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            topic = "claude-comms/conv/general/presence/bad"
+            # Should not raise
+            await pilot.app._handle_presence(topic, b"not-json{{{")
+            await pilot.pause()
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_missing_key_ignored(self):
+        """Presence payloads without a 'key' field should be ignored."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "name": "no-key-user",
+                "status": "online",
+                "client": "mcp",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/nokey"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+            # Should not crash and should not add participant
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_unknown_status_maps_to_offline(self):
+        """An unrecognised status string should map to OFFLINE presence state."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "key": "peer0004",
+                "name": "peer-dave",
+                "type": "claude",
+                "status": "busy",
+                "client": "mcp",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/peer0004"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            assert "peer0004-mcp" in participant_list._items
+            assert participant_list._items["peer0004-mcp"].presence == PresenceState.OFFLINE
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_updates_status_bar_count(self):
+        """Adding a participant via presence should update the status bar count."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            initial_count = status_bar.participant_count
+
+            payload = json.dumps({
+                "key": "peer0005",
+                "name": "peer-eve",
+                "type": "human",
+                "status": "online",
+                "client": "web",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/peer0005"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            assert status_bar.participant_count == initial_count + 1
+
+
+# ============================================================================
+# Round 13: _handle_typing coverage
+# ============================================================================
+
+
+class TestRound13HandleTyping:
+    """Test _handle_typing with various payloads."""
+
+    @pytest.mark.asyncio
+    async def test_handle_typing_shows_indicator(self):
+        """A typing=True payload should set typing_who on the status bar."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "key": "peer0001",
+                "name": "alice",
+                "typing": True,
+            }).encode()
+            topic = "claude-comms/conv/general/typing/peer0001"
+            await pilot.app._handle_typing(topic, payload)
+            await pilot.pause()
+
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar.typing_who == "alice"
+
+    @pytest.mark.asyncio
+    async def test_handle_typing_clears_indicator(self):
+        """A typing=False payload should clear typing_who on the status bar."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar.typing_who = "alice"
+            await pilot.pause()
+
+            payload = json.dumps({
+                "key": "peer0001",
+                "name": "alice",
+                "typing": False,
+            }).encode()
+            topic = "claude-comms/conv/general/typing/peer0001"
+            await pilot.app._handle_typing(topic, payload)
+            await pilot.pause()
+
+            assert status_bar.typing_who == ""
+
+    @pytest.mark.asyncio
+    async def test_handle_typing_ignores_own_name(self):
+        """Typing from ourselves should be ignored (no self-indicator)."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+
+            payload = json.dumps({
+                "key": "tkey0001",
+                "name": "test-user",
+                "typing": True,
+            }).encode()
+            topic = "claude-comms/conv/general/typing/tkey0001"
+            await pilot.app._handle_typing(topic, payload)
+            await pilot.pause()
+
+            assert status_bar.typing_who == ""
+
+    @pytest.mark.asyncio
+    async def test_handle_typing_invalid_json_ignored(self):
+        """Invalid JSON in a typing payload should be silently ignored."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            topic = "claude-comms/conv/general/typing/bad"
+            await pilot.app._handle_typing(topic, b"broken{json")
+            await pilot.pause()
+            # No crash
+
+    @pytest.mark.asyncio
+    async def test_handle_typing_missing_name_ignored(self):
+        """A typing payload without a name should be ignored."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+
+            payload = json.dumps({
+                "key": "peer0001",
+                "typing": True,
+            }).encode()
+            topic = "claude-comms/conv/general/typing/peer0001"
+            await pilot.app._handle_typing(topic, payload)
+            await pilot.pause()
+
+            assert status_bar.typing_who == ""
+
+
+# ============================================================================
+# Round 14: action_switch_conversation error cases & channel creation
+# ============================================================================
+
+
+class TestRound14SwitchConvErrors:
+    """Test action_switch_conversation edge cases and channel creation flow."""
+
+    @pytest.mark.asyncio
+    async def test_switch_conv_active_not_in_list(self):
+        """If _active_conv is somehow not in _conversations, cycling should recover."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            # Manually set _active_conv to something not in _conversations
+            pilot.app._active_conv = "nonexistent"
+            pilot.app.action_switch_conversation()
+            await pilot.pause()
+            # Should cycle to index 0 (ValueError -> idx = -1, next_idx = 0)
+            assert pilot.app._active_conv == "general"
+
+    @pytest.mark.asyncio
+    async def test_new_conv_invalid_name_shows_system_msg(self):
+        """Creating a conv with an invalid name should show a system error."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            # Call with invalid name (uppercase, which fails validate_conv_id)
+            pilot.app._on_new_conv_created("INVALID NAME!")
+            await pilot.pause()
+
+            sys_msgs = chat_view.query(SystemMessage)
+            assert len(sys_msgs) >= 1
+
+    @pytest.mark.asyncio
+    async def test_new_conv_valid_name_switches_to_it(self):
+        """Creating a valid new conv should add it and switch to it."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            pilot.app._on_new_conv_created("dev-chat")
+            await pilot.pause()
+
+            assert "dev-chat" in pilot.app._conversations
+            assert pilot.app._active_conv == "dev-chat"
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            assert "dev-chat" in channel_list._items
+
+    @pytest.mark.asyncio
+    async def test_new_conv_duplicate_does_not_double_add(self):
+        """Creating a conv that already exists should not duplicate it."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            pilot.app._on_new_conv_created("random")
+            await pilot.pause()
+
+            assert pilot.app._conversations.count("random") == 1
+            assert pilot.app._active_conv == "random"
+
+    @pytest.mark.asyncio
+    async def test_new_conv_reserved_name_rejected(self):
+        """Reserved names like 'system' should be rejected."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            pilot.app._on_new_conv_created("system")
+            await pilot.pause()
+
+            assert "system" not in pilot.app._conversations
+            assert pilot.app._active_conv == "general"
+
+    @pytest.mark.asyncio
+    async def test_show_system_when_ui_not_ready(self):
+        """_show_system should not crash if ChatView is not available."""
+        app = _make_app()
+        # Call _show_system before the UI is mounted — should silently pass
+        app._show_system("This should not crash")
+
+    @pytest.mark.asyncio
+    async def test_handle_presence_name_fallback(self):
+        """Presence with empty name should fall back to user-{key}."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            import json
+
+            payload = json.dumps({
+                "key": "peer0006",
+                "name": "",
+                "type": "claude",
+                "status": "online",
+                "client": "mcp",
+            }).encode()
+            topic = "claude-comms/conv/general/presence/peer0006"
+            await pilot.app._handle_presence(topic, payload)
+            await pilot.pause()
+
+            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            item = participant_list._items["peer0006-mcp"]
+            assert item.participant_name == "user-peer0006"
