@@ -21,7 +21,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from claude_comms.config import get_config_path, get_default_config, load_config, save_config
+from claude_comms.config import (
+    get_config_path,
+    get_default_config,
+    load_config,
+    save_config,
+)
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -36,6 +42,7 @@ app = typer.Typer(
     help="Distributed inter-Claude messaging platform.",
     no_args_is_help=True,
 )
+
 
 @app.callback()
 def _main(
@@ -97,7 +104,9 @@ def init(
         "--type",
         help='Identity type: "human" or "claude".',
     ),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config."),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Overwrite existing config."
+    ),
 ) -> None:
     """Initialize Claude Comms configuration.
 
@@ -122,7 +131,9 @@ def init(
     if identity_type in ("human", "claude"):
         config["identity"]["type"] = identity_type
     else:
-        console.print(f'[red]Invalid identity type "{identity_type}". Must be "human" or "claude".[/red]')
+        console.print(
+            f'[red]Invalid identity type "{identity_type}". Must be "human" or "claude".[/red]'
+        )
         raise typer.Exit(1)
 
     # Create logs directory
@@ -170,6 +181,7 @@ def start(
 
     broker_mode = config.get("broker", {}).get("mode", "host")
     web_enabled = web or config.get("web", {}).get("enabled", False)
+    web_host = config.get("web", {}).get("host", "127.0.0.1")
     web_port = config.get("web", {}).get("port", 9921)
     mcp_host = config.get("mcp", {}).get("host", "127.0.0.1")
     mcp_port = config.get("mcp", {}).get("port", 9920)
@@ -191,9 +203,7 @@ def start(
         if proc.poll() is not None:
             console.print("[red]Daemon failed to start.[/red]")
             raise typer.Exit(1)
-        console.print(
-            f"[green]Daemon started in background (PID {proc.pid}).[/green]"
-        )
+        console.print(f"[green]Daemon started in background (PID {proc.pid}).[/green]")
         return
 
     # Foreground mode — run the async event loop
@@ -300,7 +310,10 @@ def start(
             from starlette.requests import Request
             from starlette.responses import JSONResponse
             from starlette.routing import Route
-            from claude_comms.mcp_server import get_channel_messages, get_channel_participants
+            from claude_comms.mcp_server import (
+                get_channel_messages,
+                get_channel_participants,
+            )
 
             async def _api_messages(request: Request) -> JSONResponse:
                 """GET /api/messages/{channel}?count=50 — return recent history."""
@@ -387,7 +400,12 @@ def start(
                 0, Route("/api/messages/{channel}", _api_messages, methods=["GET"])
             )
             starlette_app.routes.insert(
-                1, Route("/api/messages/{channel}", _api_messages_options, methods=["OPTIONS"])
+                1,
+                Route(
+                    "/api/messages/{channel}",
+                    _api_messages_options,
+                    methods=["OPTIONS"],
+                ),
             )
             starlette_app.routes.insert(
                 2, Route("/api/identity", _api_identity, methods=["GET"])
@@ -396,10 +414,18 @@ def start(
                 3, Route("/api/identity", _api_identity_options, methods=["OPTIONS"])
             )
             starlette_app.routes.insert(
-                4, Route("/api/participants/{channel}", _api_participants, methods=["GET"])
+                4,
+                Route(
+                    "/api/participants/{channel}", _api_participants, methods=["GET"]
+                ),
             )
             starlette_app.routes.insert(
-                5, Route("/api/participants/{channel}", _api_participants_options, methods=["OPTIONS"])
+                5,
+                Route(
+                    "/api/participants/{channel}",
+                    _api_participants_options,
+                    methods=["OPTIONS"],
+                ),
             )
 
             import uvicorn
@@ -419,8 +445,10 @@ def start(
             broker_port = broker_cfg.get("port", 1883)
             mqtt_sub_task = asyncio.create_task(
                 _mqtt_subscriber(
-                    broker_host, broker_port,
-                    _mcp_mod._store, _mcp_mod._deduplicator,
+                    broker_host,
+                    broker_port,
+                    _mcp_mod._store,
+                    _mcp_mod._deduplicator,
                 )
             )
 
@@ -442,8 +470,7 @@ def start(
             _mcp_mod._publish_fn = _do_publish
 
             console.print(
-                f"  [green]MCP server[/green] ready on "
-                f"http://{mcp_host}:{mcp_port}"
+                f"  [green]MCP server[/green] ready on http://{mcp_host}:{mcp_port}"
             )
 
             # 3) Web server
@@ -460,13 +487,21 @@ def start(
                 if _web_dist.is_dir():
                     web_app = Starlette(
                         routes=[
-                            Mount("/assets", app=StaticFiles(directory=str(_web_dist / "assets")), name="assets"),
-                            Mount("/", app=StaticFiles(directory=str(_web_dist), html=True), name="root"),
+                            Mount(
+                                "/assets",
+                                app=StaticFiles(directory=str(_web_dist / "assets")),
+                                name="assets",
+                            ),
+                            Mount(
+                                "/",
+                                app=StaticFiles(directory=str(_web_dist), html=True),
+                                name="root",
+                            ),
                         ],
                     )
                     web_uvi_config = uvicorn.Config(
                         web_app,
-                        host="127.0.0.1",
+                        host=web_host,
                         port=web_port,
                         log_level="warning",
                     )
@@ -474,14 +509,16 @@ def start(
                     web_task = asyncio.create_task(web_uvi_server.serve())
                     console.print(
                         f"  [green]Web UI[/green] available at "
-                        f"http://127.0.0.1:{web_port}"
+                        f"http://{web_host}:{web_port}"
                     )
                 else:
                     console.print(
                         f"  [yellow]Web UI[/yellow] dist not found at {_web_dist} — skipping"
                     )
 
-            console.print("[bold green]Daemon running. Press Ctrl+C to stop.[/bold green]")
+            console.print(
+                "[bold green]Daemon running. Press Ctrl+C to stop.[/bold green]"
+            )
 
             # Block until signalled
             await shutdown_event.wait()
@@ -531,7 +568,9 @@ def stop() -> None:
     """
     pid = _read_pid()
     if pid is None:
-        console.print("[yellow]No daemon PID file found. Is the daemon running?[/yellow]")
+        console.print(
+            "[yellow]No daemon PID file found. Is the daemon running?[/yellow]"
+        )
         raise typer.Exit(1)
 
     # Check process exists
@@ -604,7 +643,9 @@ def send(
     sender_type = identity.get("type", "human")
 
     if not sender_key:
-        console.print("[red]No identity key in config. Run [bold]claude-comms init[/bold].[/red]")
+        console.print(
+            "[red]No identity key in config. Run [bold]claude-comms init[/bold].[/red]"
+        )
         raise typer.Exit(1)
 
     if not _is_daemon_running():
@@ -745,13 +786,18 @@ def status() -> None:
                 import aiomqtt  # type: ignore[import-untyped]
 
                 kw: dict = {"hostname": host, "port": port}
-                if auth.get("enabled") and auth.get("username") and auth.get("password"):
+                if (
+                    auth.get("enabled")
+                    and auth.get("username")
+                    and auth.get("password")
+                ):
                     kw["username"] = auth["username"]
                     kw["password"] = auth["password"]
-                async with aiomqtt.Client(**kw) as client:
+                async with aiomqtt.Client(**kw) as _client:
                     # Try to get participant count from the REST API
                     try:
                         import urllib.request
+
                         mcp_host_val = mcp_cfg.get("host", "127.0.0.1")
                         mcp_port_val = mcp_cfg.get("port", 9920)
                         default_conv = config.get("default_conversation", "general")
@@ -806,8 +852,7 @@ def tui() -> None:
         app_instance.run()
     except ImportError:
         console.print(
-            "[red]TUI module not available.[/red] "
-            "Ensure the TUI package is installed."
+            "[red]TUI module not available.[/red] Ensure the TUI package is installed."
         )
         raise typer.Exit(1)
 
@@ -822,13 +867,13 @@ def web() -> None:
     """Open the web UI in the default browser."""
     config = _require_config()
 
+    web_host = config.get("web", {}).get("host", "127.0.0.1")
     web_port = config.get("web", {}).get("port", 9921)
-    url = f"http://127.0.0.1:{web_port}"
+    url = f"http://{web_host}:{web_port}"
 
     if not _is_daemon_running():
         console.print(
-            "[yellow]Warning: daemon is not running. "
-            "The web UI may not work.[/yellow]"
+            "[yellow]Warning: daemon is not running. The web UI may not work.[/yellow]"
         )
 
     console.print(f"Opening [bold]{url}[/bold] in your browser...")
@@ -853,7 +898,9 @@ def log(
     config = _require_config()
 
     conv = conversation or config.get("default_conversation", "general")
-    log_dir = Path(config.get("logging", {}).get("dir", "~/.claude-comms/logs")).expanduser()
+    log_dir = Path(
+        config.get("logging", {}).get("dir", "~/.claude-comms/logs")
+    ).expanduser()
     log_file = log_dir / f"{conv}.log"
 
     if not log_file.exists():
@@ -863,9 +910,7 @@ def log(
         )
         raise typer.Exit(1)
 
-    console.print(
-        f"[dim]Tailing {log_file} (Ctrl+C to stop)...[/dim]\n"
-    )
+    console.print(f"[dim]Tailing {log_file} (Ctrl+C to stop)...[/dim]\n")
 
     try:
         # Use tail -f for real-time following
@@ -898,7 +943,9 @@ def conv_list() -> None:
     """List all known conversations (from log files and config)."""
     config = _require_config()
 
-    log_dir = Path(config.get("logging", {}).get("dir", "~/.claude-comms/logs")).expanduser()
+    log_dir = Path(
+        config.get("logging", {}).get("dir", "~/.claude-comms/logs")
+    ).expanduser()
     auto_join = config.get("mcp", {}).get("auto_join", [])
 
     conversations: set[str] = set(auto_join)
@@ -963,9 +1010,10 @@ def conv_create(
     meta = {
         "conv_id": name,
         "created_by": identity.get("key", ""),
-        "created_at": __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).astimezone().isoformat(),
+        "created_at": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .astimezone()
+        .isoformat(),
         "topic": None,
     }
 

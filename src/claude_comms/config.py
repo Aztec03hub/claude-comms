@@ -46,6 +46,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     },
     "web": {
         "enabled": True,
+        "host": "127.0.0.1",
         "port": 9921,
     },
     "notifications": {
@@ -148,7 +149,9 @@ def _resolve_password(config: dict[str, Any]) -> dict[str, Any]:
         config["broker"]["auth"]["password"] = env_password
     else:
         yaml_password = config.get("broker", {}).get("auth", {}).get("password", "")
-        if not yaml_password and config.get("broker", {}).get("auth", {}).get("enabled", False):
+        if not yaml_password and config.get("broker", {}).get("auth", {}).get(
+            "enabled", False
+        ):
             warnings.warn(
                 "MQTT auth is enabled but no password is set. "
                 f"Set {_ENV_PASSWORD_VAR} env var or broker.auth.password in config.",
