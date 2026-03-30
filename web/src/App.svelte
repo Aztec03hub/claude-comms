@@ -65,7 +65,12 @@
     const memberPoll = setInterval(() => {
       const newOnline = store.onlineParticipants;
       const newOffline = store.offlineParticipants;
-      if (newOnline.length !== onlineMembers.length || newOffline.length !== offlineMembers.length) {
+      // Update on count change OR content change (connection add/remove)
+      const onlineChanged = newOnline.length !== onlineMembers.length ||
+        JSON.stringify(newOnline.map(p => Object.keys(p.connections || {})).flat()) !==
+        JSON.stringify(onlineMembers.map(p => Object.keys(p.connections || {})).flat());
+      const offlineChanged = newOffline.length !== offlineMembers.length;
+      if (onlineChanged || offlineChanged) {
         onlineMembers = newOnline;
         offlineMembers = newOffline;
       }
