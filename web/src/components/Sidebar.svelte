@@ -126,14 +126,15 @@
     New Conversation
   </button>
 
-  <div class="user-profile" data-testid="sidebar-user-profile">
-    <div
-      class="user-avatar-wrap"
-      onclick={() => onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' })}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' }); }}
-      role="button"
-      tabindex="0"
-    >
+  <div
+    class="user-profile"
+    data-testid="sidebar-user-profile"
+    onclick={() => onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' })}
+    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' }); }}
+    role="button"
+    tabindex="0"
+  >
+    <div class="user-avatar-wrap">
       <div class="user-avatar">{store.userProfile.name.slice(0, 2).toUpperCase()}</div>
       <div class="status-dot"></div>
     </div>
@@ -141,7 +142,7 @@
       <div class="uname">{store.userProfile.name}</div>
       <div class="ustatus">Online</div>
     </div>
-    <button class="user-settings" title="User settings" onclick={() => onOpenSettings()}>
+    <button class="user-settings" title="User settings" onclick={(e) => { e.stopPropagation(); onOpenSettings(); }}>
       <Settings size={16} />
     </button>
   </div>
