@@ -85,6 +85,22 @@ def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
     return _store.get(channel, limit=count)
 
 
+def get_channel_participants(channel: str) -> list[dict]:
+    """Return participants for *channel* from the shared registry.
+
+    This is the backing function for the ``/api/participants/{channel}``
+    REST endpoint added in ``cli.py``.  Returns an empty list when the
+    registry has not been initialised yet (daemon still starting).
+    """
+    if _registry is None:
+        return []
+    members = _registry.members(channel)
+    return [
+        {"key": m.key, "name": m.name, "type": m.type}
+        for m in members
+    ]
+
+
 # ---------------------------------------------------------------------------
 # MQTT subscriber background task
 # ---------------------------------------------------------------------------

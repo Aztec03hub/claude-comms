@@ -280,6 +280,7 @@
       onContextMenu={handleContextMenu}
       onShowProfile={handleShowProfile}
       onReact={handleReact}
+      {store}
     />
 
     {#if showThreadPanel && threadParent}

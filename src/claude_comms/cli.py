@@ -278,7 +278,7 @@ def start(
             from starlette.requests import Request
             from starlette.responses import JSONResponse
             from starlette.routing import Route
-            from claude_comms.mcp_server import get_channel_messages
+            from claude_comms.mcp_server import get_channel_messages, get_channel_participants
 
             async def _api_messages(request: Request) -> JSONResponse:
                 """GET /api/messages/{channel}?count=50 — return recent history."""
@@ -336,6 +336,30 @@ def start(
                     },
                 )
 
+            async def _api_participants(request: Request) -> JSONResponse:
+                """GET /api/participants/{channel} — return participant list."""
+                channel = request.path_params["channel"]
+                participants = get_channel_participants(channel)
+                return JSONResponse(
+                    {"channel": channel, "participants": participants},
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_participants_options(request: Request) -> JSONResponse:
+                """OPTIONS preflight for CORS on /api/participants."""
+                return JSONResponse(
+                    {},
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
             # Prepend API routes so they take priority over MCP catch-all
             starlette_app.routes.insert(
                 0, Route("/api/messages/{channel}", _api_messages, methods=["GET"])
@@ -348,6 +372,12 @@ def start(
             )
             starlette_app.routes.insert(
                 3, Route("/api/identity", _api_identity_options, methods=["OPTIONS"])
+            )
+            starlette_app.routes.insert(
+                4, Route("/api/participants/{channel}", _api_participants, methods=["GET"])
+            )
+            starlette_app.routes.insert(
+                5, Route("/api/participants/{channel}", _api_participants_options, methods=["OPTIONS"])
             )
 
             import uvicorn

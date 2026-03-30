@@ -69,6 +69,7 @@ export class MqttChatStore {
   #seenMessageIds = new Set();
   #failureCount = 0;
   #backoffActive = false;
+  #participantPollTimer = null;
 
   /**
    * Fetch message history from the REST API for a given channel.
@@ -99,6 +100,67 @@ export class MqttChatStore {
       }
     } catch {
       // History fetch failed — not critical, live messages still work
+    }
+  }
+
+  /**
+   * Fetch the participant list from the REST API for a given channel.
+   * Merges server-side participants (TUI, MCP clients) into the local
+   * participants map so they appear in the member sidebar even when
+   * MQTT presence bridging between TCP and WebSocket transports fails.
+   * @param {string} channel - The channel to fetch participants for.
+   */
+  async #fetchParticipants(channel) {
+    try {
+      const res = await fetch(`${MCP_API_URL}/api/participants/${encodeURIComponent(channel)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data.participants)) return;
+
+      for (const p of data.participants) {
+        // Server-side registry doesn't track client type — default to 'mcp'
+        const clientType = p.client || 'mcp';
+        const compositeKey = p.key + '-' + clientType;
+
+        // Don't overwrite our own web entry
+        if (p.key === this.userProfile.key && clientType === 'web') continue;
+
+        // Merge: preserve existing status if already tracked, default online
+        this.participants[compositeKey] = {
+          ...this.participants[compositeKey],
+          key: p.key,
+          name: p.name,
+          type: p.type,
+          client: clientType,
+          status: this.participants[compositeKey]?.status || 'online',
+        };
+      }
+    } catch {
+      // Participant fetch failed — not critical, MQTT presence still works
+    }
+  }
+
+  /**
+   * Start periodic polling of the participants REST API.
+   * Called on connect; stopped on disconnect.
+   */
+  #startParticipantPolling() {
+    this.#stopParticipantPolling();
+    // Initial fetch
+    this.#fetchParticipants(this.activeChannel);
+    // Poll every 30 seconds
+    this.#participantPollTimer = setInterval(() => {
+      this.#fetchParticipants(this.activeChannel);
+    }, 30000);
+  }
+
+  /**
+   * Stop periodic participant polling.
+   */
+  #stopParticipantPolling() {
+    if (this.#participantPollTimer) {
+      clearInterval(this.#participantPollTimer);
+      this.#participantPollTimer = null;
     }
   }
 
@@ -245,6 +307,9 @@ export class MqttChatStore {
       };
       // Fetch message history from the REST API so messages survive page refresh
       this.#fetchHistory(this.activeChannel);
+      // Start polling participant list from the server to discover
+      // TUI/MCP clients whose presence may not bridge across transports
+      this.#startParticipantPolling();
     });
 
     this.#client.on('error', (err) => {
@@ -299,6 +364,7 @@ export class MqttChatStore {
    * Publishes an offline presence message before closing the connection.
    */
   disconnect() {
+    this.#stopParticipantPolling();
     if (this.#client) {
       this.#publishPresence('offline');
       this.#client.end();
@@ -363,8 +429,9 @@ export class MqttChatStore {
       this.#subscribeAll();
     }
 
-    // Fetch history for the new channel
+    // Fetch history and participants for the new channel
     this.#fetchHistory(channelId);
+    this.#fetchParticipants(channelId);
   }
 
   /**
@@ -671,10 +738,14 @@ export class MqttChatStore {
       channel: channel || msg.conv
     };
 
-    // Use spread assignment instead of .push() to ensure Svelte 5 $derived
-    // re-evaluates. Class-level $state proxies may not trigger $derived
-    // recalculation on array mutations like .push().
+    // Immutable reassignment triggers $derived recalculation.
+    // NOTE: Do NOT wrap in setTimeout — deferred updates break $derived
+    // tracking in Svelte 5 class-based stores, causing messages to not
+    // render even though they're in the array.
     this.messages = [...this.messages, message];
+
+    // TEMPORARY DEBUG
+    console.log('[DEBUG handleChatMessage] channel:', channel, 'activeChannel:', this.activeChannel, 'match:', channel === this.activeChannel, 'messages.length:', this.messages.length, 'activeMessages.length:', this.activeMessages.length);
 
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
