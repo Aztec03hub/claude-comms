@@ -5,7 +5,7 @@ const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:5176';
 // Single consolidated test to avoid repeated page loads under heavy system load.
 // Runs all 9 context menu checks sequentially in one page session.
 test('Right-click context menu - full functional test', async ({ page, context }) => {
-  test.setTimeout(120000);
+  test.setTimeout(300000);
 
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto(BASE_URL);

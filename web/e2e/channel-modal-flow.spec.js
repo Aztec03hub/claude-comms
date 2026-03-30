@@ -7,7 +7,8 @@ const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 test.setTimeout(120000);
 
 test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
-  await page.goto('/', { timeout: 60000 });
+  // Use static build to avoid Vite HMR reload interference
+  await page.goto('http://localhost:5177', { timeout: 60000 });
   await page.locator('[data-testid="sidebar"]').waitFor({ state: 'visible', timeout: 30000 });
   await page.waitForTimeout(500);
 

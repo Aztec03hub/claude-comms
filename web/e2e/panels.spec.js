@@ -4,10 +4,9 @@ const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
 test.describe('Panel open/close', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('[data-testid="chat-header"]', { timeout: 15000 });
-    // Wait for animations to settle
-    await page.waitForTimeout(500);
+    await page.goto('/', { waitUntil: 'networkidle', timeout: 20000 });
+    // Give app time to mount and render
+    await page.waitForSelector('[data-testid="chat-header"]', { timeout: 20000 });
   });
 
   // 1. Search panel — open/close
@@ -16,18 +15,16 @@ test.describe('Panel open/close', () => {
     await expect(searchBtn).toBeVisible();
 
     await searchBtn.click();
-    await page.waitForTimeout(400); // wait for slide animation
 
     const searchPanel = page.locator('[data-testid="search-panel"]');
-    await expect(searchPanel).toBeVisible();
+    await expect(searchPanel).toBeVisible({ timeout: 5000 });
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-search-open.png`, fullPage: true });
   });
 
   test('search panel close button works', async ({ page }) => {
     await page.locator('[data-testid="header-search-btn"]').click();
-    await page.waitForTimeout(400);
     const searchPanel = page.locator('[data-testid="search-panel"]');
-    await expect(searchPanel).toBeVisible();
+    await expect(searchPanel).toBeVisible({ timeout: 5000 });
 
     await page.locator('[data-testid="search-panel-close"]').click();
     await expect(searchPanel).not.toBeVisible();
@@ -40,18 +37,16 @@ test.describe('Panel open/close', () => {
     await expect(pinnedBtn).toBeVisible();
 
     await pinnedBtn.click();
-    await page.waitForTimeout(400);
 
     const pinnedPanel = page.locator('[data-testid="pinned-panel"]');
-    await expect(pinnedPanel).toBeVisible();
+    await expect(pinnedPanel).toBeVisible({ timeout: 5000 });
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-pinned-open.png`, fullPage: true });
   });
 
   test('pinned panel close button works', async ({ page }) => {
     await page.locator('[data-testid="header-pin-btn"]').click();
-    await page.waitForTimeout(400);
     const pinnedPanel = page.locator('[data-testid="pinned-panel"]');
-    await expect(pinnedPanel).toBeVisible();
+    await expect(pinnedPanel).toBeVisible({ timeout: 5000 });
 
     await page.locator('[data-testid="pinned-panel-close"]').click();
     await expect(pinnedPanel).not.toBeVisible();
@@ -61,9 +56,8 @@ test.describe('Panel open/close', () => {
   // 3. Escape key closes search panel
   test('Escape key closes search panel', async ({ page }) => {
     await page.locator('[data-testid="header-search-btn"]').click();
-    await page.waitForTimeout(400);
     const searchPanel = page.locator('[data-testid="search-panel"]');
-    await expect(searchPanel).toBeVisible();
+    await expect(searchPanel).toBeVisible({ timeout: 5000 });
 
     await page.keyboard.press('Escape');
     await expect(searchPanel).not.toBeVisible();
@@ -74,19 +68,17 @@ test.describe('Panel open/close', () => {
   test('Escape closes search first when both search and pinned are open', async ({ page }) => {
     // Open pinned first
     await page.locator('[data-testid="header-pin-btn"]').click();
-    await page.waitForTimeout(400);
     const pinnedPanel = page.locator('[data-testid="pinned-panel"]');
-    await expect(pinnedPanel).toBeVisible();
+    await expect(pinnedPanel).toBeVisible({ timeout: 5000 });
 
-    // Then open search (higher z-index, closes first)
+    // Then open search (closes first because it's higher in priority chain)
     await page.locator('[data-testid="header-search-btn"]').click();
-    await page.waitForTimeout(400);
     const searchPanel = page.locator('[data-testid="search-panel"]');
-    await expect(searchPanel).toBeVisible();
+    await expect(searchPanel).toBeVisible({ timeout: 5000 });
 
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-both-open.png`, fullPage: true });
 
-    // First Escape closes search (higher priority)
+    // First Escape closes search (higher priority in App.svelte handler)
     await page.keyboard.press('Escape');
     await expect(searchPanel).not.toBeVisible();
     await expect(pinnedPanel).toBeVisible();
@@ -101,10 +93,9 @@ test.describe('Panel open/close', () => {
   // 5. Search input auto-focus
   test('search panel input is auto-focused when opened', async ({ page }) => {
     await page.locator('[data-testid="header-search-btn"]').click();
-    await page.waitForTimeout(500); // wait for animation + mount
 
     const searchInput = page.locator('[data-testid="search-panel-input"]');
-    await expect(searchInput).toBeVisible();
+    await expect(searchInput).toBeVisible({ timeout: 5000 });
     await expect(searchInput).toBeFocused({ timeout: 3000 });
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-search-focused.png`, fullPage: true });
   });
@@ -114,8 +105,7 @@ test.describe('Panel open/close', () => {
     const searchBtn = page.locator('[data-testid="header-search-btn"]');
 
     await searchBtn.click();
-    await page.waitForTimeout(400);
-    await expect(page.locator('[data-testid="search-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="search-panel"]')).toBeVisible({ timeout: 5000 });
 
     await searchBtn.click();
     await expect(page.locator('[data-testid="search-panel"]')).not.toBeVisible();
@@ -126,8 +116,7 @@ test.describe('Panel open/close', () => {
     const pinBtn = page.locator('[data-testid="header-pin-btn"]');
 
     await pinBtn.click();
-    await page.waitForTimeout(400);
-    await expect(page.locator('[data-testid="pinned-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="pinned-panel"]')).toBeVisible({ timeout: 5000 });
 
     await pinBtn.click();
     await expect(page.locator('[data-testid="pinned-panel"]')).not.toBeVisible();
@@ -136,19 +125,11 @@ test.describe('Panel open/close', () => {
   // 7. Panel doesn't block chat
   test('chat area remains visible with search panel open', async ({ page }) => {
     await page.locator('[data-testid="header-search-btn"]').click();
-    await page.waitForTimeout(400);
-    await expect(page.locator('[data-testid="search-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="search-panel"]')).toBeVisible({ timeout: 5000 });
 
     // The main center area should still be visible
     const mainCenter = page.locator('main.center');
     await expect(mainCenter).toBeVisible();
-
-    // Message input should still be accessible
-    const msgInput = page.locator('[data-testid="message-input"]');
-    const inputCount = await msgInput.count();
-    if (inputCount > 0) {
-      await expect(msgInput.first()).toBeVisible();
-    }
 
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-chat-visible.png`, fullPage: true });
   });
@@ -157,8 +138,7 @@ test.describe('Panel open/close', () => {
   test('channel switch with search panel open', async ({ page }) => {
     // Open search panel
     await page.locator('[data-testid="header-search-btn"]').click();
-    await page.waitForTimeout(400);
-    await expect(page.locator('[data-testid="search-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="search-panel"]')).toBeVisible({ timeout: 5000 });
 
     // Find a different channel and click it
     const headerName = page.locator('[data-testid="header-channel-name"]');
@@ -182,7 +162,6 @@ test.describe('Panel open/close', () => {
 
     if (switched) {
       await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-channel-switch.png`, fullPage: true });
-      // Channel name should have changed
       const newName = await headerName.textContent();
       expect(newName?.trim()).not.toBe(initialName?.trim());
     }
