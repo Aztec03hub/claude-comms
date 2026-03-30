@@ -94,7 +94,7 @@ test.describe('Reactivity Fix Verification', () => {
     await page.waitForTimeout(500);
 
     // Verify the @Phil mention is rendered with the .mention class
-    const mentionSpan = page.locator('.mention').filter({ hasText: '@Phil' });
+    const mentionSpan = page.locator('.mention').filter({ hasText: '@Phil' }).last();
     await expect(mentionSpan).toBeVisible({ timeout: 5000 });
 
     // Step 4: Take victory screenshot

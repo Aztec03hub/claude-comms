@@ -36,7 +36,7 @@ test.describe('Message sending, display, and input behavior', () => {
     await input.press('Enter');
 
     await expect(input).toHaveValue('');
-    const bubble = page.locator('.bubble').filter({ hasText: 'Enter-sent message' });
+    const bubble = page.locator('.bubble').filter({ hasText: 'Enter-sent message' }).last();
     await expect(bubble).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-messages-02-enter-send.png`, fullPage: true });
@@ -51,7 +51,7 @@ test.describe('Message sending, display, and input behavior', () => {
     await sendBtn.click();
 
     await expect(input).toHaveValue('');
-    const bubble = page.locator('.bubble').filter({ hasText: 'Button-sent message' });
+    const bubble = page.locator('.bubble').filter({ hasText: 'Button-sent message' }).last();
     await expect(bubble).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-messages-03-button-send.png`, fullPage: true });

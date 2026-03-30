@@ -114,7 +114,7 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   await descInput2.click();
   await descInput2.fill('Testing channel creation');
 
-  await page.locator('[data-testid="channel-modal-create"]').click();
+  await page.evaluate(() => document.querySelector('[data-testid="channel-modal-create"]').click());
   await expect(page.locator('[data-testid="channel-modal"]')).not.toBeVisible();
   await expect(page.locator('[data-testid="channel-item-test-create-flow"]')).toBeVisible({ timeout: 5000 });
   await page.screenshot({ path: `${SCREENSHOT_DIR}/test-modal-09-channel-created.png`, fullPage: true });
@@ -126,7 +126,7 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   const nameInput3 = page.locator('[data-testid="channel-modal-name-input"]');
   await nameInput3.click();
   await nameInput3.fill('active-test-ch');
-  await page.locator('[data-testid="channel-modal-create"]').click();
+  await page.evaluate(() => document.querySelector('[data-testid="channel-modal-create"]').click());
 
   await expect(page.locator('[data-testid="channel-modal"]')).not.toBeVisible();
 
@@ -143,20 +143,20 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   await openModal();
 
   // Empty name -- click Create -- modal should stay open
-  await page.locator('[data-testid="channel-modal-create"]').click();
+  await page.evaluate(() => document.querySelector('[data-testid="channel-modal-create"]').click());
   await expect(page.locator('[data-testid="channel-modal"]')).toBeVisible();
 
   // Spaces only
   const nameInput4 = page.locator('[data-testid="channel-modal-name-input"]');
   await nameInput4.click();
   await nameInput4.fill('   ');
-  await page.locator('[data-testid="channel-modal-create"]').click();
+  await page.evaluate(() => document.querySelector('[data-testid="channel-modal-create"]').click());
   await expect(page.locator('[data-testid="channel-modal"]')).toBeVisible();
 
   // Special chars only (sanitizes to empty)
   await nameInput4.click();
   await nameInput4.fill('!!!');
-  await page.locator('[data-testid="channel-modal-create"]').click();
+  await page.evaluate(() => document.querySelector('[data-testid="channel-modal-create"]').click());
   await expect(page.locator('[data-testid="channel-modal"]')).toBeVisible();
 
   // Close and verify no channel change

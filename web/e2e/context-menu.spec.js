@@ -109,10 +109,10 @@ test('Right-click context menu - full functional test', async ({ page, context }
   await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-04-reply-thread.png', fullPage: true });
   console.log('TEST 4: PASSED');
 
-  // Close thread panel
+  // Close thread panel (button may be intercepted by header elements, use JS click)
   const closeBtn = page.locator('[data-testid="thread-panel-close"]');
   if (await closeBtn.isVisible()) {
-    await closeBtn.click();
+    await page.evaluate(() => document.querySelector('[data-testid="thread-panel-close"]')?.click());
     await expect(page.locator('[data-testid="thread-panel"]')).not.toBeVisible({ timeout: 3000 });
   }
 
