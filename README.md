@@ -702,6 +702,8 @@ cd claude-comms
 pip install -e ".[all,dev]"
 ```
 
+**Dependency note:** The project depends on `mcp` (without the `[cli]` extra) and pins `typer>=0.15.0,<0.16.0` to avoid a conflict where `amqtt` pins `typer==0.15.4` while `mcp[cli]` requires `typer>=0.16.0`. This is already handled in `pyproject.toml`.
+
 ### Linting
 
 ```bash
@@ -720,7 +722,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes 338+ tests across 8 test files:
+The test suite includes **360 tests** across 10 test files (passing in ~0.5s):
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -732,6 +734,8 @@ The test suite includes 338+ tests across 8 test files:
 | `test_log_exporter.py` | 46 | LogExporter, formatting, rotation, dedup, conv validation |
 | `test_mcp_tools.py` | 42 | All 9 MCP tools, ParticipantRegistry, token pagination |
 | `test_notification_hook.py` | 45 | Script generation, settings manipulation, install/uninstall |
+| `test_integration.py` | 45 | Cross-module integration: config flow, message roundtrip, mention pipeline, log exporter, dedup, registry, hook installer, MCP tools pipeline |
+| `test_e2e.py` | 22 | End-to-end flows: two-participant chat, targeted messaging, conversation lifecycle, presence, name changes, JSONL replay, notifications, full session |
 
 ### Build the Web UI
 
@@ -775,9 +779,9 @@ claude-comms/
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
-+-- tests/                            # pytest test suite
++-- tests/                            # pytest test suite (360 tests)
 |   +-- conftest.py                   # Shared fixtures
-|   +-- test_*.py                     # 8 test modules
+|   +-- test_*.py                     # 10 test modules (unit, integration, E2E)
 +-- mockups/                          # 30+ HTML design mockups
 +-- .worklogs/                        # Agent work logs
 ```

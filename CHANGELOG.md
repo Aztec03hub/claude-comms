@@ -18,12 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Test job**: Matrix across Python 3.10, 3.11, 3.12 with pip caching; uploads JUnit XML results as artifacts (30-day retention)
   - **Build Web job**: Node 22 with npm caching; builds Svelte app; uploads dist as artifact
   - Concurrency control: cancels in-progress runs for same git ref
-- Integration test suite -- *in progress*
+- **Integration test suite** (`tests/test_integration.py`) -- 45 tests covering cross-module interactions: config init flow, message roundtrip, mention resolution pipeline, log exporter integration, shared deduplicator, participant registry, hook installer, and MCP tools pipeline
+- **E2E test suite** (`tests/test_e2e.py`) -- 22 tests covering full system flows with a `MockBroker` simulating MQTT pub/sub: two-participant chat, targeted messaging, conversation lifecycle, presence flow, name changes, log format verification, JSONL replay, notifications, and a complete end-to-end session
 
 #### Batch 3: TUI Client and Svelte Web Client
 
 - **TUI Client** (`src/claude_comms/tui/`) -- Textual-based terminal chat with 3-column layout (channels, chat, participants), direct MQTT connection via aiomqtt `@work()` async worker, per-conversation message storage, deterministic sender colors (MD5 hash to Carbon Ember palette), triple-backtick code block rendering (Rich Syntax, Monokai), @mention Tab completion, unread badges, presence indicators, modal new-conversation dialog
 - **Svelte 5 Web Client** (`web/`) -- 35-file Svelte 5 + Vite SPA implementing the "Obsidian Forge" design language. Svelte 5 runes (`$state`, `$derived`, `$effect`), Tailwind CSS v4 with `@theme` directive, mqtt.js direct WebSocket connection to broker. Components include: channel sidebar, message bubbles with grouping, @mention autocomplete, emoji picker, thread panel, search panel, context menu, profile cards, notification toasts, scroll-to-bottom button, file attachments, link previews, read receipts, reaction bars, date separators. All mockup animations replicated (ambient drift, brand breath, badge pulse, typing wave, send shine, etc.)
+
+### Fixed
+
+- **Dependency conflict resolved** -- Changed `mcp[cli]` to `mcp` (without the `[cli]` extra) and pinned `typer>=0.15.0,<0.16.0` in `pyproject.toml`. The `[cli]` extra required `typer>=0.16.0` which conflicted with `amqtt`'s pin on `typer==0.15.4`.
 
 ### Design
 
@@ -38,7 +43,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 ### Added
 
 #### Core Infrastructure
-- **`pyproject.toml`** -- Hatchling build system, all dependencies (`amqtt`, `aiomqtt`, `mcp[cli]`, `typer`, `pyyaml`, `rich`, `pydantic`), optional extras (`tui`, `web`, `all`, `dev`), entry point `claude-comms`, pytest config
+- **`pyproject.toml`** -- Hatchling build system, all dependencies (`amqtt`, `aiomqtt`, `mcp`, `typer>=0.15.0,<0.16.0`, `pyyaml`, `rich`, `pydantic`), optional extras (`tui`, `web`, `all`, `dev`), entry point `claude-comms`, pytest config
 - **`src/claude_comms/__init__.py`** -- Package init with `__version__ = "0.1.0"`
 - **`src/claude_comms/__main__.py`** -- `python -m claude_comms` entry point
 
@@ -153,7 +158,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - 17 refinement rounds on Concept J (Phantom Ember -> Obsidian Forge)
 - Final interactive mockup: `concept-j-phantom-ember-v2-r10-interactive.html`
 
-#### Test Suite (338+ tests)
+#### Test Suite (360 tests, ~0.5s)
 - **`tests/conftest.py`** -- shared fixtures (registry, store, publish_spy, tmp_config)
 - **`tests/test_config.py`** (21 tests) -- config path, identity key, save/load, permissions, deep merge, password resolution
 - **`tests/test_message.py`** (33 tests) -- creation, JSON round-trip, validation, routing
@@ -163,6 +168,8 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - **`tests/test_log_exporter.py`** (46 tests) -- formatting, rotation, dedup, conv validation
 - **`tests/test_mcp_tools.py`** (42 tests) -- all 9 tools, registry, token pagination
 - **`tests/test_notification_hook.py`** (45 tests) -- script generation, settings manipulation, install/uninstall
+- **`tests/test_integration.py`** (45 tests) -- cross-module integration: config flow, message roundtrip, mention pipeline, log exporter, dedup, registry, hook installer, MCP tools pipeline
+- **`tests/test_e2e.py`** (22 tests) -- end-to-end flows with MockBroker: two-participant chat, targeted messaging, conversation lifecycle, presence, name changes, JSONL replay, notifications
 
 ### Architecture Decisions
 
@@ -183,9 +190,16 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - 17 iterative adversarial refinement rounds producing "Obsidian Forge" final design
 - Architecture plan survived 7 adversarial review rounds before APPROVED status
 
+### Project Stats
+
+- **64 source files** across Python, Svelte, JS, CSS, and shell scripts
+- **360 tests** across 10 test modules (unit, integration, E2E)
+- **27 Svelte components** (26 in `components/` + `App.svelte`)
+- **18 Python source files** (14 modules + TUI subpackage)
+- **4 deployment targets**: pip install, Docker, docker-compose, VPS
+
 ### Known Issues
 
-- `amqtt` pins `typer==0.15.4` while `mcp[cli]` requires `typer>=0.16.0` -- may need to install mcp without the `[cli]` extra
 - WSL2 with Windows-mounted filesystems may not support `chmod 600` on config files (falls back to warning)
 - Architecture plan example key `phil0e8a` contains non-hex characters -- all real keys use `[0-9a-f]{8}` only
 
