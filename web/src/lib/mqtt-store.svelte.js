@@ -8,6 +8,7 @@ const TYPING_TTL_MS = 5000;
 const BASE_RECONNECT_MS = 3000;
 const MAX_RECONNECT_MS = 30000;
 const BACKOFF_AFTER_ATTEMPTS = 5;
+const MAX_MESSAGES = 5000;
 const MAX_MESSAGE_LENGTH = 10000;
 const MAX_CHANNEL_NAME_LENGTH = 50;
 const MAX_DISPLAY_NAME_LENGTH = 50;
@@ -98,6 +99,11 @@ export class MqttChatStore {
         // Immutable reassignment triggers $derived recalculation
         this.messages = [...this.messages, ...newMessages]
           .sort((a, b) => new Date(a.ts) - new Date(b.ts));
+
+        // Cap the messages array to prevent unbounded growth
+        if (this.messages.length > MAX_MESSAGES) {
+          this.messages = this.messages.slice(-MAX_MESSAGES);
+        }
       }
     } catch {
       // History fetch failed — not critical, live messages still work
@@ -824,6 +830,11 @@ export class MqttChatStore {
     // tracking in Svelte 5 class-based stores, causing messages to not
     // render even though they're in the array.
     this.messages = [...this.messages, message];
+
+    // Cap the messages array to prevent unbounded growth
+    if (this.messages.length > MAX_MESSAGES) {
+      this.messages = this.messages.slice(-MAX_MESSAGES);
+    }
 
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
