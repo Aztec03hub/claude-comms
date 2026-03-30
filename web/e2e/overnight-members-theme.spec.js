@@ -442,9 +442,15 @@ test.describe('Overnight: Members, Profile Card, Theme, Responsive', () => {
     await page.setViewportSize({ width: 480, height: 800 });
     await delay(500);
 
-    // At 480px, sidebar-w is 0
-    const sidebarWidth = await ce(`document.querySelector('[data-testid="sidebar"]')?.offsetWidth`);
-    expect(sidebarWidth).toBeLessThanOrEqual(1);
+    // At 480px, sidebar slides off-screen via mobile wrapper (translateX(-100%))
+    // but still has offsetWidth > 0 because it's display:flex. Check position instead.
+    const sidebarOffScreen = await ce(`(() => {
+      const el = document.querySelector('[data-testid="sidebar"]');
+      if (!el) return true;
+      const r = el.getBoundingClientRect();
+      return r.x + r.width <= 0;
+    })()`);
+    expect(sidebarOffScreen).toBe(true);
 
     // Member list hidden at 640px breakpoint
     const memberVisible = await ce(`document.querySelector('[data-testid="member-list"]')?.offsetWidth > 0`);

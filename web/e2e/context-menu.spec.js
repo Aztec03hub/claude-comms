@@ -71,9 +71,9 @@ test('Right-click context menu - full functional test', async ({ page, context }
   // ── TEST 5: Click outside closes menu ──
   // First close the current menu by clicking outside
   console.log('TEST 5: Click outside closes menu...');
-  const backdrop = page.locator('.ctx-backdrop');
-  await backdrop.click({ position: { x: 5, y: 5 } });
-  await expect(backdrop).not.toBeVisible();
+  // Click on the messages area (outside the context menu) to dismiss it
+  await page.locator('[data-testid="chat-view"]').click({ position: { x: 5, y: 5 } });
+  await expect(contextMenu).not.toBeVisible({ timeout: 3000 });
   await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-05-click-outside.png', fullPage: true });
   console.log('TEST 5: PASSED');
 
@@ -82,7 +82,7 @@ test('Right-click context menu - full functional test', async ({ page, context }
   await firstBubble.click({ button: 'right' });
   await expect(contextMenu).toBeVisible({ timeout: 5000 });
   await page.keyboard.press('Escape');
-  await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
+  await expect(contextMenu).not.toBeVisible({ timeout: 3000 });
   await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-06-escape-close.png', fullPage: true });
   console.log('TEST 6: PASSED');
 
@@ -92,7 +92,7 @@ test('Right-click context menu - full functional test', async ({ page, context }
   await firstBubble.click({ button: 'right' });
   await expect(contextMenu).toBeVisible({ timeout: 5000 });
   await page.locator('[data-testid="ctx-copy"]').click();
-  await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
+  await expect(contextMenu).not.toBeVisible({ timeout: 3000 });
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toContain('First context test message');
   await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-07-copy.png', fullPage: true });
@@ -103,7 +103,7 @@ test('Right-click context menu - full functional test', async ({ page, context }
   await firstBubble.click({ button: 'right' });
   await expect(contextMenu).toBeVisible({ timeout: 5000 });
   await page.locator('[data-testid="ctx-reply"]').click();
-  await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
+  await expect(contextMenu).not.toBeVisible({ timeout: 3000 });
   await expect(page.locator('[data-testid="thread-panel"]')).toBeVisible();
   await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-04-reply-thread.png', fullPage: true });
   console.log('TEST 4: PASSED');
