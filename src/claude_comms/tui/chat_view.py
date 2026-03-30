@@ -12,7 +12,6 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text

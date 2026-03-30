@@ -272,17 +272,12 @@ def start(
                 from starlette.applications import Starlette
                 from starlette.routing import Mount
                 from starlette.staticfiles import StaticFiles
-                from starlette.responses import FileResponse
 
                 # Locate web/dist relative to the package
                 _pkg_dir = Path(__file__).resolve().parent
                 _web_dist = (_pkg_dir / "../../web/dist").resolve()
 
                 if _web_dist.is_dir():
-                    async def _spa_fallback(request):
-                        """Serve index.html for SPA routes."""
-                        return FileResponse(str(_web_dist / "index.html"))
-
                     web_app = Starlette(
                         routes=[
                             Mount("/assets", app=StaticFiles(directory=str(_web_dist / "assets")), name="assets"),

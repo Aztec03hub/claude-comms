@@ -7,8 +7,6 @@ and the current user identity.
 
 from __future__ import annotations
 
-import time
-
 from rich.text import Text
 from textual.reactive import reactive
 from textual.widgets import Static

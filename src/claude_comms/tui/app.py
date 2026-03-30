@@ -14,16 +14,13 @@ from typing import Any
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, Header, Input, Label, Static, RichLog
-from textual.worker import Worker, get_current_worker
+from textual.widgets import Footer, Header, Input, Label, Static
 from textual import work
 
 from claude_comms.broker import generate_client_id
 from claude_comms.config import load_config
-from claude_comms.mention import build_mention_prefix, resolve_mentions, strip_mentions
+from claude_comms.mention import resolve_mentions
 from claude_comms.message import Message, validate_conv_id
-from claude_comms.participant import Participant
-
 from claude_comms.tui.channel_list import ChannelList, ChannelSelected
 from claude_comms.tui.chat_view import ChatView
 from claude_comms.tui.message_input import MessageInput, MessageSubmitted
