@@ -345,4 +345,6 @@ body::after {
   :root {
     --sidebar-w: 0px;
   }
+
+  /* Mobile sidebar overlay is managed by App.svelte wrapper */
 }
