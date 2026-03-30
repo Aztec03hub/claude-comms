@@ -212,23 +212,118 @@ def start(
                     f"{remote.get('remote_host', '?')}:{remote.get('remote_port', 1883)}"
                 )
 
-            # 2) MCP server placeholder — will be wired once mcp_tools.py exists
+            # 2) MCP server
+            from claude_comms.mcp_server import (
+                create_server as _create_mcp_server,
+                _mqtt_subscriber,
+            )
+            import claude_comms.mcp_server as _mcp_mod
+
+            mcp = _create_mcp_server(config)
+            starlette_app = mcp.streamable_http_app()
+
+            import uvicorn
+
+            mcp_uvi_config = uvicorn.Config(
+                starlette_app,
+                host=mcp_host,
+                port=mcp_port,
+                log_level="warning",
+            )
+            mcp_uvi_server = uvicorn.Server(mcp_uvi_config)
+            mcp_task = asyncio.create_task(mcp_uvi_server.serve())
+
+            # Start MQTT subscriber to feed messages into the MCP store
+            broker_cfg = config.get("broker", {})
+            broker_host = broker_cfg.get("host", "127.0.0.1")
+            broker_port = broker_cfg.get("port", 1883)
+            mqtt_sub_task = asyncio.create_task(
+                _mqtt_subscriber(
+                    broker_host, broker_port,
+                    _mcp_mod._store, _mcp_mod._deduplicator,
+                )
+            )
+
+            # Create persistent MQTT publish client for MCP tools
+            import aiomqtt
+            from claude_comms.broker import generate_client_id
+
+            pub_client_id = generate_client_id("mcp-pub", "00000000")
+            pub_client = aiomqtt.Client(
+                hostname=broker_host,
+                port=broker_port,
+                identifier=pub_client_id,
+            )
+            await pub_client.__aenter__()
+
+            async def _do_publish(topic: str, payload: bytes) -> None:
+                await pub_client.publish(topic, payload, qos=1)
+
+            _mcp_mod._publish_fn = _do_publish
+
             console.print(
                 f"  [green]MCP server[/green] ready on "
                 f"http://{mcp_host}:{mcp_port}"
             )
 
             # 3) Web server
+            web_task: asyncio.Task | None = None
             if web_enabled:
-                console.print(
-                    f"  [green]Web UI[/green] available at "
-                    f"http://127.0.0.1:{web_port}"
-                )
+                from starlette.applications import Starlette
+                from starlette.routing import Mount
+                from starlette.staticfiles import StaticFiles
+                from starlette.responses import FileResponse
+
+                # Locate web/dist relative to the package
+                _pkg_dir = Path(__file__).resolve().parent
+                _web_dist = (_pkg_dir / "../../web/dist").resolve()
+
+                if _web_dist.is_dir():
+                    async def _spa_fallback(request):
+                        """Serve index.html for SPA routes."""
+                        return FileResponse(str(_web_dist / "index.html"))
+
+                    web_app = Starlette(
+                        routes=[
+                            Mount("/assets", app=StaticFiles(directory=str(_web_dist / "assets")), name="assets"),
+                            Mount("/", app=StaticFiles(directory=str(_web_dist), html=True), name="root"),
+                        ],
+                    )
+                    web_uvi_config = uvicorn.Config(
+                        web_app,
+                        host="127.0.0.1",
+                        port=web_port,
+                        log_level="warning",
+                    )
+                    web_uvi_server = uvicorn.Server(web_uvi_config)
+                    web_task = asyncio.create_task(web_uvi_server.serve())
+                    console.print(
+                        f"  [green]Web UI[/green] available at "
+                        f"http://127.0.0.1:{web_port}"
+                    )
+                else:
+                    console.print(
+                        f"  [yellow]Web UI[/yellow] dist not found at {_web_dist} — skipping"
+                    )
 
             console.print("[bold green]Daemon running. Press Ctrl+C to stop.[/bold green]")
 
             # Block until signalled
             await shutdown_event.wait()
+
+            # Graceful shutdown of MCP and web servers
+            mcp_uvi_server.should_exit = True
+            mqtt_sub_task.cancel()
+            await pub_client.__aexit__(None, None, None)
+            if web_task is not None:
+                web_uvi_server.should_exit = True
+            # Wait for tasks to finish
+            for t in [mcp_task, mqtt_sub_task, web_task]:
+                if t is not None:
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
 
         finally:
             console.print("\n[bold]Shutting down...[/bold]")

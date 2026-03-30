@@ -5,9 +5,21 @@
 
   let starredCollapsed = $state(false);
   let convoCollapsed = $state(false);
+  let searchQuery = $state('');
 
-  // Exclude starred channels from the conversations list to avoid duplicates
-  let unstarredChannels = $derived(store.channels.filter(c => !c.starred));
+  // Filter channels by search query (case-insensitive name match)
+  let filteredStarred = $derived(
+    store.starredChannels.filter(c =>
+      !searchQuery.trim() || c.id.toLowerCase().includes(searchQuery.trim().toLowerCase())
+    )
+  );
+
+  // Exclude starred channels from the conversations list to avoid duplicates, then filter
+  let unstarredChannels = $derived(
+    store.channels
+      .filter(c => !c.starred)
+      .filter(c => !searchQuery.trim() || c.id.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+  );
 
   function handleChannelClick(channelId) {
     store.switchChannel(channelId);
@@ -27,18 +39,18 @@
   </div>
 
   <div class="search-wrap">
-    <input class="search-input" type="text" placeholder="Search conversations..." data-testid="sidebar-search">
+    <input class="search-input" type="text" placeholder="Search conversations..." bind:value={searchQuery} data-testid="sidebar-search">
     <span class="search-kbd">⌘K</span>
   </div>
 
-  {#if store.starredChannels.length > 0}
+  {#if filteredStarred.length > 0}
     <div class="section-label" class:collapsed={starredCollapsed} data-testid="sidebar-starred-section">
       <span class="star">★</span> Starred
       <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle">▾</button>
     </div>
     {#if !starredCollapsed}
       <div class="channel-list" style="flex: none;">
-        {#each store.starredChannels as channel (channel.id)}
+        {#each filteredStarred as channel (channel.id)}
           <div
             class="channel-item"
             class:active={channel.id === store.activeChannel}
