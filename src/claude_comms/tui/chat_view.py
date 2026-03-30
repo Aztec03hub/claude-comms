@@ -2,12 +2,13 @@
 
 Renders messages as Rich Panels with sender-colored borders, timestamps
 in "Today at 2:36 PM" format, and syntax-highlighted code blocks.
-System messages (join/leave) appear as centered dim text.
+System messages (join/leave) appear as centered dim text with a distinct style.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -24,15 +25,22 @@ if TYPE_CHECKING:
 
 # Carbon Ember sender color palette — cycled per participant key
 SENDER_COLORS = [
-    "#34d399",  # emerald
-    "#fbbf24",  # amber
-    "#f59e0b",  # bright amber
+    "#d97706",  # ember/amber (primary accent)
+    "#fbbf24",  # gold
+    "#2dd4bf",  # teal
     "#fb7185",  # rose
+    "#34d399",  # emerald
     "#60a5fa",  # sky blue
     "#a78bfa",  # violet
     "#f472b6",  # pink
-    "#2dd4bf",  # teal
+    "#f59e0b",  # bright amber
+    "#38bdf8",  # light blue
+    "#c084fc",  # purple
+    "#4ade80",  # green
 ]
+
+# Pattern for detecting @mentions in message text
+_MENTION_RE = re.compile(r"(@[\w-]+)")
 
 
 def _color_for_key(sender_key: str) -> str:
@@ -70,8 +78,6 @@ def _extract_code_blocks(body: str) -> list[tuple[str, str | None, str]]:
       - ("text", None, "plain text content")
       - ("code", "python", "code content")  (lang may be empty string)
     """
-    import re
-
     parts: list[tuple[str, str | None, str]] = []
     pattern = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
     last_end = 0
@@ -98,6 +104,23 @@ def _extract_code_blocks(body: str) -> list[tuple[str, str | None, str]]:
     return parts
 
 
+def _render_text_with_mentions(text: str) -> Text:
+    """Render plain text with @mention highlighting."""
+    result = Text()
+    last_end = 0
+    for match in _MENTION_RE.finditer(text):
+        # Text before mention
+        if match.start() > last_end:
+            result.append(text[last_end : match.start()])
+        # The @mention itself — highlighted in amber
+        result.append(match.group(0), style="bold #fbbf24")
+        last_end = match.end()
+    # Remaining text
+    if last_end < len(text):
+        result.append(text[last_end:])
+    return result
+
+
 class MessageBubble(Static):
     """A single rendered message bubble."""
 
@@ -111,16 +134,20 @@ class MessageBubble(Static):
         sender_color = _color_for_key(msg.sender.key)
         timestamp = _format_timestamp(msg.ts)
 
-        # Build header: "sender_name  timestamp"
+        # Sender type indicator
+        type_icon = "\U0001f916" if msg.sender.type == "claude" else "\U0001f464"
+
+        # Build header: "icon sender_name  timestamp"
         header = Text()
+        header.append(f"{type_icon} ", style="")
         header.append(msg.sender.name, style=f"bold {sender_color}")
-        header.append(f"  {timestamp}", style="dim")
+        header.append(f"  {timestamp}", style="dim #6a6a6a")
 
         # Build body with code block support
         segments = _extract_code_blocks(msg.body)
         if len(segments) == 1 and segments[0][0] == "text":
-            # Simple text message
-            body_renderable = Text(segments[0][2])
+            # Simple text message — render with @mention highlights
+            body_renderable = _render_text_with_mentions(segments[0][2])
         else:
             # Mixed content — use a group
             from rich.console import Group
@@ -138,7 +165,7 @@ class MessageBubble(Static):
                         )
                     )
                 else:
-                    renderables.append(Text(content))
+                    renderables.append(_render_text_with_mentions(content))
             body_renderable = Group(*renderables)
 
         return Panel(
@@ -152,14 +179,15 @@ class MessageBubble(Static):
 
 
 class SystemMessage(Static):
-    """A system message (join/leave) displayed as centered dim text."""
+    """A system message (join/leave) displayed as centered dim text with a rule."""
 
     DEFAULT_CSS = """
     SystemMessage {
         text-align: center;
-        color: #8a8a8a;
+        color: #6a6a6a;
         text-style: italic;
         margin: 1 4;
+        padding: 0 2;
     }
     """
 

@@ -38,7 +38,7 @@ class ChannelItem(Widget):
         color: #e8e4df;
     }
     ChannelItem.--active {
-        background: #2c2c2e;
+        background: #2a2017;
         color: #d97706;
         text-style: bold;
     }

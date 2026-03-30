@@ -6,16 +6,29 @@
  * Text:        #e8e4df (warm white)
  * Dim text:    #8a8a8a
  * Accent:      #d97706 (amber/gold)
+ * Ember glow:  #f59e0b
  * Sender colors:
  *   emerald  #34d399
  *   amber    #fbbf24
  *   bright   #f59e0b
  *   rose     #fb7185
+ *   sky      #60a5fa
+ *   violet   #a78bfa
+ *   pink     #f472b6
+ *   teal     #2dd4bf
  */
 
 Screen {
     background: #141416;
     color: #e8e4df;
+}
+
+/* Header bar override */
+Header {
+    background: #1a1a1c;
+    color: #d97706;
+    dock: top;
+    height: 1;
 }
 
 /* ---------- Three-column layout ---------- */
@@ -27,24 +40,26 @@ Screen {
 
 /* Left sidebar — channel list */
 #channel-sidebar {
-    width: 24;
+    width: 26;
     dock: left;
-    background: #1c1c1e;
-    border-right: solid #2c2c2e;
+    background: #1a1a1c;
+    border-right: tall #2a2017;
+    padding: 0;
 }
 
 #channel-sidebar .sidebar-title {
     text-style: bold;
     color: #d97706;
     padding: 1 1 0 1;
+    text-align: left;
 }
 
 /* Right sidebar — participant list */
 #participant-sidebar {
-    width: 22;
+    width: 24;
     dock: right;
-    background: #1c1c1e;
-    border-left: solid #2c2c2e;
+    background: #1a1a1c;
+    border-left: tall #2a2017;
 }
 
 #participant-sidebar .sidebar-title {
@@ -63,11 +78,12 @@ Screen {
 /* Channel header bar */
 #channel-header {
     height: 3;
-    background: #1c1c1e;
-    border-bottom: solid #2c2c2e;
+    background: #1a1a1c;
+    border-bottom: heavy #2a2017;
     padding: 0 1;
     content-align: left middle;
     color: #e8e4df;
+    text-style: bold;
 }
 
 #channel-header .channel-name {
@@ -83,6 +99,7 @@ Screen {
     scrollbar-color: #2c2c2e;
     scrollbar-color-hover: #d97706;
     scrollbar-color-active: #fbbf24;
+    scrollbar-size-vertical: 1;
 }
 
 /* Message input area */
@@ -90,8 +107,8 @@ Screen {
     height: auto;
     max-height: 6;
     dock: bottom;
-    background: #1c1c1e;
-    border-top: solid #2c2c2e;
+    background: #1a1a1c;
+    border-top: heavy #2a2017;
     padding: 0 1;
 }
 
@@ -117,12 +134,12 @@ Screen {
 }
 
 .channel-item:hover {
-    background: #2c2c2e;
+    background: #262628;
     color: #e8e4df;
 }
 
 .channel-item.--active {
-    background: #2c2c2e;
+    background: #2a2017;
     color: #d97706;
     text-style: bold;
 }
@@ -162,16 +179,17 @@ Screen {
 
 .system-message {
     text-align: center;
-    color: #8a8a8a;
+    color: #6a6a6a;
     text-style: italic;
     margin: 1 4;
+    padding: 0 2;
 }
 
 /* ---------- Autocomplete dropdown ---------- */
 
 #autocomplete-list {
     layer: overlay;
-    background: #1c1c1e;
+    background: #1a1a1c;
     border: round #2c2c2e;
     max-height: 8;
     display: none;
@@ -197,12 +215,30 @@ Screen {
     color: #141416;
 }
 
-/* ---------- Footer status bar ---------- */
+/* ---------- Status bar ---------- */
 
 #status-bar {
     height: 1;
     dock: bottom;
-    background: #1c1c1e;
+    background: #1a1a1c;
     color: #8a8a8a;
     padding: 0 1;
+    border-top: solid #2a2017;
+}
+
+/* ---------- Footer override ---------- */
+
+Footer {
+    background: #1a1a1c;
+    color: #8a8a8a;
+}
+
+FooterKey .footer-key--key {
+    color: #d97706;
+    background: #2a2017;
+    text-style: bold;
+}
+
+FooterKey .footer-key--description {
+    color: #8a8a8a;
 }
