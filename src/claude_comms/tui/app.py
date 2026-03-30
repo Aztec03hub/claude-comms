@@ -50,7 +50,7 @@ class ClaudeCommsApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+n", "new_conversation", "New Conv", show=True),
-        Binding("ctrl+k", "switch_conversation", "Switch Conv", show=True),
+        Binding("ctrl+k", "switch_conversation", "Switch Conv", show=True, priority=True),
     ]
 
     def __init__(self, config: dict[str, Any] | None = None, **kwargs) -> None:
