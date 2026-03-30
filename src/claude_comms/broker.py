@@ -423,18 +423,21 @@ class EmbeddedBroker:
 
                 try:
                     from websockets.exceptions import ConnectionClosedOK  # type: ignore[import-untyped]
+
                     ws_closed_type = ConnectionClosedOK
                 except ImportError:
                     ws_closed_type = None  # type: ignore[assignment]
 
                 if isinstance(exc, struct.error) and "unpack requires" in str(exc):
                     logger.warning(
-                        "Suppressed benign amqtt struct.error from WS disconnect: %s", exc
+                        "Suppressed benign amqtt struct.error from WS disconnect: %s",
+                        exc,
                     )
                     return
                 if ws_closed_type is not None and isinstance(exc, ws_closed_type):
                     logger.warning(
-                        "Suppressed benign amqtt ConnectionClosedOK from WS disconnect: %s", exc
+                        "Suppressed benign amqtt ConnectionClosedOK from WS disconnect: %s",
+                        exc,
                     )
                     return
 

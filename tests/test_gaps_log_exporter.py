@@ -11,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 
-
 from claude_comms.log_exporter import (
     LogExporter,
     _check_rotation,

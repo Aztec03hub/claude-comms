@@ -43,13 +43,16 @@ class TestTokenPaginationEdgeCases:
     ):
         """A single message larger than MAX_OUTPUT_CHARS should still be returned."""
         huge_body = "x" * (MAX_OUTPUT_CHARS + 1000)
-        store.add("general", {
-            "id": "huge-1",
-            "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": huge_body,
-            "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "huge-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": huge_body,
+                "conv": "general",
+            },
+        )
         result = tool_comms_read(
             registry, store, key=sample_participant["key"], conversation="general"
         )
@@ -64,15 +67,22 @@ class TestTokenPaginationEdgeCases:
     ):
         """When truncated, should keep the most recent messages."""
         for i in range(50):
-            store.add("general", {
-                "id": f"pag-{i:04d}",
-                "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-                "body": "y" * 5000,
-                "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"pag-{i:04d}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                    "body": "y" * 5000,
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(
-            registry, store, key=sample_participant["key"], conversation="general", count=50
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            count=50,
         )
         # Last message in result should be the most recent
         if result["messages"]:
@@ -87,16 +97,22 @@ class TestTokenPaginationEdgeCases:
     ):
         """comms_history should also respect token limits."""
         for i in range(100):
-            store.add("general", {
-                "id": f"hist-{i}",
-                "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-                "body": "z" * 2000,
-                "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"hist-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                    "body": "z" * 2000,
+                    "conv": "general",
+                },
+            )
         result = tool_comms_history(
-            registry, store, key=sample_participant["key"],
-            conversation="general", count=200,
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            count=200,
         )
         assert result["count"] < 100
         assert result["has_more"] is True
@@ -113,16 +129,22 @@ class TestCountClamping:
         sample_participant: dict,
     ):
         """count=0 should be clamped to 1."""
-        store.add("general", {
-            "id": "clamp-1",
-            "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": "hi",
-            "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "clamp-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": "hi",
+                "conv": "general",
+            },
+        )
         result = tool_comms_read(
-            registry, store, key=sample_participant["key"],
-            conversation="general", count=0,
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            count=0,
         )
         assert result["count"] == 1
 
@@ -134,16 +156,22 @@ class TestCountClamping:
     ):
         """count=999 should be clamped to 200."""
         for i in range(5):
-            store.add("general", {
-                "id": f"cmax-{i}",
-                "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-                "body": "hi",
-                "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"cmax-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                    "body": "hi",
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(
-            registry, store, key=sample_participant["key"],
-            conversation="general", count=999,
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            count=999,
         )
         # Should not crash, returns all 5
         assert result["count"] == 5
@@ -154,16 +182,22 @@ class TestCountClamping:
         store: MessageStore,
         sample_participant: dict,
     ):
-        store.add("general", {
-            "id": "hclamp-1",
-            "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": "hi",
-            "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "hclamp-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": "hi",
+                "conv": "general",
+            },
+        )
         result = tool_comms_history(
-            registry, store, key=sample_participant["key"],
-            conversation="general", count=-5,
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            count=-5,
         )
         assert result["count"] == 1
 
@@ -180,7 +214,8 @@ class TestCommsSendEdgeCases:
         publish_spy,
     ):
         result = await tool_comms_send(
-            registry, publish_spy,
+            registry,
+            publish_spy,
             key=sample_participant["key"],
             conversation="INVALID!!",
             message="hello",
@@ -197,7 +232,8 @@ class TestCommsSendEdgeCases:
         """Very long message should succeed (no length limit in tool)."""
         long_msg = "A" * 100_000
         result = await tool_comms_send(
-            registry, publish_spy,
+            registry,
+            publish_spy,
             key=sample_participant["key"],
             conversation="general",
             message=long_msg,
@@ -289,20 +325,21 @@ class TestCommsCheckEdgeCases:
         sample_participant: dict,
     ):
         """After reading, check should show 0 unread."""
-        store.add("general", {
-            "id": "chk-1",
-            "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "other123", "name": "other", "type": "claude"},
-            "body": "Hi",
-            "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "chk-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "other123", "name": "other", "type": "claude"},
+                "body": "Hi",
+                "conv": "general",
+            },
+        )
         # Read to update cursor
         tool_comms_read(
             registry, store, key=sample_participant["key"], conversation="general"
         )
-        result = tool_comms_check(
-            registry, store, key=sample_participant["key"]
-        )
+        result = tool_comms_check(registry, store, key=sample_participant["key"])
         assert result["total_unread"] == 0
 
     def test_check_invalid_key(

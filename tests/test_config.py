@@ -135,7 +135,9 @@ class TestPasswordResolution:
             config = load_config(tmp_config_path)
         assert config["broker"]["auth"]["password"] == "env-pass"
 
-    def test_yaml_password_used_when_no_env(self, tmp_config_path: Path, sample_config: dict):
+    def test_yaml_password_used_when_no_env(
+        self, tmp_config_path: Path, sample_config: dict
+    ):
         sample_config["broker"]["auth"]["password"] = "yaml-pass"
         save_config(sample_config, tmp_config_path)
         with patch.dict(os.environ, {}, clear=False):
@@ -143,7 +145,9 @@ class TestPasswordResolution:
             config = load_config(tmp_config_path)
         assert config["broker"]["auth"]["password"] == "yaml-pass"
 
-    def test_warns_when_no_password_and_auth_enabled(self, tmp_config_path: Path, sample_config: dict):
+    def test_warns_when_no_password_and_auth_enabled(
+        self, tmp_config_path: Path, sample_config: dict
+    ):
         sample_config["broker"]["auth"]["password"] = ""
         sample_config["broker"]["auth"]["enabled"] = True
         save_config(sample_config, tmp_config_path)
@@ -152,7 +156,9 @@ class TestPasswordResolution:
             with pytest.warns(UserWarning, match="no password"):
                 load_config(tmp_config_path)
 
-    def test_no_warn_when_auth_disabled(self, tmp_config_path: Path, sample_config: dict):
+    def test_no_warn_when_auth_disabled(
+        self, tmp_config_path: Path, sample_config: dict
+    ):
         sample_config["broker"]["auth"]["password"] = ""
         sample_config["broker"]["auth"]["enabled"] = False
         save_config(sample_config, tmp_config_path)
@@ -175,5 +181,13 @@ class TestGetDefaultConfig:
 
     def test_has_all_top_level_keys(self):
         config = get_default_config()
-        expected_keys = {"identity", "broker", "mcp", "web", "notifications", "logging", "default_conversation"}
+        expected_keys = {
+            "identity",
+            "broker",
+            "mcp",
+            "web",
+            "notifications",
+            "logging",
+            "default_conversation",
+        }
         assert expected_keys == set(config.keys())

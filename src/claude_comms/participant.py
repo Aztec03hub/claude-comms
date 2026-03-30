@@ -86,9 +86,7 @@ class Participant(BaseModel):
     @classmethod
     def _validate_name(cls, v: str) -> str:
         if not NAME_PATTERN.match(v):
-            raise ValueError(
-                f"name must match {NAME_PATTERN.pattern!r}, got {v!r}"
-            )
+            raise ValueError(f"name must match {NAME_PATTERN.pattern!r}, got {v!r}")
         return v
 
     # -- Convenience constructors -----------------------------------------

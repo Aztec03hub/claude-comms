@@ -134,9 +134,7 @@ class TestUninstallEdgeCases:
     def test_uninstall_with_empty_key_in_config(self, mock_home):
         """Uninstall with empty key in config returns noop."""
         config_path = mock_home / ".claude-comms" / "config.yaml"
-        config_path.write_text(
-            "identity:\n  key: ''\n  name: test\n  type: claude\n"
-        )
+        config_path.write_text("identity:\n  key: ''\n  name: test\n  type: claude\n")
         result = uninstall_hook()
         assert result["script_removed"] is False
         assert result["settings_updated"] is False

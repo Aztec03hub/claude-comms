@@ -107,9 +107,7 @@ class MessageInput(Vertical):
         # Filter matches
         if partial != self._last_partial:
             # New completion session
-            self._completions = [
-                n for n in names if n.lower().startswith(partial)
-            ]
+            self._completions = [n for n in names if n.lower().startswith(partial)]
             if not self._completions:
                 # No prefix match — show all names
                 self._completions = list(names)

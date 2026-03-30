@@ -57,15 +57,11 @@ class TestCommsJoin:
         assert r2["conversation"] == "dev"
 
     def test_invalid_conversation_id(self, registry: ParticipantRegistry):
-        result = tool_comms_join(
-            registry, name="alice", conversation="INVALID!"
-        )
+        result = tool_comms_join(registry, name="alice", conversation="INVALID!")
         assert result.get("error") is True
 
     def test_invalid_name(self, registry: ParticipantRegistry):
-        result = tool_comms_join(
-            registry, name="has spaces", conversation="general"
-        )
+        result = tool_comms_join(registry, name="has spaces", conversation="general")
         assert result.get("error") is True
 
     def test_default_conversation(self, registry: ParticipantRegistry):
@@ -98,9 +94,7 @@ class TestCommsLeave:
         assert result["status"] == "not_a_member"
 
     def test_leave_unknown_key(self, registry: ParticipantRegistry):
-        result = tool_comms_leave(
-            registry, key="00000000", conversation="general"
-        )
+        result = tool_comms_leave(registry, key="00000000", conversation="general")
         assert result.get("error") is True
 
 
@@ -221,7 +215,10 @@ class TestCommsSend:
             message="Hello",
         )
         assert result.get("error") is True
-        assert "broker" in result["message"].lower() or "unavailable" in result["message"].lower()
+        assert (
+            "broker" in result["message"].lower()
+            or "unavailable" in result["message"].lower()
+        )
 
 
 # ===================================================================
@@ -319,9 +316,7 @@ class TestCommsRead:
         assert cursor is not None
         assert "2026-03-13" in cursor
 
-    def test_read_unknown_key(
-        self, registry: ParticipantRegistry, store: MessageStore
-    ):
+    def test_read_unknown_key(self, registry: ParticipantRegistry, store: MessageStore):
         result = tool_comms_read(
             registry, store, key="00000000", conversation="general"
         )
@@ -340,9 +335,7 @@ class TestCommsCheck:
         store: MessageStore,
         sample_participant: dict,
     ):
-        result = tool_comms_check(
-            registry, store, key=sample_participant["key"]
-        )
+        result = tool_comms_check(registry, store, key=sample_participant["key"])
         assert result["total_unread"] == 0
 
     def test_check_with_unread(
@@ -351,16 +344,17 @@ class TestCommsCheck:
         store: MessageStore,
         sample_participant: dict,
     ):
-        store.add("general", {
-            "id": "m1",
-            "ts": "2026-03-13T15:00:00.000-05:00",
-            "sender": {"key": "other123", "name": "other", "type": "claude"},
-            "body": "Hello!",
-            "conv": "general",
-        })
-        result = tool_comms_check(
-            registry, store, key=sample_participant["key"]
+        store.add(
+            "general",
+            {
+                "id": "m1",
+                "ts": "2026-03-13T15:00:00.000-05:00",
+                "sender": {"key": "other123", "name": "other", "type": "claude"},
+                "body": "Hello!",
+                "conv": "general",
+            },
         )
+        result = tool_comms_check(registry, store, key=sample_participant["key"])
         assert result["total_unread"] == 1
         assert result["conversations"][0]["conversation"] == "general"
 
@@ -452,9 +446,7 @@ class TestCommsUpdateName:
         sample_participant: dict,
     ):
         key = sample_participant["key"]
-        result = tool_comms_update_name(
-            registry, key=key, new_name="new-claude"
-        )
+        result = tool_comms_update_name(registry, key=key, new_name="new-claude")
         assert result["status"] == "updated"
         assert result["name"] == "new-claude"
         assert result["key"] == key
@@ -470,9 +462,7 @@ class TestCommsUpdateName:
         assert result.get("error") is True
 
     def test_update_name_unknown_key(self, registry: ParticipantRegistry):
-        result = tool_comms_update_name(
-            registry, key="00000000", new_name="test"
-        )
+        result = tool_comms_update_name(registry, key="00000000", new_name="test")
         assert result.get("error") is True
 
 
@@ -489,13 +479,16 @@ class TestCommsHistory:
         sample_participant: dict,
     ):
         for i in range(5):
-            store.add("general", {
-                "id": f"h-{i}",
-                "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-                "body": f"History message {i}",
-                "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"h-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                    "body": f"History message {i}",
+                    "conv": "general",
+                },
+            )
         result = tool_comms_history(
             registry,
             store,
@@ -510,20 +503,26 @@ class TestCommsHistory:
         store: MessageStore,
         sample_participant: dict,
     ):
-        store.add("general", {
-            "id": "h-a",
-            "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": "The fox jumped",
-            "conv": "general",
-        })
-        store.add("general", {
-            "id": "h-b",
-            "ts": "2026-03-13T10:01:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": "The dog barked",
-            "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "h-a",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": "The fox jumped",
+                "conv": "general",
+            },
+        )
+        store.add(
+            "general",
+            {
+                "id": "h-b",
+                "ts": "2026-03-13T10:01:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": "The dog barked",
+                "conv": "general",
+            },
+        )
         result = tool_comms_history(
             registry,
             store,
@@ -540,20 +539,26 @@ class TestCommsHistory:
         store: MessageStore,
         sample_participant: dict,
     ):
-        store.add("general", {
-            "id": "h-s1",
-            "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "11111111", "name": "alice", "type": "claude"},
-            "body": "From alice",
-            "conv": "general",
-        })
-        store.add("general", {
-            "id": "h-s2",
-            "ts": "2026-03-13T10:01:00-05:00",
-            "sender": {"key": "22222222", "name": "bob", "type": "claude"},
-            "body": "From bob",
-            "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "h-s1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "11111111", "name": "alice", "type": "claude"},
+                "body": "From alice",
+                "conv": "general",
+            },
+        )
+        store.add(
+            "general",
+            {
+                "id": "h-s2",
+                "ts": "2026-03-13T10:01:00-05:00",
+                "sender": {"key": "22222222", "name": "bob", "type": "claude"},
+                "body": "From bob",
+                "conv": "general",
+            },
+        )
         result = tool_comms_history(
             registry,
             store,
@@ -628,13 +633,16 @@ class TestTokenPagination:
     ):
         # Add messages with large bodies that exceed token limit
         for i in range(100):
-            store.add("general", {
-                "id": f"big-{i}",
-                "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-                "body": "x" * 2000,  # ~500 tokens each
-                "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"big-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                    "body": "x" * 2000,  # ~500 tokens each
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(
             registry,
             store,

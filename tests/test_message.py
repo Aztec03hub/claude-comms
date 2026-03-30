@@ -20,6 +20,7 @@ from claude_comms.message import (
 # Helper fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def sender() -> Sender:
     return Sender(key="a3f7b2c1", name="claude-veridian", type="claude")
@@ -41,6 +42,7 @@ def sample_message(sender: Sender) -> Message:
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
+
 
 class TestMessageCreation:
     def test_create_convenience(self) -> None:
@@ -91,6 +93,7 @@ class TestMessageCreation:
 # Serialization round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestSerialization:
     def test_json_round_trip(self, sample_message: Message) -> None:
         payload = sample_message.to_mqtt_payload()
@@ -104,7 +107,15 @@ class TestSerialization:
 
     def test_json_keys(self, sample_message: Message) -> None:
         data = json.loads(sample_message.to_mqtt_payload())
-        assert set(data.keys()) == {"id", "ts", "sender", "recipients", "body", "reply_to", "conv"}
+        assert set(data.keys()) == {
+            "id",
+            "ts",
+            "sender",
+            "recipients",
+            "body",
+            "reply_to",
+            "conv",
+        }
         assert set(data["sender"].keys()) == {"key", "name", "type"}
 
     def test_null_recipients_serialized(self) -> None:
@@ -122,6 +133,7 @@ class TestSerialization:
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
+
 
 class TestValidation:
     def test_invalid_conv_id_special_chars(self) -> None:
@@ -230,6 +242,7 @@ class TestValidation:
 # Routing helpers
 # ---------------------------------------------------------------------------
 
+
 class TestRouting:
     def test_is_broadcast(self) -> None:
         msg = Message.create(
@@ -262,6 +275,7 @@ class TestRouting:
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+
 
 class TestUtilities:
     def test_new_message_id_is_uuid(self) -> None:

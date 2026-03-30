@@ -15,6 +15,7 @@ from claude_comms.mention import (
 # extract_mentions
 # ---------------------------------------------------------------------------
 
+
 class TestExtractMentions:
     def test_single_mention(self) -> None:
         assert extract_mentions("[@alice] Hello!") == ["alice"]
@@ -60,6 +61,7 @@ class TestExtractMentions:
 # strip_mentions
 # ---------------------------------------------------------------------------
 
+
 class TestStripMentions:
     def test_strip_single(self) -> None:
         assert strip_mentions("[@alice] Hello!") == "Hello!"
@@ -78,6 +80,7 @@ class TestStripMentions:
 # ---------------------------------------------------------------------------
 # build_mention_prefix
 # ---------------------------------------------------------------------------
+
 
 class TestBuildMentionPrefix:
     def test_empty(self) -> None:
@@ -98,6 +101,7 @@ class TestBuildMentionPrefix:
 # ---------------------------------------------------------------------------
 # resolve_mentions
 # ---------------------------------------------------------------------------
+
 
 class TestResolveMentions:
     def test_resolves_known_names(self) -> None:

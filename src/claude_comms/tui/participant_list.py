@@ -18,8 +18,8 @@ from textual.widgets import Label, Static
 class PresenceState(Enum):
     """Participant presence states with display properties."""
 
-    ONLINE = ("online", "\u2022", "#34d399")   # green dot
-    AWAY = ("away", "\u2022", "#fbbf24")       # amber dot
+    ONLINE = ("online", "\u2022", "#34d399")  # green dot
+    AWAY = ("away", "\u2022", "#fbbf24")  # amber dot
     OFFLINE = ("offline", "\u2022", "#555555")  # gray dot
 
     def __init__(self, label: str, dot: str, color: str) -> None:
@@ -74,7 +74,11 @@ class ParticipantItem(Widget):
         """Update the label with presence dot, name, and client type."""
         state = self.presence
         type_icon = "\U0001f916" if self.participant_type == "claude" else "\U0001f464"
-        client_label = f" [dim]({self.client_type})[/]" if self.client_type and self.client_type != "unknown" else ""
+        client_label = (
+            f" [dim]({self.client_type})[/]"
+            if self.client_type and self.client_type != "unknown"
+            else ""
+        )
         self._label.update(
             f"[{state.color}]{state.dot}[/] {type_icon} {self.participant_name}{client_label}"
         )
@@ -151,6 +155,5 @@ class ParticipantList(Vertical):
     def get_name_to_key(self) -> dict[str, str]:
         """Return name -> key mapping (for mention resolution)."""
         return {
-            item.participant_name: item.participant_key
-            for item in self._items.values()
+            item.participant_name: item.participant_key for item in self._items.values()
         }

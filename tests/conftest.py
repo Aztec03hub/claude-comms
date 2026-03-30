@@ -213,7 +213,7 @@ def e2e_config(tmp_comms_dir: Path) -> dict[str, Any]:
 
 
 @pytest.fixture
-def log_exporter_instance(tmp_comms_dir: Path) -> "LogExporter":
+def log_exporter_instance(tmp_comms_dir: Path):
     """Configured LogExporter with temp directories for testing.
 
     Writes both .log and .jsonl formats to the tmp_comms_dir/logs/ directory.

@@ -77,7 +77,9 @@ class TestInitCommand:
         # Name should be non-empty (OS username or "unnamed" fallback)
         assert len(loaded["identity"]["name"]) > 0
 
-    def test_init_refuses_overwrite_without_force(self, tmp_path: Path, monkeypatch) -> None:
+    def test_init_refuses_overwrite_without_force(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         config_path = tmp_path / ".claude-comms" / "config.yaml"
         monkeypatch.setattr("claude_comms.cli.get_config_path", lambda: config_path)
         monkeypatch.setattr("claude_comms.config.get_config_path", lambda: config_path)
@@ -132,7 +134,9 @@ class TestInitCommand:
         monkeypatch.setattr("claude_comms.cli.get_config_path", lambda: config_path)
         monkeypatch.setattr("claude_comms.config.get_config_path", lambda: config_path)
 
-        result = runner.invoke(app, ["init", "--type", "claude", "--name", "test-claude"])
+        result = runner.invoke(
+            app, ["init", "--type", "claude", "--name", "test-claude"]
+        )
         assert result.exit_code == 0
         loaded = load_config(config_path)
         assert loaded["identity"]["type"] == "claude"
@@ -250,7 +254,9 @@ class TestConfigEnvPasswordResolution:
         loaded = load_config(config_path)
         assert loaded["broker"]["auth"]["password"] == "yaml-only"
 
-    def test_warning_when_auth_enabled_no_password(self, tmp_path: Path, monkeypatch) -> None:
+    def test_warning_when_auth_enabled_no_password(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         config_path = tmp_path / "config.yaml"
         config = get_default_config()
         config["broker"]["auth"]["enabled"] = True
@@ -259,9 +265,10 @@ class TestConfigEnvPasswordResolution:
 
         monkeypatch.delenv("CLAUDE_COMMS_PASSWORD", raising=False)
         import warnings
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            loaded = load_config(config_path)
+            load_config(config_path)
             password_warnings = [x for x in w if "password" in str(x.message).lower()]
             assert len(password_warnings) >= 1
 
@@ -274,16 +281,19 @@ class TestConfigEnvPasswordResolution:
 
         monkeypatch.delenv("CLAUDE_COMMS_PASSWORD", raising=False)
         import warnings
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            loaded = load_config(config_path)
+            load_config(config_path)
             password_warnings = [x for x in w if "password" in str(x.message).lower()]
             assert len(password_warnings) == 0
 
     def test_deep_merge_fills_defaults(self, tmp_path: Path, monkeypatch) -> None:
         """A minimal config file should be merged with all defaults."""
         config_path = tmp_path / "config.yaml"
-        config_path.write_text("identity:\n  key: aabbccdd\n  name: partial\n  type: human\n")
+        config_path.write_text(
+            "identity:\n  key: aabbccdd\n  name: partial\n  type: human\n"
+        )
 
         monkeypatch.delenv("CLAUDE_COMMS_PASSWORD", raising=False)
         loaded = load_config(config_path)

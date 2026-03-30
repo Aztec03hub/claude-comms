@@ -59,13 +59,13 @@ class StatusBar(Static):
         # Typing indicator
         if self.typing_who:
             bar.append("  \u2502  ", style="#2c2c2e")
-            bar.append(f"\u270d {self.typing_who} is typing\u2026", style="italic #fbbf24")
+            bar.append(
+                f"\u270d {self.typing_who} is typing\u2026", style="italic #fbbf24"
+            )
 
         # Push user identity to the right with spacer
         # We approximate right-alignment with padding
         identity = f"{self.user_name} ({self.user_key})"
-        # Calculate remaining space (approximate)
-        current_len = bar.cell_len
         # Just append with some spacing
         bar.append("  ", style="")
         bar.append(identity, style="dim #6a6a6a")

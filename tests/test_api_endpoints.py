@@ -48,8 +48,18 @@ class TestGetChannelMessages:
         import claude_comms.mcp_server as mod
 
         store = MessageStore()
-        msg1 = {"id": "aaa", "conv": "general", "body": "hello", "ts": "2026-01-01T00:00:00Z"}
-        msg2 = {"id": "bbb", "conv": "general", "body": "world", "ts": "2026-01-01T00:01:00Z"}
+        msg1 = {
+            "id": "aaa",
+            "conv": "general",
+            "body": "hello",
+            "ts": "2026-01-01T00:00:00Z",
+        }
+        msg2 = {
+            "id": "bbb",
+            "conv": "general",
+            "body": "world",
+            "ts": "2026-01-01T00:01:00Z",
+        }
         store.add("general", msg1)
         store.add("general", msg2)
 
@@ -71,7 +81,9 @@ class TestGetChannelMessages:
 
         store = MessageStore()
         for i in range(10):
-            store.add("general", {"id": f"msg-{i}", "conv": "general", "body": f"msg {i}"})
+            store.add(
+                "general", {"id": f"msg-{i}", "conv": "general", "body": f"msg {i}"}
+            )
 
         original = mod._store
         try:
@@ -357,14 +369,16 @@ class TestPresencePublishingOnJoin:
         assert result["status"] == "joined"
 
         # Simulate what comms_join does for presence
-        presence_payload = json.dumps({
-            "key": result["key"],
-            "name": result["name"],
-            "type": result["type"],
-            "status": "online",
-            "client": "mcp",
-            "ts": "2026-01-01T00:00:00Z",  # placeholder for test
-        })
+        presence_payload = json.dumps(
+            {
+                "key": result["key"],
+                "name": result["name"],
+                "type": result["type"],
+                "status": "online",
+                "client": "mcp",
+                "ts": "2026-01-01T00:00:00Z",  # placeholder for test
+            }
+        )
         data = json.loads(presence_payload)
 
         assert data["key"] == result["key"]
@@ -416,18 +430,19 @@ class TestPresencePublishingOnJoin:
 
             # Simulate the presence publish that comms_join does
             key = result["key"]
-            presence_payload = json.dumps({
-                "key": key,
-                "name": result["name"],
-                "type": result["type"],
-                "status": "online",
-                "client": "mcp",
-            }).encode()
+            presence_payload = json.dumps(
+                {
+                    "key": key,
+                    "name": result["name"],
+                    "type": result["type"],
+                    "status": "online",
+                    "client": "mcp",
+                }
+            ).encode()
 
             conv_topic = f"claude-comms/conv/general/presence/{key}"
             system_topic = f"claude-comms/system/participants/{key}-mcp"
 
-            loop = asyncio.get_event_loop()
             await mock_publish(conv_topic, presence_payload)
             await mock_publish(system_topic, presence_payload)
 

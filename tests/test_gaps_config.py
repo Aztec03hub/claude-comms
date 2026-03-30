@@ -111,7 +111,7 @@ class TestCorruptYaml:
             os.environ.pop("CLAUDE_COMMS_PASSWORD", None)
             # This should raise or return something usable
             try:
-                config = load_config(tmp_config_path)
+                load_config(tmp_config_path)
                 # If it doesn't raise, it should still have defaults
             except (TypeError, AttributeError):
                 pass  # Expected - list can't be merged with dict

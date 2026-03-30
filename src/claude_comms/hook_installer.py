@@ -21,6 +21,7 @@ from claude_comms.config import load_config
 
 # --- Path helpers ---
 
+
 def _claude_hooks_dir() -> Path:
     """Return ~/.claude/hooks/ directory."""
     return Path.home() / ".claude" / "hooks"
@@ -38,9 +39,7 @@ def _notification_dir() -> Path:
 
 def _is_windows() -> bool:
     """Detect if running on native Windows (not WSL)."""
-    return sys.platform == "win32" or (
-        platform.system() == "Windows"
-    )
+    return sys.platform == "win32" or (platform.system() == "Windows")
 
 
 def _hook_script_name(participant_key: str) -> str:
@@ -55,6 +54,7 @@ def _hook_script_path(participant_key: str) -> Path:
 
 
 # --- Script generation ---
+
 
 def _generate_unix_script(participant_key: str) -> str:
     """Generate the bash hook script content with the participant key baked in."""
@@ -171,6 +171,7 @@ def generate_hook_script(participant_key: str) -> str:
 
 # --- Settings.json manipulation ---
 
+
 def _load_settings(path: Path) -> dict[str, Any]:
     """Load Claude Code settings.json, returning empty dict if missing."""
     if path.exists():
@@ -209,7 +210,9 @@ def _build_hook_entry(participant_key: str) -> dict[str, Any]:
     }
 
 
-def _add_hook_to_settings(settings: dict[str, Any], participant_key: str) -> dict[str, Any]:
+def _add_hook_to_settings(
+    settings: dict[str, Any], participant_key: str
+) -> dict[str, Any]:
     """Add the PostToolUse hook entry to settings, avoiding duplicates.
 
     If a claude-comms hook already exists (detected by command path containing
@@ -220,8 +223,7 @@ def _add_hook_to_settings(settings: dict[str, Any], participant_key: str) -> dic
 
     # Remove any existing claude-comms hook entries
     post_tool_use[:] = [
-        entry for entry in post_tool_use
-        if not _is_claude_comms_hook_entry(entry)
+        entry for entry in post_tool_use if not _is_claude_comms_hook_entry(entry)
     ]
 
     # Add the new entry
@@ -237,8 +239,7 @@ def _remove_hook_from_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
     if post_tool_use:
         hooks["PostToolUse"] = [
-            entry for entry in post_tool_use
-            if not _is_claude_comms_hook_entry(entry)
+            entry for entry in post_tool_use if not _is_claude_comms_hook_entry(entry)
         ]
 
         # Clean up empty structures
@@ -260,6 +261,7 @@ def _is_claude_comms_hook_entry(entry: dict[str, Any]) -> bool:
 
 
 # --- Public API ---
+
 
 def install_hook(
     participant_key: str | None = None,
@@ -376,7 +378,10 @@ def uninstall_hook(
     except OSError as exc:
         # Log but don't fail — settings cleanup can still proceed
         import logging
-        logging.getLogger(__name__).warning("Could not remove hook script %s: %s", script_path, exc)
+
+        logging.getLogger(__name__).warning(
+            "Could not remove hook script %s: %s", script_path, exc
+        )
 
     # Update Claude Code settings.json
     settings_path = _claude_settings_path()
@@ -388,6 +393,9 @@ def uninstall_hook(
             result["settings_updated"] = True
     except (OSError, json.JSONDecodeError) as exc:
         import logging
-        logging.getLogger(__name__).warning("Could not update settings %s: %s", settings_path, exc)
+
+        logging.getLogger(__name__).warning(
+            "Could not update settings %s: %s", settings_path, exc
+        )
 
     return result

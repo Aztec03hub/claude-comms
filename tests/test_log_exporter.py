@@ -22,6 +22,7 @@ from claude_comms.log_exporter import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_msg(
     *,
     conv: str = "general",
@@ -157,7 +158,9 @@ class TestFormatLogEntry:
 class TestFormatPresenceEvent:
     def test_joined_format(self):
         line = format_presence_event(
-            "claude-nebula", "c9d3e5f7", "joined",
+            "claude-nebula",
+            "c9d3e5f7",
+            "joined",
             "2026-03-13T14:46:00.000-05:00",
         )
         assert line.startswith("--- ")
@@ -166,7 +169,9 @@ class TestFormatPresenceEvent:
 
     def test_left_format(self):
         line = format_presence_event(
-            "claude-veridian", "a3f7b2c1", "left",
+            "claude-veridian",
+            "a3f7b2c1",
+            "left",
             "2026-03-13T14:45:12.000-05:00",
         )
         assert "left the conversation" in line
@@ -174,14 +179,18 @@ class TestFormatPresenceEvent:
     def test_grep_pattern_join_leave(self):
         """Grep pattern: ^--- matches join/leave events."""
         line = format_presence_event(
-            "claude-nebula", "c9d3e5f7", "joined",
+            "claude-nebula",
+            "c9d3e5f7",
+            "joined",
             "2026-03-13T14:46:00.000-05:00",
         )
         assert re.match(r"^--- ", line)
 
     def test_contains_time_in_brackets(self):
         line = format_presence_event(
-            "claude-nebula", "c9d3e5f7", "joined",
+            "claude-nebula",
+            "c9d3e5f7",
+            "joined",
             "2026-03-13T14:46:00.000-05:00",
         )
         # Time should be in square brackets at the end
@@ -228,7 +237,11 @@ class TestWriteMessageJsonl:
         exporter.write_message(msg1)
         exporter.write_message(msg2)
         jsonl_path = log_dir / "general.jsonl"
-        lines = [l for l in jsonl_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        lines = [
+            line
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         assert len(lines) == 2
         assert json.loads(lines[0])["body"] == "First"
         assert json.loads(lines[1])["body"] == "Second"
@@ -306,7 +319,7 @@ class TestDeduplication:
         assert exporter.write_message(msg) is False
         # JSONL should have exactly one line
         lines = (log_dir / "general.jsonl").read_text(encoding="utf-8").splitlines()
-        lines = [l for l in lines if l.strip()]
+        lines = [line for line in lines if line.strip()]
         assert len(lines) == 1
 
     def test_different_ids_both_written(self, exporter: LogExporter, log_dir: Path):
@@ -379,7 +392,10 @@ class TestPresenceEvents:
         # Write a message first so header is created
         exporter.write_message(_make_msg(msg_id="pre-join"))
         result = exporter.write_presence(
-            "general", "claude-nebula", "c9d3e5f7", "joined",
+            "general",
+            "claude-nebula",
+            "c9d3e5f7",
+            "joined",
             "2026-03-13T14:46:00.000-05:00",
         )
         assert result is True
@@ -388,7 +404,10 @@ class TestPresenceEvents:
 
     def test_invalid_conv_rejected(self, exporter: LogExporter):
         result = exporter.write_presence(
-            "../../etc", "evil", "deadbeef", "joined",
+            "../../etc",
+            "evil",
+            "deadbeef",
+            "joined",
         )
         assert result is False
 
@@ -407,7 +426,10 @@ class TestLogRotation:
     def test_rotation_creates_numbered_files(self, log_dir: Path):
         # Use a tiny max_size to trigger rotation
         exp = LogExporter(
-            log_dir=log_dir, fmt="jsonl", max_size_mb=0, max_files=3,
+            log_dir=log_dir,
+            fmt="jsonl",
+            max_size_mb=0,
+            max_files=3,
         )
         # max_size_mb=0 means max_size_bytes=0, so rotation is disabled
         # Use a very small size instead
@@ -415,7 +437,10 @@ class TestLogRotation:
 
         # Write enough messages to trigger rotation
         for i in range(5):
-            msg = _make_msg(msg_id=f"rot-{i}", body=f"Message {i} with enough text to exceed the limit easily")
+            msg = _make_msg(
+                msg_id=f"rot-{i}",
+                body=f"Message {i} with enough text to exceed the limit easily",
+            )
             exp.write_message(msg)
 
         # Should have the main file and some rotated files
@@ -425,7 +450,10 @@ class TestLogRotation:
     def test_rotation_respects_max_files(self, log_dir: Path):
         max_files = 2
         exp = LogExporter(
-            log_dir=log_dir, fmt="jsonl", max_size_mb=0, max_files=max_files,
+            log_dir=log_dir,
+            fmt="jsonl",
+            max_size_mb=0,
+            max_files=max_files,
         )
         exp.max_size_bytes = 10
 
@@ -474,7 +502,9 @@ class TestFromConfig:
 
 
 class TestMultipleConversations:
-    def test_separate_files_per_conversation(self, exporter: LogExporter, log_dir: Path):
+    def test_separate_files_per_conversation(
+        self, exporter: LogExporter, log_dir: Path
+    ):
         msg1 = _make_msg(conv="chat-a", msg_id="conv-a-1")
         msg2 = _make_msg(conv="chat-b", msg_id="conv-b-1")
         exporter.write_message(msg1)
@@ -484,7 +514,9 @@ class TestMultipleConversations:
         assert (log_dir / "chat-a.log").exists()
         assert (log_dir / "chat-b.log").exists()
 
-    def test_conversation_headers_independent(self, exporter: LogExporter, log_dir: Path):
+    def test_conversation_headers_independent(
+        self, exporter: LogExporter, log_dir: Path
+    ):
         exporter.write_message(_make_msg(conv="alpha", msg_id="a1"))
         exporter.write_message(_make_msg(conv="beta", msg_id="b1"))
         alpha_content = (log_dir / "alpha.log").read_text(encoding="utf-8")

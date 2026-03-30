@@ -15,6 +15,7 @@ from typing import Any
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, Static
 from textual import work
 
@@ -49,7 +50,9 @@ class ClaudeCommsApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+n", "new_conversation", "New Conv", show=True),
-        Binding("ctrl+k", "switch_conversation", "Switch Conv", show=True, priority=True),
+        Binding(
+            "ctrl+k", "switch_conversation", "Switch Conv", show=True, priority=True
+        ),
         Binding("f1", "show_help", "Help", show=True),
     ]
 
@@ -146,9 +149,7 @@ class ClaudeCommsApp(App):
         try:
             import aiomqtt
         except ImportError:
-            self._show_system(
-                "aiomqtt not installed. Run: pip install aiomqtt"
-            )
+            self._show_system("aiomqtt not installed. Run: pip install aiomqtt")
             return
 
         client_id = generate_client_id("tui", self._key)
@@ -156,16 +157,16 @@ class ClaudeCommsApp(App):
         # Build LWT (Last Will and Testament) so the broker auto-publishes
         # an offline presence message if this client crashes/disconnects.
 
-        lwt_topic = (
-            f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
+        lwt_topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
+        lwt_payload = json.dumps(
+            {
+                "key": self._key,
+                "name": self._name,
+                "type": self._type,
+                "status": "offline",
+                "client": "tui",
+            }
         )
-        lwt_payload = json.dumps({
-            "key": self._key,
-            "name": self._name,
-            "type": self._type,
-            "status": "offline",
-            "client": "tui",
-        })
         lwt = aiomqtt.Will(
             topic=lwt_topic,
             payload=lwt_payload,
@@ -228,12 +229,8 @@ class ClaudeCommsApp(App):
 
     async def _subscribe_conv_topics(self, client, conv_id: str) -> None:
         """Subscribe to presence and typing topics for a conversation."""
-        await client.subscribe(
-            f"claude-comms/conv/{conv_id}/presence/+", qos=0
-        )
-        await client.subscribe(
-            f"claude-comms/conv/{conv_id}/typing/+", qos=0
-        )
+        await client.subscribe(f"claude-comms/conv/{conv_id}/presence/+", qos=0)
+        await client.subscribe(f"claude-comms/conv/{conv_id}/typing/+", qos=0)
 
     async def _unsubscribe_conv_topics(self, client, conv_id: str) -> None:
         """Unsubscribe from conversation-specific topics."""
@@ -249,14 +246,16 @@ class ClaudeCommsApp(App):
         """
         from claude_comms.message import now_iso
 
-        payload = json.dumps({
-            "key": self._key,
-            "name": self._name,
-            "type": self._type,
-            "status": status,
-            "client": "tui",
-            "ts": now_iso(),
-        })
+        payload = json.dumps(
+            {
+                "key": self._key,
+                "name": self._name,
+                "type": self._type,
+                "status": status,
+                "client": "tui",
+                "ts": now_iso(),
+            }
+        )
         topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
         await client.publish(topic, payload, qos=1, retain=True)
 
@@ -390,12 +389,14 @@ class ClaudeCommsApp(App):
             return
         from claude_comms.message import now_iso
 
-        payload = json.dumps({
-            "key": self._key,
-            "name": self._name,
-            "typing": typing,
-            "ts": now_iso(),
-        })
+        payload = json.dumps(
+            {
+                "key": self._key,
+                "name": self._name,
+                "typing": typing,
+                "ts": now_iso(),
+            }
+        )
         topic = f"claude-comms/conv/{self._active_conv}/typing/{self._key}"
         try:
             await self._mqtt_client.publish(topic, payload, qos=0)
@@ -481,9 +482,7 @@ class ClaudeCommsApp(App):
         self._resubscribe_conversation(old_conv, conv_id)
 
     @work(thread=False)
-    async def _resubscribe_conversation(
-        self, old_conv: str, new_conv: str
-    ) -> None:
+    async def _resubscribe_conversation(self, old_conv: str, new_conv: str) -> None:
         """Switch MQTT subscriptions when changing conversations."""
         if not self._mqtt_client:
             return
@@ -541,8 +540,6 @@ class ClaudeCommsApp(App):
 # ---------------------------------------------------------------------------
 # New Conversation modal screen
 # ---------------------------------------------------------------------------
-
-from textual.screen import ModalScreen
 
 
 class NewConversationScreen(ModalScreen):

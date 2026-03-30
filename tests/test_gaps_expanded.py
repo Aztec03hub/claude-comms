@@ -156,10 +156,15 @@ class TestLogExporterPresenceTextOnly:
     def test_write_presence_text_only_mode(self, tmp_path):
         exp = LogExporter(log_dir=tmp_path, fmt="text")
         # Need to write a message first to create the log file with header
-        exp.write_message({
-            "id": "pre-1", "ts": "2026-03-13T14:00:00-05:00",
-            "sender": {"key": "aabb1122", "name": "bot"}, "body": "init", "conv": "general",
-        })
+        exp.write_message(
+            {
+                "id": "pre-1",
+                "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabb1122", "name": "bot"},
+                "body": "init",
+                "conv": "general",
+            }
+        )
         result = exp.write_presence("general", "new-user", "ccdd3344", "joined")
         assert result is True
         content = (tmp_path / "general.log").read_text(encoding="utf-8")
@@ -203,17 +208,27 @@ class TestCommsConversationsUnreadTracking:
         tool_comms_join(registry, key=key, conversation="dev")
         # Add messages to both
         for i in range(3):
-            store.add("general", {
-                "id": f"g-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "other123", "name": "other", "type": "claude"},
-                "body": f"gen msg {i}", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"g-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "other123", "name": "other", "type": "claude"},
+                    "body": f"gen msg {i}",
+                    "conv": "general",
+                },
+            )
         for i in range(5):
-            store.add("dev", {
-                "id": f"d-{i}", "ts": f"2026-03-13T11:{i:02d}:00-05:00",
-                "sender": {"key": "other123", "name": "other", "type": "claude"},
-                "body": f"dev msg {i}", "conv": "dev",
-            })
+            store.add(
+                "dev",
+                {
+                    "id": f"d-{i}",
+                    "ts": f"2026-03-13T11:{i:02d}:00-05:00",
+                    "sender": {"key": "other123", "name": "other", "type": "claude"},
+                    "body": f"dev msg {i}",
+                    "conv": "dev",
+                },
+            )
         result = tool_comms_conversations(registry, store, key=key)
         conv_map = {c["conversation"]: c for c in result["conversations"]}
         assert conv_map["general"]["unread_count"] == 3
@@ -227,11 +242,16 @@ class TestCommsConversationsUnreadTracking:
     ):
         key = sample_participant["key"]
         for i in range(5):
-            store.add("general", {
-                "id": f"pr-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "other123", "name": "other", "type": "claude"},
-                "body": f"msg {i}", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"pr-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "other123", "name": "other", "type": "claude"},
+                    "body": f"msg {i}",
+                    "conv": "general",
+                },
+            )
         # Read only 2 messages
         tool_comms_read(registry, store, key=key, conversation="general", count=2)
         # Check conversations
@@ -289,14 +309,22 @@ class TestCommsHistoryEdgeCases:
         store: MessageStore,
         sample_participant: dict,
     ):
-        store.add("general", {
-            "id": "hq-1", "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": "Hello world", "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "hq-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": "Hello world",
+                "conv": "general",
+            },
+        )
         result = tool_comms_history(
-            registry, store, key=sample_participant["key"],
-            conversation="general", query="zzzznotfound",
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            query="zzzznotfound",
         )
         assert result["count"] == 0
         assert result["messages"] == []
@@ -307,14 +335,22 @@ class TestCommsHistoryEdgeCases:
         store: MessageStore,
         sample_participant: dict,
     ):
-        store.add("general", {
-            "id": "ci-1", "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
-            "body": "The Quick Brown Fox", "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "ci-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
+                "body": "The Quick Brown Fox",
+                "conv": "general",
+            },
+        )
         result = tool_comms_history(
-            registry, store, key=sample_participant["key"],
-            conversation="general", query="quick brown",
+            registry,
+            store,
+            key=sample_participant["key"],
+            conversation="general",
+            query="quick brown",
         )
         assert result["count"] == 1
 
@@ -347,12 +383,14 @@ class TestPasswordResolutionCombinations:
 class TestConfigDefaultUsername:
     def test_default_username_returns_string(self):
         from claude_comms.config import _default_username
+
         name = _default_username()
         assert isinstance(name, str)
         assert len(name) > 0
 
     def test_default_username_fallback_on_error(self):
         from claude_comms.config import _default_username
+
         with patch("getpass.getuser", side_effect=Exception("no user")):
             name = _default_username()
         assert name == "unnamed"
@@ -368,8 +406,14 @@ class TestConfigSaveLoadRoundtrip:
         assert loaded["identity"]["key"] == config["identity"]["key"]
         assert loaded["broker"]["port"] == config["broker"]["port"]
         assert loaded["mcp"]["auto_join"] == config["mcp"]["auto_join"]
-        assert loaded["notifications"]["hook_enabled"] == config["notifications"]["hook_enabled"]
-        assert loaded["logging"]["rotation"]["max_files"] == config["logging"]["rotation"]["max_files"]
+        assert (
+            loaded["notifications"]["hook_enabled"]
+            == config["notifications"]["hook_enabled"]
+        )
+        assert (
+            loaded["logging"]["rotation"]["max_files"]
+            == config["logging"]["rotation"]["max_files"]
+        )
 
 
 # ===================================================================
@@ -380,15 +424,21 @@ class TestConfigSaveLoadRoundtrip:
 class TestMessageTopicFormat:
     def test_topic_uses_conv_id(self):
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="hi", conv="my-project",
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="my-project",
         )
         assert msg.topic == "claude-comms/conv/my-project/messages"
 
     def test_topic_with_numeric_conv_id(self):
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="hi", conv="123",
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="123",
         )
         assert msg.topic == "claude-comms/conv/123/messages"
 
@@ -396,8 +446,11 @@ class TestMessageTopicFormat:
 class TestMessageReplyTo:
     def test_reply_to_preserved_in_roundtrip(self):
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="response", conv="general",
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="response",
+            conv="general",
             reply_to="550e8400-e29b-41d4-a716-446655440000",
         )
         payload = msg.to_mqtt_payload()
@@ -406,8 +459,11 @@ class TestMessageReplyTo:
 
     def test_reply_to_none_by_default(self):
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="hi", conv="general",
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="general",
         )
         assert msg.reply_to is None
         data = json.loads(msg.to_mqtt_payload())
@@ -419,8 +475,11 @@ class TestConvIdBoundaryLength:
         conv = "a" * 64
         assert validate_conv_id(conv) is True
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="hi", conv=conv,
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv=conv,
         )
         assert msg.conv == conv
 
@@ -438,8 +497,11 @@ class TestConvIdBoundaryLength:
 class TestMessageFieldAccess:
     def test_sender_fields_accessible(self):
         msg = Message.create(
-            sender_key="abcdef01", sender_name="claude-x", sender_type="claude",
-            body="hi", conv="general",
+            sender_key="abcdef01",
+            sender_name="claude-x",
+            sender_type="claude",
+            body="hi",
+            conv="general",
         )
         assert msg.sender.key == "abcdef01"
         assert msg.sender.name == "claude-x"
@@ -447,16 +509,23 @@ class TestMessageFieldAccess:
 
     def test_message_id_is_valid_uuid(self):
         import uuid
+
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="hi", conv="general",
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="general",
         )
         uuid.UUID(msg.id)  # Should not raise
 
     def test_message_ts_contains_timezone(self):
         msg = Message.create(
-            sender_key="abcdef01", sender_name="t", sender_type="claude",
-            body="hi", conv="general",
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="general",
         )
         # ISO timestamp should have timezone info
         assert "+" in msg.ts or "-" in msg.ts[10:] or "Z" in msg.ts

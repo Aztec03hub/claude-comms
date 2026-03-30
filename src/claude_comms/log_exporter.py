@@ -136,8 +136,12 @@ def format_log_entry(msg: dict[str, Any]) -> str:
             ts_full = ts_str
 
     sender = msg.get("sender", {})
-    sender_name = sender.get("name", "unknown") if isinstance(sender, dict) else "unknown"
-    sender_key = sender.get("key", "????????") if isinstance(sender, dict) else "????????"
+    sender_name = (
+        sender.get("name", "unknown") if isinstance(sender, dict) else "unknown"
+    )
+    sender_key = (
+        sender.get("key", "????????") if isinstance(sender, dict) else "????????"
+    )
 
     # Indent every line of the body with 4 spaces
     body = msg.get("body", "")
@@ -218,9 +222,7 @@ def _rotate_file(path: Path, max_files: int) -> None:
         path.rename(path.parent / f"{path.name}.1")
 
 
-def _check_rotation(
-    path: Path, max_size_bytes: int, max_files: int
-) -> None:
+def _check_rotation(path: Path, max_size_bytes: int, max_files: int) -> None:
     """Rotate *path* if it exceeds *max_size_bytes*."""
     if max_size_bytes <= 0 or max_files <= 0:
         return

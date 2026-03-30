@@ -19,6 +19,7 @@ from claude_comms.participant import (
 # Key generation
 # ---------------------------------------------------------------------------
 
+
 class TestKeyGeneration:
     def test_length(self) -> None:
         key = generate_key()
@@ -42,16 +43,21 @@ class TestKeyGeneration:
 # Key / name validation
 # ---------------------------------------------------------------------------
 
+
 class TestValidation:
     @pytest.mark.parametrize("key", ["a3f7b2c1", "00000000", "ffffffff", "abcdef01"])
     def test_valid_keys(self, key: str) -> None:
         assert validate_key(key) is True
 
-    @pytest.mark.parametrize("key", ["A3F7B2C1", "short", "toolongkey", "zzzzzzzz", "1234567g", ""])
+    @pytest.mark.parametrize(
+        "key", ["A3F7B2C1", "short", "toolongkey", "zzzzzzzz", "1234567g", ""]
+    )
     def test_invalid_keys(self, key: str) -> None:
         assert validate_key(key) is False
 
-    @pytest.mark.parametrize("name", ["phil", "claude-veridian", "claude_test", "x", "a" * 64])
+    @pytest.mark.parametrize(
+        "name", ["phil", "claude-veridian", "claude_test", "x", "a" * 64]
+    )
     def test_valid_names(self, name: str) -> None:
         assert validate_name(name) is True
 
@@ -63,6 +69,7 @@ class TestValidation:
 # ---------------------------------------------------------------------------
 # Participant model
 # ---------------------------------------------------------------------------
+
 
 class TestParticipant:
     def test_create(self) -> None:
@@ -92,6 +99,7 @@ class TestParticipant:
 # Name management
 # ---------------------------------------------------------------------------
 
+
 class TestNameManagement:
     def test_with_name_returns_new_instance(self) -> None:
         p1 = Participant.create("original", "claude")
@@ -109,6 +117,7 @@ class TestNameManagement:
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
+
 
 class TestSerialization:
     def test_json_round_trip(self) -> None:
@@ -132,6 +141,7 @@ class TestSerialization:
 # ---------------------------------------------------------------------------
 # MQTT topic
 # ---------------------------------------------------------------------------
+
 
 class TestRegistryTopic:
     def test_topic_format(self) -> None:

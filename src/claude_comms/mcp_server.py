@@ -255,16 +255,21 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             import json as _json
             import asyncio as _asyncio
             from claude_comms.message import now_iso as _now_iso
+
             _ts = _now_iso()
-            presence_payload = _json.dumps({
-                "key": result["key"],
-                "name": result["name"],
-                "type": result["type"],
-                "status": "online",
-                "client": "mcp",
-                "ts": _ts,
-            }).encode()
-            presence_topic = f"claude-comms/conv/{conversation}/presence/{result['key']}"
+            presence_payload = _json.dumps(
+                {
+                    "key": result["key"],
+                    "name": result["name"],
+                    "type": result["type"],
+                    "status": "online",
+                    "client": "mcp",
+                    "ts": _ts,
+                }
+            ).encode()
+            presence_topic = (
+                f"claude-comms/conv/{conversation}/presence/{result['key']}"
+            )
             system_topic = f"claude-comms/system/participants/{result['key']}-mcp"
             try:
                 loop = _asyncio.get_event_loop()
@@ -346,18 +351,14 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         conversation: Annotated[str, Field(description="Conversation to list")],
     ) -> dict[str, Any]:
         """List current participants in a conversation."""
-        return tool_comms_members(
-            _get_registry(), key=key, conversation=conversation
-        )
+        return tool_comms_members(_get_registry(), key=key, conversation=conversation)
 
     @mcp.tool()
     def comms_conversations(
         key: Annotated[str, Field(description="Your participant key")],
     ) -> dict[str, Any]:
         """List all conversations you have joined with unread counts."""
-        return tool_comms_conversations(
-            _get_registry(), _get_store(), key=key
-        )
+        return tool_comms_conversations(_get_registry(), _get_store(), key=key)
 
     @mcp.tool()
     def comms_update_name(
@@ -365,9 +366,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         new_name: Annotated[str, Field(description="New display name")],
     ) -> dict[str, Any]:
         """Change your display name. Your key remains the same."""
-        return tool_comms_update_name(
-            _get_registry(), key=key, new_name=new_name
-        )
+        return tool_comms_update_name(_get_registry(), key=key, new_name=new_name)
 
     @mcp.tool()
     def comms_history(
@@ -444,8 +443,8 @@ def start_server(config: dict[str, Any] | None = None) -> None:
 
                 # Run the MCP server (blocks until shutdown)
                 mcp_cfg = config.get("mcp", {})
-                host = mcp_cfg.get("host", "127.0.0.1")
-                port = mcp_cfg.get("port", 9920)
+                _host = mcp_cfg.get("host", "127.0.0.1")
+                _port = mcp_cfg.get("port", 9920)
                 mcp.run(transport="streamable-http")
         except Exception:
             logger.exception("MCP server error")

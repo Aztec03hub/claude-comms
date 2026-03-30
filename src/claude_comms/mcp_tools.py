@@ -27,6 +27,7 @@ class PublishFn(Protocol):
 
     async def __call__(self, topic: str, payload: bytes) -> None: ...
 
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -446,11 +447,13 @@ def tool_comms_check(
             unread = msgs
         if unread:
             total_unread += len(unread)
-            unread_summary.append({
-                "conversation": conv_id,
-                "unread_count": len(unread),
-                "latest": unread[-1] if unread else None,
-            })
+            unread_summary.append(
+                {
+                    "conversation": conv_id,
+                    "unread_count": len(unread),
+                    "latest": unread[-1] if unread else None,
+                }
+            )
 
     return {
         "total_unread": total_unread,
@@ -475,9 +478,7 @@ def tool_comms_members(
     members = registry.members(conversation)
     return {
         "conversation": conversation,
-        "members": [
-            {"key": m.key, "name": m.name, "type": m.type} for m in members
-        ],
+        "members": [{"key": m.key, "name": m.name, "type": m.type} for m in members],
         "count": len(members),
     }
 
@@ -503,11 +504,13 @@ def tool_comms_conversations(
             unread_count = sum(1 for m in msgs if m.get("ts", "") > cursor)
         else:
             unread_count = len(msgs)
-        conv_list.append({
-            "conversation": conv_id,
-            "unread_count": unread_count,
-            "total_messages": len(msgs),
-        })
+        conv_list.append(
+            {
+                "conversation": conv_id,
+                "unread_count": unread_count,
+                "total_messages": len(msgs),
+            }
+        )
 
     return {"conversations": conv_list}
 

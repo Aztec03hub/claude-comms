@@ -207,10 +207,7 @@ class EmptyChannelMessage(Static):
     """
 
     def __init__(self, conv_id: str, **kwargs) -> None:
-        text = (
-            f"This is the beginning of # {conv_id}\n"
-            "No messages yet. Say hello!"
-        )
+        text = f"This is the beginning of # {conv_id}\nNo messages yet. Say hello!"
         super().__init__(text, **kwargs)
 
 

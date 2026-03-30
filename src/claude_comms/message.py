@@ -51,9 +51,7 @@ class Sender(BaseModel):
         description="Immutable 8-hex-char identifier",
     )
     name: str = Field(..., min_length=1, description="Display name")
-    type: ParticipantType = Field(
-        ..., description="Participant type: claude or human"
-    )
+    type: ParticipantType = Field(..., description="Participant type: claude or human")
 
 
 class Message(BaseModel):

@@ -101,7 +101,7 @@ class TestTwoParticipantChat:
     @pytest.mark.asyncio
     async def test_join_send_receive(self, e2e_config: dict) -> None:
         registry = ParticipantRegistry()
-        store = MessageStore()
+        MessageStore()  # ensure store initializes cleanly
         broker = MockBroker()
 
         # Both participants subscribe to general messages
@@ -320,9 +320,7 @@ class TestPresenceFlow:
         registry = ParticipantRegistry()
         r = tool_comms_join(registry, name="alice", conversation="general")
 
-        members = tool_comms_members(
-            registry, key=r["key"], conversation="general"
-        )
+        members = tool_comms_members(registry, key=r["key"], conversation="general")
         assert members["count"] == 1
         assert members["members"][0]["name"] == "alice"
 
@@ -333,9 +331,7 @@ class TestPresenceFlow:
 
         tool_comms_leave(registry, key=r_alice["key"], conversation="general")
 
-        members = tool_comms_members(
-            registry, key=r_bob["key"], conversation="general"
-        )
+        members = tool_comms_members(registry, key=r_bob["key"], conversation="general")
         names = {m["name"] for m in members["members"]}
         assert "alice" not in names
         assert "bob" in names
@@ -441,13 +437,17 @@ class TestLogFormatVerification:
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
         await tool_comms_send(
-            registry, broker.publish,
-            key=r_alice["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r_alice["key"],
+            conversation="general",
             message="Alice's message",
         )
         await tool_comms_send(
-            registry, broker.publish,
-            key=r_bob["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r_bob["key"],
+            conversation="general",
             message="Bob's message",
         )
 
@@ -455,11 +455,11 @@ class TestLogFormatVerification:
         lines = content.split("\n")
 
         # grep '@alice' should find alice's messages
-        alice_lines = [l for l in lines if "@alice" in l]
+        alice_lines = [line for line in lines if "@alice" in line]
         assert len(alice_lines) >= 1
 
         # grep '@bob' should find bob's messages
-        bob_lines = [l for l in lines if "@bob" in l]
+        bob_lines = [line for line in lines if "@bob" in line]
         assert len(bob_lines) >= 1
 
     @pytest.mark.asyncio
@@ -476,8 +476,10 @@ class TestLogFormatVerification:
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
         await tool_comms_send(
-            registry, broker.publish,
-            key=key, conversation="general",
+            registry,
+            broker.publish,
+            key=key,
+            conversation="general",
             message="Find me by key",
         )
 
@@ -497,8 +499,10 @@ class TestLogFormatVerification:
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
         await tool_comms_send(
-            registry, broker.publish,
-            key=r["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r["key"],
+            conversation="general",
             message="UNIQUE_SEARCH_TOKEN_12345",
         )
 
@@ -597,9 +601,25 @@ class TestJSONLReplay:
 
         jsonl_path = log_dir / "general.jsonl"
         lines = [
-            json.dumps({"id": "good-1", "conv": "general", "ts": "t", "sender": {"key": "aa"}, "body": "ok"}),
+            json.dumps(
+                {
+                    "id": "good-1",
+                    "conv": "general",
+                    "ts": "t",
+                    "sender": {"key": "aa"},
+                    "body": "ok",
+                }
+            ),
             "not valid json at all",
-            json.dumps({"id": "good-2", "conv": "general", "ts": "t", "sender": {"key": "aa"}, "body": "ok"}),
+            json.dumps(
+                {
+                    "id": "good-2",
+                    "conv": "general",
+                    "ts": "t",
+                    "sender": {"key": "aa"},
+                    "body": "ok",
+                }
+            ),
             "",
             json.dumps({"no_id": True}),  # Missing required fields
         ]
@@ -732,9 +752,7 @@ class TestFullE2EFlow:
         broker = MockBroker()
         dedup = MessageDeduplicator()
         log_dir = tmp_comms_dir / "logs"
-        exporter = LogExporter(
-            log_dir=log_dir, fmt="both", deduplicator=dedup
-        )
+        exporter = LogExporter(log_dir=log_dir, fmt="both", deduplicator=dedup)
 
         async def on_message(topic, msg_data):
             store.add(msg_data["conv"], msg_data)
@@ -743,41 +761,43 @@ class TestFullE2EFlow:
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
         # 1. Two participants join
-        r_phil = tool_comms_join(
-            registry, name="phil", conversation="general"
-        )
+        r_phil = tool_comms_join(registry, name="phil", conversation="general")
         r_claude = tool_comms_join(
             registry, name="claude-alpha", conversation="general"
         )
         exporter.write_presence("general", "phil", r_phil["key"], "joined")
-        exporter.write_presence(
-            "general", "claude-alpha", r_claude["key"], "joined"
-        )
+        exporter.write_presence("general", "claude-alpha", r_claude["key"], "joined")
 
         # 2. Chat back and forth
         await tool_comms_send(
-            registry, broker.publish,
-            key=r_phil["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r_phil["key"],
+            conversation="general",
             message="Hey Claude, how are you?",
         )
         await tool_comms_send(
-            registry, broker.publish,
-            key=r_claude["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r_claude["key"],
+            conversation="general",
             message="Doing great, Phil! Working on the integration.",
         )
         await tool_comms_send(
-            registry, broker.publish,
-            key=r_phil["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r_phil["key"],
+            conversation="general",
             message="Awesome, keep it up!",
         )
 
         # 3. Claude changes name
-        tool_comms_update_name(
-            registry, key=r_claude["key"], new_name="claude-beta"
-        )
+        tool_comms_update_name(registry, key=r_claude["key"], new_name="claude-beta")
         await tool_comms_send(
-            registry, broker.publish,
-            key=r_claude["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r_claude["key"],
+            conversation="general",
             message="Name changed! Still me though.",
         )
 
@@ -799,9 +819,7 @@ class TestFullE2EFlow:
         assert "claude-beta" in member_names
 
         # 6. Phil leaves
-        tool_comms_leave(
-            registry, key=r_phil["key"], conversation="general"
-        )
+        tool_comms_leave(registry, key=r_phil["key"], conversation="general")
         exporter.write_presence("general", "phil", r_phil["key"], "left")
 
         members_after = tool_comms_members(
@@ -847,8 +865,10 @@ class TestErrorHandlingPaths:
         broker = MockBroker()
         r = tool_comms_join(registry, name="alice", conversation="general")
         result = await tool_comms_send(
-            registry, broker.publish,
-            key=r["key"], conversation="INVALID!CONV",
+            registry,
+            broker.publish,
+            key=r["key"],
+            conversation="INVALID!CONV",
             message="Hello",
         )
         assert result.get("error") is True
@@ -861,8 +881,10 @@ class TestErrorHandlingPaths:
         r = tool_comms_join(registry, name="alice", conversation="general")
         for body in ["", "   ", "\n\t"]:
             result = await tool_comms_send(
-                registry, broker.publish,
-                key=r["key"], conversation="general",
+                registry,
+                broker.publish,
+                key=r["key"],
+                conversation="general",
                 message=body,
             )
             assert result.get("error") is True
@@ -873,8 +895,10 @@ class TestErrorHandlingPaths:
         registry = ParticipantRegistry()
         broker = MockBroker()
         result = await tool_comms_send(
-            registry, broker.publish,
-            key="deadbeef", conversation="general",
+            registry,
+            broker.publish,
+            key="deadbeef",
+            conversation="general",
             message="Hello",
         )
         assert result.get("error") is True
@@ -885,8 +909,10 @@ class TestErrorHandlingPaths:
         registry = ParticipantRegistry()
         broker = MockBroker()
         result = await tool_comms_send(
-            registry, broker.publish,
-            key="ZZZ", conversation="general",
+            registry,
+            broker.publish,
+            key="ZZZ",
+            conversation="general",
             message="Hello",
         )
         assert result.get("error") is True
@@ -894,7 +920,9 @@ class TestErrorHandlingPaths:
     def test_read_with_invalid_key(self) -> None:
         registry = ParticipantRegistry()
         store = MessageStore()
-        result = tool_comms_read(registry, store, key="ZZZZZZZZ", conversation="general")
+        result = tool_comms_read(
+            registry, store, key="ZZZZZZZZ", conversation="general"
+        )
         assert result.get("error") is True
 
     def test_check_with_invalid_key(self) -> None:
@@ -911,11 +939,15 @@ class TestErrorHandlingPaths:
 
     def test_history_with_invalid_conv(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
+
         registry = ParticipantRegistry()
         store = MessageStore()
         r = tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_history(
-            registry, store, key=r["key"], conversation="BAD!",
+            registry,
+            store,
+            key=r["key"],
+            conversation="BAD!",
         )
         assert result.get("error") is True
 
@@ -930,7 +962,9 @@ class TestErrorHandlingPaths:
         registry = ParticipantRegistry()
         for reserved in ["system", "meta"]:
             result = tool_comms_join(
-                registry, name="alice", conversation=reserved,
+                registry,
+                name="alice",
+                conversation=reserved,
             )
             assert result.get("error") is True
 
@@ -978,18 +1012,21 @@ class TestLogExporterEdgeCases:
 
     def test_format_presence_event_none_name(self) -> None:
         from claude_comms.log_exporter import format_presence_event
+
         result = format_presence_event(None, "aabbccdd", "joined")
         assert "unknown" in result
         assert "joined" in result
 
     def test_format_presence_event_none_key(self) -> None:
         from claude_comms.log_exporter import format_presence_event
+
         result = format_presence_event("alice", None, "left")
         assert "????????" in result
         assert "left" in result
 
     def test_format_presence_event_invalid_ts(self) -> None:
         from claude_comms.log_exporter import format_presence_event
+
         result = format_presence_event("alice", "aabbccdd", "joined", "not-a-date")
         # Should fall back to current time, not crash
         assert "alice" in result
@@ -997,6 +1034,7 @@ class TestLogExporterEdgeCases:
 
     def test_format_log_header_no_ts(self) -> None:
         from claude_comms.log_exporter import format_log_header
+
         header = format_log_header("my-conv")
         assert "CONVERSATION: my-conv" in header
         assert "CREATED:" in header
@@ -1013,8 +1051,10 @@ class TestMultiParticipantEdgeCases:
         r = tool_comms_join(registry, name="alice", conversation="general")
 
         result = await tool_comms_send(
-            registry, broker.publish,
-            key=r["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r["key"],
+            conversation="general",
             message="Note to self",
             recipients=["alice"],
         )
@@ -1031,8 +1071,10 @@ class TestMultiParticipantEdgeCases:
         r2 = tool_comms_join(registry, name="bob", conversation="general")
 
         result = await tool_comms_send(
-            registry, broker.publish,
-            key=r1["key"], conversation="general",
+            registry,
+            broker.publish,
+            key=r1["key"],
+            conversation="general",
             message="Mixed targeting",
             recipients=["bob", r2["key"]],  # both resolve to bob
         )
@@ -1048,23 +1090,32 @@ class TestMultiParticipantEdgeCases:
         r = tool_comms_join(registry, name="alice", conversation="general")
 
         for i in range(3):
-            store.add("general", {
-                "id": f"cur-{i}",
-                "ts": f"2026-03-13T14:{i:02d}:00-05:00",
-                "sender": {"key": "other123", "name": "x", "type": "claude"},
-                "body": f"msg {i}", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"cur-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "other123", "name": "x", "type": "claude"},
+                    "body": f"msg {i}",
+                    "conv": "general",
+                },
+            )
 
         tool_comms_read(registry, store, key=r["key"], conversation="general")
         cursor = registry.get_cursor(r["key"], "general")
         assert cursor == "2026-03-13T14:02:00-05:00"
 
         # Add more messages
-        store.add("general", {
-            "id": "cur-3", "ts": "2026-03-13T14:03:00-05:00",
-            "sender": {"key": "other123", "name": "x", "type": "claude"},
-            "body": "msg 3", "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "cur-3",
+                "ts": "2026-03-13T14:03:00-05:00",
+                "sender": {"key": "other123", "name": "x", "type": "claude"},
+                "body": "msg 3",
+                "conv": "general",
+            },
+        )
 
         check = tool_comms_check(registry, store, key=r["key"])
         assert check["total_unread"] == 1  # only the new message
@@ -1079,8 +1130,10 @@ class TestMultiParticipantEdgeCases:
             raise TimeoutError("Connection timed out")
 
         result = await tool_comms_send(
-            registry, timeout_pub,
-            key=r["key"], conversation="general",
+            registry,
+            timeout_pub,
+            key=r["key"],
+            conversation="general",
             message="will timeout",
         )
         assert result.get("error") is True
@@ -1088,6 +1141,7 @@ class TestMultiParticipantEdgeCases:
     def test_conversations_with_unread_counts(self) -> None:
         """Verify unread counts in conversations listing."""
         from claude_comms.mcp_tools import tool_comms_conversations
+
         registry = ParticipantRegistry()
         store = MessageStore()
         r = tool_comms_join(registry, name="alice", conversation="general")
@@ -1095,16 +1149,26 @@ class TestMultiParticipantEdgeCases:
 
         # Add messages to both conversations
         for i in range(3):
-            store.add("general", {
-                "id": f"gen-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+            store.add(
+                "general",
+                {
+                    "id": f"gen-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "other123", "name": "x", "type": "claude"},
+                    "body": f"gen {i}",
+                    "conv": "general",
+                },
+            )
+        store.add(
+            "dev",
+            {
+                "id": "dev-0",
+                "ts": "2026-03-13T14:00:00-05:00",
                 "sender": {"key": "other123", "name": "x", "type": "claude"},
-                "body": f"gen {i}", "conv": "general",
-            })
-        store.add("dev", {
-            "id": "dev-0", "ts": "2026-03-13T14:00:00-05:00",
-            "sender": {"key": "other123", "name": "x", "type": "claude"},
-            "body": "dev msg", "conv": "dev",
-        })
+                "body": "dev msg",
+                "conv": "dev",
+            },
+        )
 
         result = tool_comms_conversations(registry, store, key=r["key"])
         conv_map = {c["conversation"]: c for c in result["conversations"]}
@@ -1128,13 +1192,15 @@ class TestReplayAndExporterIntegration:
         exporter = LogExporter(log_dir=log_dir, fmt="both")
 
         for i in range(5):
-            exporter.write_message({
-                "id": f"wr-{i}",
-                "ts": f"2026-03-13T14:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "writer", "type": "claude"},
-                "body": f"Written message {i}",
-                "conv": "general",
-            })
+            exporter.write_message(
+                {
+                    "id": f"wr-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "writer", "type": "claude"},
+                    "body": f"Written message {i}",
+                    "conv": "general",
+                }
+            )
 
         # Replay into fresh store
         store = replay_jsonl_logs(log_dir=log_dir)
@@ -1153,7 +1219,8 @@ class TestReplayAndExporterIntegration:
             "id": "replay-dedup-001",
             "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "first write", "conv": "general",
+            "body": "first write",
+            "conv": "general",
         }
         exporter.write_message(msg)
 
@@ -1171,12 +1238,15 @@ class TestReplayAndExporterIntegration:
 
         for conv in ["alpha", "beta", "gamma"]:
             for i in range(3):
-                exporter.write_message({
-                    "id": f"{conv}-{i}",
-                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
-                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                    "body": f"{conv} msg {i}", "conv": conv,
-                })
+                exporter.write_message(
+                    {
+                        "id": f"{conv}-{i}",
+                        "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                        "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                        "body": f"{conv} msg {i}",
+                        "conv": conv,
+                    }
+                )
 
         store = replay_jsonl_logs(log_dir=log_dir)
         assert set(store.conversations()) == {"alpha", "beta", "gamma"}

@@ -20,7 +20,12 @@ from unittest.mock import patch
 
 import pytest
 
-from claude_comms.broker import EmbeddedBroker, MessageDeduplicator, MessageStore, replay_jsonl_logs
+from claude_comms.broker import (
+    EmbeddedBroker,
+    MessageDeduplicator,
+    MessageStore,
+    replay_jsonl_logs,
+)
 from claude_comms.config import (
     get_default_config,
     load_config,
@@ -100,7 +105,9 @@ class TestConfigInitFlow:
         """A partial config file should be merged with defaults."""
         config_path = tmp_path / "config.yaml"
         # Write a minimal config
-        config_path.write_text("identity:\n  key: aabbccdd\n  name: partial\n  type: claude\n")
+        config_path.write_text(
+            "identity:\n  key: aabbccdd\n  name: partial\n  type: claude\n"
+        )
 
         loaded = load_config(config_path)
         # Should have broker defaults filled in
@@ -180,7 +187,13 @@ class TestMessageRoundtrip:
         )
         data = json.loads(msg.to_mqtt_payload())
         assert set(data.keys()) == {
-            "id", "ts", "sender", "recipients", "body", "reply_to", "conv"
+            "id",
+            "ts",
+            "sender",
+            "recipients",
+            "body",
+            "reply_to",
+            "conv",
         }
         assert set(data["sender"].keys()) == {"key", "name", "type"}
 
@@ -350,15 +363,15 @@ class TestLogExporterIntegration:
 
         # Grep for sender name
         lines = content.split("\n")
-        phil_lines = [l for l in lines if "@phil" in l]
+        phil_lines = [line for line in lines if "@phil" in line]
         assert len(phil_lines) >= 1
 
         # Grep for sender key
-        key_lines = [l for l in lines if "(00ff0e8a)" in l]
+        key_lines = [line for line in lines if "(00ff0e8a)" in line]
         assert len(key_lines) >= 1
 
         # Grep for message content
-        important_lines = [l for l in lines if "Important announcement" in l]
+        important_lines = [line for line in lines if "Important announcement" in line]
         assert len(important_lines) >= 1
 
     def test_presence_event_in_log(self, tmp_path: Path) -> None:
@@ -618,9 +631,7 @@ class TestMCPToolsPipeline:
         store.add("general", msg_data)
 
         # Read it back
-        read_result = tool_comms_read(
-            registry, store, key=key, conversation="general"
-        )
+        read_result = tool_comms_read(registry, store, key=key, conversation="general")
         assert read_result["count"] == 1
         assert read_result["messages"][0]["body"] == "Hello world!"
         assert read_result["messages"][0]["sender"]["key"] == key
@@ -629,7 +640,7 @@ class TestMCPToolsPipeline:
     async def test_targeted_send_with_mentions(self) -> None:
         """Send a targeted message and verify mention prefix + recipients."""
         registry = ParticipantRegistry()
-        store = MessageStore()
+        MessageStore()  # ensure store initializes
 
         r1 = tool_comms_join(registry, name="alice", conversation="general")
         r2 = tool_comms_join(registry, name="bob", conversation="general")
@@ -684,9 +695,7 @@ class TestMCPToolsPipeline:
         assert check["total_unread"] == 1
 
         # Bob reads messages
-        tool_comms_read(
-            registry, store, key=r_bob["key"], conversation="general"
-        )
+        tool_comms_read(registry, store, key=r_bob["key"], conversation="general")
 
         # Now check again - should be 0 unread
         check2 = tool_comms_check(registry, store, key=r_bob["key"])
@@ -712,6 +721,7 @@ class TestMCPToolsPipeline:
         )
 
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             exporter = LogExporter(log_dir=tmpdir, fmt="both")
             msg_data = json.loads(captured[0][1])
@@ -931,8 +941,7 @@ class TestMessageStoreMultiConversation:
                 errors.append(e)
 
         threads = [
-            threading.Thread(target=writer, args=(f"conv-{t}",))
-            for t in range(5)
+            threading.Thread(target=writer, args=(f"conv-{t}",)) for t in range(5)
         ]
         for t in threads:
             t.start()
@@ -1012,8 +1021,10 @@ class TestReplayJSONLEdgeCases:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         for conv in ["alpha", "beta", "gamma"]:
-            msgs = [json.dumps({"id": f"{conv}-{i}", "conv": conv, "body": f"msg {i}"})
-                    for i in range(3)]
+            msgs = [
+                json.dumps({"id": f"{conv}-{i}", "conv": conv, "body": f"msg {i}"})
+                for i in range(3)
+            ]
             (log_dir / f"{conv}.jsonl").write_text("\n".join(msgs) + "\n")
         store = replay_jsonl_logs(log_dir)
         assert set(store.conversations()) == {"alpha", "beta", "gamma"}
@@ -1023,8 +1034,10 @@ class TestReplayJSONLEdgeCases:
     def test_replay_max_per_conv_caps(self, tmp_path: Path) -> None:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
-        msgs = [json.dumps({"id": f"cap-{i}", "conv": "general", "body": f"m{i}"})
-                for i in range(50)]
+        msgs = [
+            json.dumps({"id": f"cap-{i}", "conv": "general", "body": f"m{i}"})
+            for i in range(50)
+        ]
         (log_dir / "general.jsonl").write_text("\n".join(msgs) + "\n")
         store = replay_jsonl_logs(log_dir, max_per_conv=10)
         result = store.get("general")
@@ -1037,6 +1050,7 @@ class TestGenerateClientIdIntegration:
 
     def test_format_components(self) -> None:
         from claude_comms.broker import generate_client_id
+
         cid = generate_client_id("mcp", "a3f7b2c1")
         parts = cid.split("-")
         assert parts[0] == "claude"
@@ -1048,6 +1062,7 @@ class TestGenerateClientIdIntegration:
 
     def test_uniqueness_across_calls(self) -> None:
         from claude_comms.broker import generate_client_id
+
         ids = set()
         for _ in range(500):
             ids.add(generate_client_id("test", "abcdef01"))
@@ -1055,21 +1070,25 @@ class TestGenerateClientIdIntegration:
 
     def test_empty_component_raises(self) -> None:
         from claude_comms.broker import generate_client_id
+
         with pytest.raises(ValueError, match="component"):
             generate_client_id("", "abcdef01")
 
     def test_empty_key_raises(self) -> None:
         from claude_comms.broker import generate_client_id
+
         with pytest.raises(ValueError, match="participant_key"):
             generate_client_id("mcp", "")
 
     def test_none_component_raises(self) -> None:
         from claude_comms.broker import generate_client_id
+
         with pytest.raises(ValueError):
             generate_client_id(None, "abcdef01")
 
     def test_none_key_raises(self) -> None:
         from claude_comms.broker import generate_client_id
+
         with pytest.raises(ValueError):
             generate_client_id("mcp", None)
 
@@ -1134,7 +1153,10 @@ class TestAllCommsToolsWithMockPublish:
             captured.append((topic, payload))
 
         result = await tool_comms_send(
-            registry, mock_pub, key=key, conversation="general",
+            registry,
+            mock_pub,
+            key=key,
+            conversation="general",
             message="Hello world!",
         )
         assert result["status"] == "sent"
@@ -1153,8 +1175,12 @@ class TestAllCommsToolsWithMockPublish:
             captured.append((topic, payload))
 
         result = await tool_comms_send(
-            registry, mock_pub, key=r1["key"], conversation="general",
-            message="Hey Bob!", recipients=["bob"],
+            registry,
+            mock_pub,
+            key=r1["key"],
+            conversation="general",
+            message="Hey Bob!",
+            recipients=["bob"],
         )
         assert result["status"] == "sent"
         assert r2["key"] in result["recipients"]
@@ -1169,7 +1195,10 @@ class TestAllCommsToolsWithMockPublish:
             pass
 
         result = await tool_comms_send(
-            registry, mock_pub, key=key, conversation="general",
+            registry,
+            mock_pub,
+            key=key,
+            conversation="general",
             message="   ",
         )
         assert result.get("error") is True
@@ -1182,7 +1211,10 @@ class TestAllCommsToolsWithMockPublish:
             pass
 
         result = await tool_comms_send(
-            registry, mock_pub, key=key, conversation="BAD!CONV",
+            registry,
+            mock_pub,
+            key=key,
+            conversation="BAD!CONV",
             message="hi",
         )
         assert result.get("error") is True
@@ -1195,11 +1227,17 @@ class TestAllCommsToolsWithMockPublish:
             raise ConnectionError("Broker down")
 
         result = await tool_comms_send(
-            registry, failing_pub, key=key, conversation="general",
+            registry,
+            failing_pub,
+            key=key,
+            conversation="general",
             message="will fail",
         )
         assert result.get("error") is True
-        assert "broker" in result["message"].lower() or "failed" in result["message"].lower()
+        assert (
+            "broker" in result["message"].lower()
+            or "failed" in result["message"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_comms_send_unresolvable_recipients(self) -> None:
@@ -1209,8 +1247,12 @@ class TestAllCommsToolsWithMockPublish:
             pass
 
         result = await tool_comms_send(
-            registry, mock_pub, key=key, conversation="general",
-            message="hey", recipients=["ghost-user"],
+            registry,
+            mock_pub,
+            key=key,
+            conversation="general",
+            message="hey",
+            recipients=["ghost-user"],
         )
         assert result.get("error") is True
 
@@ -1223,24 +1265,37 @@ class TestAllCommsToolsWithMockPublish:
     def test_comms_read_with_messages(self) -> None:
         registry, store, key = self._setup()
         for i in range(5):
-            store.add("general", {
-                "id": f"r2-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "other", "type": "claude"},
-                "body": f"Message {i}", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"r2-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "other", "type": "claude"},
+                    "body": f"Message {i}",
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(registry, store, key=key, conversation="general")
         assert result["count"] == 5
 
     def test_comms_read_with_since(self) -> None:
         registry, store, key = self._setup()
         for i in range(10):
-            store.add("general", {
-                "id": f"since-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": f"m{i}", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"since-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": f"m{i}",
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(
-            registry, store, key=key, conversation="general",
+            registry,
+            store,
+            key=key,
+            conversation="general",
             since="2026-03-13T14:07:00-05:00",
         )
         assert result["count"] == 2  # messages 8, 9
@@ -1249,14 +1304,23 @@ class TestAllCommsToolsWithMockPublish:
         """Count should be clamped between 1 and 200."""
         registry, store, key = self._setup()
         for i in range(5):
-            store.add("general", {
-                "id": f"clamp-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "m", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"clamp-{i}",
+                    "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": "m",
+                    "conv": "general",
+                },
+            )
         # count=0 should be clamped to 1
         result = tool_comms_read(
-            registry, store, key=key, conversation="general", count=0,
+            registry,
+            store,
+            key=key,
+            conversation="general",
+            count=0,
         )
         assert result["count"] == 1
 
@@ -1267,18 +1331,26 @@ class TestAllCommsToolsWithMockPublish:
 
     def test_comms_check_with_unread(self) -> None:
         registry, store, key = self._setup()
-        store.add("general", {
-            "id": "unread-1", "ts": "2026-03-13T15:00:00-05:00",
-            "sender": {"key": "other123", "name": "o", "type": "claude"},
-            "body": "hi", "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "unread-1",
+                "ts": "2026-03-13T15:00:00-05:00",
+                "sender": {"key": "other123", "name": "o", "type": "claude"},
+                "body": "hi",
+                "conv": "general",
+            },
+        )
         result = tool_comms_check(registry, store, key=key)
         assert result["total_unread"] == 1
 
     def test_comms_check_specific_conversation(self) -> None:
         registry, store, key = self._setup()
         result = tool_comms_check(
-            registry, store, key=key, conversation="general",
+            registry,
+            store,
+            key=key,
+            conversation="general",
         )
         assert result["total_unread"] == 0
 
@@ -1299,6 +1371,7 @@ class TestAllCommsToolsWithMockPublish:
 
     def test_comms_conversations(self) -> None:
         from claude_comms.mcp_tools import tool_comms_conversations
+
         registry = ParticipantRegistry()
         store = MessageStore()
         r = tool_comms_join(registry, name="alice", conversation="general")
@@ -1322,31 +1395,52 @@ class TestAllCommsToolsWithMockPublish:
 
     def test_comms_history_all(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
+
         registry, store, key = self._setup()
         for i in range(5):
-            store.add("general", {
-                "id": f"hist-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": f"History {i}", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"hist-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": f"History {i}",
+                    "conv": "general",
+                },
+            )
         result = tool_comms_history(registry, store, key=key, conversation="general")
         assert result["count"] == 5
 
     def test_comms_history_with_query(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
+
         registry, store, key = self._setup()
-        store.add("general", {
-            "id": "hq-1", "ts": "2026-03-13T10:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "The quick brown fox", "conv": "general",
-        })
-        store.add("general", {
-            "id": "hq-2", "ts": "2026-03-13T10:01:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "The lazy dog", "conv": "general",
-        })
+        store.add(
+            "general",
+            {
+                "id": "hq-1",
+                "ts": "2026-03-13T10:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "The quick brown fox",
+                "conv": "general",
+            },
+        )
+        store.add(
+            "general",
+            {
+                "id": "hq-2",
+                "ts": "2026-03-13T10:01:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "The lazy dog",
+                "conv": "general",
+            },
+        )
         result = tool_comms_history(
-            registry, store, key=key, conversation="general", query="fox",
+            registry,
+            store,
+            key=key,
+            conversation="general",
+            query="fox",
         )
         assert result["count"] == 1
 
@@ -1421,8 +1515,8 @@ class TestParticipantRegistryDetailed:
 
     def test_members_multi_conversation(self) -> None:
         registry = ParticipantRegistry()
-        p1 = registry.join("alice", "general")
-        p2 = registry.join("bob", "general")
+        registry.join("alice", "general")
+        registry.join("bob", "general")
         registry.join("charlie", "dev")
         general_members = registry.members("general")
         assert len(general_members) == 2
@@ -1461,13 +1555,22 @@ class TestTokenAwarePaginationIntegration:
         r = tool_comms_join(registry, name="tester", conversation="general")
         # Each message ~2000 chars = ~500 tokens. 100 messages = 50k tokens > 20k limit
         for i in range(100):
-            store.add("general", {
-                "id": f"big-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "x" * 2000, "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"big-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": "x" * 2000,
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(
-            registry, store, key=r["key"], conversation="general", count=100,
+            registry,
+            store,
+            key=r["key"],
+            conversation="general",
+            count=100,
         )
         assert result["count"] < 100
         assert result["has_more"] is True
@@ -1477,30 +1580,48 @@ class TestTokenAwarePaginationIntegration:
         store = MessageStore()
         r = tool_comms_join(registry, name="tester", conversation="general")
         for i in range(10):
-            store.add("general", {
-                "id": f"sm-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "short", "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"sm-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": "short",
+                    "conv": "general",
+                },
+            )
         result = tool_comms_read(
-            registry, store, key=r["key"], conversation="general",
+            registry,
+            store,
+            key=r["key"],
+            conversation="general",
         )
         assert result["count"] == 10
         assert result["has_more"] is False
 
     def test_history_truncation(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
+
         registry = ParticipantRegistry()
         store = MessageStore()
         r = tool_comms_join(registry, name="tester", conversation="general")
         for i in range(100):
-            store.add("general", {
-                "id": f"hist-big-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
-                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "y" * 2000, "conv": "general",
-            })
+            store.add(
+                "general",
+                {
+                    "id": f"hist-big-{i}",
+                    "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                    "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                    "body": "y" * 2000,
+                    "conv": "general",
+                },
+            )
         result = tool_comms_history(
-            registry, store, key=r["key"], conversation="general", count=100,
+            registry,
+            store,
+            key=r["key"],
+            conversation="general",
+            count=100,
         )
         assert result["count"] < 100
         assert result["has_more"] is True
@@ -1574,14 +1695,18 @@ class TestLogExporterRotation:
     """Test log file rotation."""
 
     def test_rotation_triggers_on_size(self, tmp_path: Path) -> None:
-        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=3)
+        exporter = LogExporter(
+            log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=3
+        )
         exporter.max_size_bytes = 50  # Very small to trigger rotation
 
         for i in range(10):
             msg = {
-                "id": f"rot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "id": f"rot-{i}",
+                "ts": "2026-03-13T14:00:00-05:00",
                 "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "A" * 100, "conv": "general",
+                "body": "A" * 100,
+                "conv": "general",
             }
             exporter.write_message(msg)
 
@@ -1592,14 +1717,18 @@ class TestLogExporterRotation:
         assert len(rotated) >= 1
 
     def test_rotation_max_files_respected(self, tmp_path: Path) -> None:
-        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=2)
+        exporter = LogExporter(
+            log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=2
+        )
         exporter.max_size_bytes = 10
 
         for i in range(20):
             msg = {
-                "id": f"maxrot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "id": f"maxrot-{i}",
+                "ts": "2026-03-13T14:00:00-05:00",
                 "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "B" * 200, "conv": "general",
+                "body": "B" * 200,
+                "conv": "general",
             }
             exporter.write_message(msg)
 
@@ -1608,14 +1737,18 @@ class TestLogExporterRotation:
 
     def test_rotation_disabled_when_max_size_zero(self, tmp_path: Path) -> None:
         """max_size_mb=0 means max_size_bytes=0, which disables rotation."""
-        exporter = LogExporter(log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=3)
+        exporter = LogExporter(
+            log_dir=tmp_path, fmt="jsonl", max_size_mb=0, max_files=3
+        )
         # Don't override max_size_bytes — leave at 0 to test disabled
 
         for i in range(5):
             msg = {
-                "id": f"norot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "id": f"norot-{i}",
+                "ts": "2026-03-13T14:00:00-05:00",
                 "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "C" * 100, "conv": "general",
+                "body": "C" * 100,
+                "conv": "general",
             }
             exporter.write_message(msg)
 
@@ -1628,9 +1761,11 @@ class TestLogExporterRotation:
 
         for i in range(10):
             msg = {
-                "id": f"trot-{i}", "ts": "2026-03-13T14:00:00-05:00",
+                "id": f"trot-{i}",
+                "ts": "2026-03-13T14:00:00-05:00",
                 "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "D" * 100, "conv": "general",
+                "body": "D" * 100,
+                "conv": "general",
             }
             exporter.write_message(msg)
 
@@ -1645,9 +1780,11 @@ class TestLogExporterDedup:
     def test_duplicate_message_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="jsonl")
         msg = {
-            "id": "dup-001", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "dup-001",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "original", "conv": "general",
+            "body": "original",
+            "conv": "general",
         }
         assert exporter.write_message(msg) is True
         assert exporter.write_message(msg) is False
@@ -1659,9 +1796,11 @@ class TestLogExporterDedup:
         exp1 = LogExporter(log_dir=tmp_path / "exp1", fmt="jsonl", deduplicator=dedup)
         exp2 = LogExporter(log_dir=tmp_path / "exp2", fmt="jsonl", deduplicator=dedup)
         msg = {
-            "id": "shared-001", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "shared-001",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "shared", "conv": "general",
+            "body": "shared",
+            "conv": "general",
         }
         assert exp1.write_message(msg) is True
         assert exp2.write_message(msg) is False  # blocked by shared dedup
@@ -1669,9 +1808,11 @@ class TestLogExporterDedup:
     def test_message_without_id_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="jsonl")
         msg = {
-            "id": "", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "no id", "conv": "general",
+            "body": "no id",
+            "conv": "general",
         }
         assert exporter.write_message(msg) is False
 
@@ -1682,59 +1823,73 @@ class TestLogExporterConvIdValidation:
     def test_path_traversal_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="both")
         msg = {
-            "id": "evil-1", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "evil-1",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "evil", "conv": "../../etc/passwd",
+            "body": "evil",
+            "conv": "../../etc/passwd",
         }
         assert exporter.write_message(msg) is False
 
     def test_uppercase_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="both")
         msg = {
-            "id": "upper-1", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "upper-1",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "upper", "conv": "MyChat",
+            "body": "upper",
+            "conv": "MyChat",
         }
         assert exporter.write_message(msg) is False
 
     def test_reserved_system_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="both")
         msg = {
-            "id": "sys-1", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "sys-1",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "sys", "conv": "system",
+            "body": "sys",
+            "conv": "system",
         }
         assert exporter.write_message(msg) is False
 
     def test_reserved_meta_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="both")
         msg = {
-            "id": "meta-1", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "meta-1",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "meta", "conv": "meta",
+            "body": "meta",
+            "conv": "meta",
         }
         assert exporter.write_message(msg) is False
 
     def test_empty_conv_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="both")
         msg = {
-            "id": "empty-1", "ts": "2026-03-13T14:00:00-05:00",
+            "id": "empty-1",
+            "ts": "2026-03-13T14:00:00-05:00",
             "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "empty", "conv": "",
+            "body": "empty",
+            "conv": "",
         }
         assert exporter.write_message(msg) is False
 
     def test_presence_with_invalid_conv_rejected(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="text")
-        assert exporter.write_presence("../evil", "alice", "aabbccdd", "joined") is False
+        assert (
+            exporter.write_presence("../evil", "alice", "aabbccdd", "joined") is False
+        )
 
     def test_valid_conv_ids(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="jsonl")
         for conv_id in ["general", "dev", "a", "my-project-123"]:
             msg = {
-                "id": f"valid-{conv_id}", "ts": "2026-03-13T14:00:00-05:00",
+                "id": f"valid-{conv_id}",
+                "ts": "2026-03-13T14:00:00-05:00",
                 "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-                "body": "valid", "conv": conv_id,
+                "body": "valid",
+                "conv": conv_id,
             }
             assert exporter.write_message(msg) is True
 
@@ -1748,48 +1903,65 @@ class TestGrepPatternsOnLogs:
             ("alice", "a1b2c3d4", "g1"),
             ("bob", "e5f6a7b8", "g2"),
         ]:
-            exporter.write_message({
-                "id": msg_id, "ts": "2026-03-13T14:00:00-05:00",
-                "sender": {"key": key, "name": name, "type": "claude"},
-                "body": f"From {name}", "conv": "general",
-            })
+            exporter.write_message(
+                {
+                    "id": msg_id,
+                    "ts": "2026-03-13T14:00:00-05:00",
+                    "sender": {"key": key, "name": name, "type": "claude"},
+                    "body": f"From {name}",
+                    "conv": "general",
+                }
+            )
         content = (tmp_path / "general.log").read_text()
         lines = content.split("\n")
-        assert any("@alice" in l for l in lines)
-        assert any("@bob" in l for l in lines)
+        assert any("@alice" in line for line in lines)
+        assert any("@bob" in line for line in lines)
 
     def test_grep_by_participant_key(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="text")
-        exporter.write_message({
-            "id": "gk-1", "ts": "2026-03-13T14:00:00-05:00",
-            "sender": {"key": "deadbeef", "name": "test", "type": "claude"},
-            "body": "find by key", "conv": "general",
-        })
+        exporter.write_message(
+            {
+                "id": "gk-1",
+                "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "deadbeef", "name": "test", "type": "claude"},
+                "body": "find by key",
+                "conv": "general",
+            }
+        )
         content = (tmp_path / "general.log").read_text()
         assert "(deadbeef)" in content
 
     def test_grep_by_message_content(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="text")
-        exporter.write_message({
-            "id": "gc-1", "ts": "2026-03-13T14:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "UNIQUE_GREP_TOKEN_XYZ", "conv": "general",
-        })
+        exporter.write_message(
+            {
+                "id": "gc-1",
+                "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "UNIQUE_GREP_TOKEN_XYZ",
+                "conv": "general",
+            }
+        )
         content = (tmp_path / "general.log").read_text()
         assert "UNIQUE_GREP_TOKEN_XYZ" in content
 
     def test_grep_by_date_pattern(self, tmp_path: Path) -> None:
         exporter = LogExporter(log_dir=tmp_path, fmt="text")
-        exporter.write_message({
-            "id": "gd-1", "ts": "2026-03-13T14:00:00-05:00",
-            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
-            "body": "dated", "conv": "general",
-        })
+        exporter.write_message(
+            {
+                "id": "gd-1",
+                "ts": "2026-03-13T14:00:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "dated",
+                "conv": "general",
+            }
+        )
         content = (tmp_path / "general.log").read_text()
         import re
+
         # Pattern: ^[2026-03-13 should match message lines
         lines = content.split("\n")
-        dated_lines = [l for l in lines if re.match(r"^\[2026-03-13", l)]
+        dated_lines = [line for line in lines if re.match(r"^\[2026-03-13", line)]
         assert len(dated_lines) >= 1
 
     def test_grep_presence_events(self, tmp_path: Path) -> None:
@@ -1798,7 +1970,8 @@ class TestGrepPatternsOnLogs:
         exporter.write_presence("general", "alice", "a1b2c3d4", "left")
         content = (tmp_path / "general.log").read_text()
         import re
+
         lines = content.split("\n")
         # Pattern: ^--- matches presence events
-        presence_lines = [l for l in lines if re.match(r"^--- ", l)]
+        presence_lines = [line for line in lines if re.match(r"^--- ", line)]
         assert len(presence_lines) == 2

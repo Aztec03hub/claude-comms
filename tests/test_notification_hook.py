@@ -173,15 +173,11 @@ class TestSettingsManipulation:
         assert hook["timeout"] == 5
 
     def test_is_claude_comms_hook_entry_true(self):
-        entry = {
-            "hooks": [{"command": "/path/to/claude-comms-notify-abc123.sh"}]
-        }
+        entry = {"hooks": [{"command": "/path/to/claude-comms-notify-abc123.sh"}]}
         assert _is_claude_comms_hook_entry(entry) is True
 
     def test_is_claude_comms_hook_entry_false(self):
-        entry = {
-            "hooks": [{"command": "/some/other/hook.sh"}]
-        }
+        entry = {"hooks": [{"command": "/some/other/hook.sh"}]}
         assert _is_claude_comms_hook_entry(entry) is False
 
     def test_add_hook_to_empty_settings(self):

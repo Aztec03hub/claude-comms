@@ -21,7 +21,14 @@ from textual.containers import Horizontal
 
 from claude_comms.tui.app import ClaudeCommsApp, NewConversationScreen, HelpScreen
 from claude_comms.tui.channel_list import ChannelList, ChannelItem
-from claude_comms.tui.chat_view import ChatView, MessageBubble, SystemMessage, EmptyChannelMessage, SENDER_COLORS, _color_for_key
+from claude_comms.tui.chat_view import (
+    ChatView,
+    MessageBubble,
+    SystemMessage,
+    EmptyChannelMessage,
+    SENDER_COLORS,
+    _color_for_key,
+)
 from claude_comms.tui.message_input import MessageInput
 from claude_comms.tui.participant_list import ParticipantList, PresenceState
 from claude_comms.tui.status_bar import StatusBar
@@ -30,6 +37,7 @@ from claude_comms.tui.status_bar import StatusBar
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_config(conversations: list[str] | None = None) -> dict:
     """Build a minimal config dict for testing (no real broker needed)."""
@@ -55,9 +63,12 @@ def _make_config(conversations: list[str] | None = None) -> dict:
         },
         "web": {"enabled": False, "port": 9921},
         "notifications": {"hook_enabled": False, "sound_enabled": False},
-        "logging": {"dir": "/tmp/claude-comms-test-logs", "format": "both",
-                     "max_messages_replay": 1000,
-                     "rotation": {"max_size_mb": 50, "max_files": 10}},
+        "logging": {
+            "dir": "/tmp/claude-comms-test-logs",
+            "format": "both",
+            "max_messages_replay": 1000,
+            "rotation": {"max_size_mb": 50, "max_files": 10},
+        },
         "default_conversation": "general",
     }
 
@@ -102,7 +113,9 @@ class TestRound1AppLaunch:
             assert chat_view is not None
 
             # Right sidebar: ParticipantList
-            participant_sidebar = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_sidebar = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             assert participant_sidebar is not None
 
             # Horizontal container
@@ -155,7 +168,9 @@ class TestRound1AppLaunch:
         """Our own participant should appear in the participant list."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             names = participant_list.get_names()
             assert "test-user" in names
 
@@ -165,6 +180,7 @@ class TestRound1AppLaunch:
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             from textual.widgets import Footer
+
             footer = pilot.app.query_one(Footer)
             assert footer is not None
 
@@ -299,12 +315,12 @@ class TestRound3MessageSending:
         sent_bodies: list[str] = []
 
         # Patch _send_message to capture calls instead of publishing via MQTT
-        original_send = ClaudeCommsApp._send_message
 
         async with app.run_test(size=(120, 40)) as pilot:
             # Replace the worker method with a simple tracker
             def track_send(self_app, body: str):
                 sent_bodies.append(body)
+
             pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
 
             input_widget = pilot.app.query_one("#message-input", Input)
@@ -582,7 +598,9 @@ class TestRound5EdgeCases:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            body = "Check this:\n```python\ndef hello():\n    print('world')\n```\nNeat!"
+            body = (
+                "Check this:\n```python\ndef hello():\n    print('world')\n```\nNeat!"
+            )
             chat_view = pilot.app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
@@ -624,13 +642,19 @@ class TestRound5EdgeCases:
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             # Add some participants for completion
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             participant_list.set_participant(
-                key="alice001", name="alice", participant_type="claude",
+                key="alice001",
+                name="alice",
+                participant_type="claude",
                 presence=PresenceState.ONLINE,
             )
             participant_list.set_participant(
-                key="bob00001", name="bob", participant_type="human",
+                key="bob00001",
+                name="bob",
+                participant_type="human",
                 presence=PresenceState.ONLINE,
             )
             await pilot.pause()
@@ -653,13 +677,19 @@ class TestRound5EdgeCases:
         """Tab should cycle through multiple @mention completions."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             participant_list.set_participant(
-                key="alice001", name="alice", participant_type="claude",
+                key="alice001",
+                name="alice",
+                participant_type="claude",
                 presence=PresenceState.ONLINE,
             )
             participant_list.set_participant(
-                key="alex0001", name="alex", participant_type="human",
+                key="alex0001",
+                name="alex",
+                participant_type="human",
                 presence=PresenceState.ONLINE,
             )
             await pilot.pause()
@@ -679,7 +709,11 @@ class TestRound5EdgeCases:
             # The next tab should cycle to the other match
             # However, the completion replaces the text, so _last_partial
             # might change. This test verifies no crash at minimum.
-            assert "@al" in first_value.lower() or "@alice" in first_value or "@alex" in first_value
+            assert (
+                "@al" in first_value.lower()
+                or "@alice" in first_value
+                or "@alex" in first_value
+            )
 
     @pytest.mark.asyncio
     async def test_no_broker_graceful(self):
@@ -811,10 +845,14 @@ class TestRound5EdgeCases:
         """Updating a participant's presence should not crash."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
 
             participant_list.set_participant(
-                key="claude01", name="assistant", participant_type="claude",
+                key="claude01",
+                name="assistant",
+                participant_type="claude",
                 presence=PresenceState.ONLINE,
             )
             await pilot.pause()
@@ -939,7 +977,9 @@ class TestRound7ChannelPreviewsAndMuted:
         async with app.run_test(size=(120, 40)) as pilot:
             channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
             channel_list.set_channel_preview(
-                "general", "someone", "This is a very long message that should be truncated"
+                "general",
+                "someone",
+                "This is a very long message that should be truncated",
             )
             await pilot.pause()
             # The ChannelItem.set_preview truncates at 22 chars
@@ -1030,6 +1070,7 @@ class TestRound8SenderColors:
     def test_all_colors_are_hex(self):
         """All sender colors should be valid hex color strings."""
         import re
+
         hex_pattern = re.compile(r"^#[0-9a-fA-F]{6}$")
         for color in SENDER_COLORS:
             assert hex_pattern.match(color), f"Invalid hex color: {color}"

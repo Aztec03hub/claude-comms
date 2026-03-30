@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -179,8 +180,7 @@ class TestReplayJsonlLogs:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         messages = [
-            {"id": f"m{i}", "conv": "general", "body": f"msg-{i}"}
-            for i in range(20)
+            {"id": f"m{i}", "conv": "general", "body": f"msg-{i}"} for i in range(20)
         ]
         self._write_jsonl(log_dir / "general.jsonl", messages)
         store = replay_jsonl_logs(log_dir, max_per_conv=5)
@@ -379,7 +379,10 @@ class TestEmbeddedBroker:
             # Patch the import inside start()
             with patch.dict(
                 "sys.modules",
-                {"amqtt": MagicMock(), "amqtt.broker": MagicMock(Broker=mock_broker_cls)},
+                {
+                    "amqtt": MagicMock(),
+                    "amqtt.broker": MagicMock(Broker=mock_broker_cls),
+                },
             ):
                 await broker.start()
 
@@ -441,7 +444,9 @@ class TestEmbeddedBroker:
         # Write a JSONL log file
         jsonl_path = log_dir / "general.jsonl"
         with open(jsonl_path, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"id": "r1", "conv": "general", "body": "replayed"}) + "\n")
+            fh.write(
+                json.dumps({"id": "r1", "conv": "general", "body": "replayed"}) + "\n"
+            )
 
         mock_broker_instance = AsyncMock()
         mock_broker_cls = MagicMock(return_value=mock_broker_instance)
@@ -521,5 +526,4 @@ class TestGenerateClientId:
         assert len(ids) == 100
 
 
-# Need os import for getpid in tests
-import os
+# os imported at top of file for getpid in tests
