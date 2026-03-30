@@ -1,5 +1,4 @@
 <script>
-  import { tick } from 'svelte';
   import { MqttChatStore } from './lib/mqtt-store.svelte.js';
   import { requestPermission, sendNotification } from './lib/notifications.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -37,7 +36,6 @@
   let toasts = $state([]);
   let threadParent = $state(null);
   let emojiPickerTarget = $state(null);
-  let messageInputEl = $state(null);
 
   // Connect on mount
   $effect(() => {
@@ -411,6 +409,8 @@
     display: flex;
     gap: 2px;
     margin-left: auto;
+    position: relative;
+    z-index: 103;
   }
 
   .header-btn {

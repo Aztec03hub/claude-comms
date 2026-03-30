@@ -4,11 +4,11 @@ const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
 // Use a single test with sequential steps to avoid repeated page loads
 // which are extremely slow on this WSL2 + Vite dev server environment.
-test.setTimeout(120000);
+test.setTimeout(300000);
 
 test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
-  // Use static build to avoid Vite HMR reload interference
-  await page.goto('http://localhost:5177', { timeout: 60000 });
+  // Use baseURL from playwright.config.js (port 5175)
+  await page.goto('/', { timeout: 60000 });
   await page.locator('[data-testid="sidebar"]').waitFor({ state: 'visible', timeout: 30000 });
   await page.waitForTimeout(500);
 

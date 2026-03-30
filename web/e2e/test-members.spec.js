@@ -3,8 +3,7 @@ import { test, expect } from '@playwright/test';
 const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
 // The MQTT broker may have many retained presence messages (1000+),
-// causing the page to be slow to render. Use generous timeouts.
-test.setTimeout(60000);
+// causing the page to be slow to render. The playwright config sets 60s timeout.
 
 /**
  * Helper to open the profile card via user avatar click.

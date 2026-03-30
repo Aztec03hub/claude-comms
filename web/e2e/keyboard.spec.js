@@ -49,7 +49,7 @@ test.describe('Keyboard shortcuts and accessibility', () => {
   // ── Test 4: Enter sends message ──
   test('Enter in message input sends message', async ({ page }) => {
     const input = page.locator('[data-testid="message-input"]');
-    await input.click();
+    await input.focus();
     await input.fill('Hello from keyboard test');
     await page.keyboard.press('Enter');
     await expect(input).toHaveValue('', { timeout: 5000 });
@@ -58,7 +58,7 @@ test.describe('Keyboard shortcuts and accessibility', () => {
   // ── Test 5: Shift+Enter does NOT send ──
   test('Shift+Enter does not send message', async ({ page }) => {
     const input = page.locator('[data-testid="message-input"]');
-    await input.click();
+    await input.focus();
     await input.fill('Should not be sent');
     await page.keyboard.press('Shift+Enter');
     await expect(input).toHaveValue('Should not be sent', { timeout: 3000 });
@@ -66,7 +66,7 @@ test.describe('Keyboard shortcuts and accessibility', () => {
 
   // ── Test 6: Tab navigation ──
   test('Tab navigation moves focus through interactive elements', async ({ page }) => {
-    await page.locator('body').click();
+    await page.locator('body').focus();
 
     const focusedTags = [];
     for (let i = 0; i < 6; i++) {
