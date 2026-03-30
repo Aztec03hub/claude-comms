@@ -32,38 +32,50 @@
     prevConnected = currentConnected;
 
     // Auto-hide connected banner after 3 seconds
+    let timer;
     if (currentConnected && !currentError) {
-      const timer = untrack(() => autoHideTimer);
-      if (timer) clearTimeout(timer);
+      const existingTimer = untrack(() => autoHideTimer);
+      if (existingTimer) clearTimeout(existingTimer);
       autoHide = false;
-      autoHideTimer = setTimeout(() => {
+      timer = setTimeout(() => {
         autoHide = true;
         autoHideTimer = null;
       }, 3000);
+      autoHideTimer = timer;
     }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   });
 
   // Track reconnection attempts when in error state.
   // retryCount is read inside untrack() to prevent circular dependency.
   $effect(() => {
+    let interval;
     if (error && !connected) {
       retryCount = untrack(() => retryCount) + 1;
       retrySeconds = 5;
       const existingTimer = untrack(() => retryTimer);
       if (existingTimer) clearInterval(existingTimer);
-      retryTimer = setInterval(() => {
+      interval = setInterval(() => {
         retrySeconds--;
         if (retrySeconds <= 0) {
-          clearInterval(retryTimer);
+          clearInterval(interval);
           retryTimer = null;
         }
       }, 1000);
+      retryTimer = interval;
     } else if (connected) {
       retryCount = 0;
       retrySeconds = 0;
       const existingTimer = untrack(() => retryTimer);
       if (existingTimer) clearInterval(existingTimer);
     }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   });
 
   function dismiss() {
