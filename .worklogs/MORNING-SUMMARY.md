@@ -10,14 +10,17 @@
 
 | Metric | Value |
 |--------|-------|
-| **Commits** | 154 |
+| **Commits** | 174 |
 | **Work logs produced** | 70 overnight logs |
-| **Python tests passing** | 746 (0 failures) |
+| **Python tests passing** | 818 (0 failures) |
+| **Test coverage** | 68% overall, core models 95-100% |
 | **Playwright E2E tests** | 28 spec files |
-| **Lines of code** | 15,835 (Python + Svelte + JS + CSS) |
+| **Lines of code** | ~27,200 (Python + Svelte + JS + CSS) |
 | **Ruff lint errors fixed** | 109 (CI lint now passes clean) |
 | **Bugs fixed** | 20+ |
 | **Features added** | 15+ |
+| **Security audit** | 2 issues found + fixed (XSS, CORS) |
+| **Performance audit** | 8 findings addressed |
 | **Agents run** | 30+ |
 | **High-priority issues remaining** | 0 |
 
@@ -53,18 +56,19 @@
 - **User profile view** -- shows other users' info
 
 ### Tests
-- Python: 714 -> 746 passing tests (32 new)
+- Python: 714 -> 818 passing tests (104 new)
 - 9 rounds of web UI testing (60 comprehensive tests)
 - 12 E2E user story flows
 - 67 TUI-specific tests
 - Broker lifecycle, MCP tools, REST API, pagination coverage
+- Coverage report: 68% overall, core models at 95-100%
 
 ### Security & Documentation
-- **Security audit** -- full review of XSS, auth, CORS, injection, and path traversal
+- **Security audit** -- full review of XSS, auth, CORS, injection, and path traversal (2 issues found + fixed)
 - **XSS fix** -- patched search highlight to prevent script injection
 - **CORS restriction** -- locked down to web UI origin only
 - **CONTRIBUTING.md** -- added comprehensive contributor guide (dev setup, style guides, testing, gotchas)
-- **Performance audit** -- 8 findings documented (bundle sizes, anti-patterns)
+- **Performance audit** -- all 8 findings addressed (bundle sizes, anti-patterns, reactive inefficiencies)
 
 ### Polish
 - Accessibility: ARIA on 21 components
@@ -82,7 +86,7 @@
 - **Emoji reactions:** Picker works, reactions broadcast over MQTT
 - **Search:** Filter by type, results display correctly
 - **Settings:** Display name and preferences persist
-- **All 746 Python tests pass**
+- **All 818 Python tests pass**
 - **Vite production build succeeds** (794 kB JS, 94 kB CSS)
 
 ## Known Remaining Issues
