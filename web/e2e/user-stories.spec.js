@@ -234,19 +234,20 @@ test.describe('User Stories', () => {
 
     await cdpScreenshot(page, 's2-grouped-messages');
 
-    // Right-click first message to open context menu (use Playwright for real right-click)
-    const firstMsg = page.locator('.msg-row').first();
-    await firstMsg.click({ button: 'right', timeout: 5000 });
-    await delay(500);
+    // Right-click first message bubble to open context menu
+    const firstBubble = page.locator('.bubble').first();
+    await firstBubble.click({ button: 'right', timeout: 5000 });
+    await delay(800);
 
-    // Context menu should open (bits-ui may render outside normal DOM flow)
-    const ctxExists = await exists('[data-testid="context-menu"], [data-context-menu-content]');
-    expect(ctxExists).toBe(true);
+    // Context menu should open
+    const ctxMenu = page.locator('[data-testid="context-menu"]');
+    await expect(ctxMenu).toBeAttached({ timeout: 5000 });
 
     await cdpScreenshot(page, 's2-context-menu');
 
     // Click Reply
-    await clickEl('[data-testid="ctx-reply"]');
+    const replyItem = page.locator('[data-testid="ctx-reply"]');
+    await replyItem.click({ timeout: 5000 });
     await delay(500);
 
     // Thread panel opens
@@ -418,32 +419,35 @@ test.describe('User Stories', () => {
       await delay(300);
     }
 
-    // Right-click second message for Copy
-    const secondMsg = page.locator('.msg-row').nth(1);
-    await secondMsg.click({ button: 'right', timeout: 5000 });
-    await delay(500);
+    // Right-click second message bubble for Copy
+    const secondBubble = page.locator('.bubble').nth(1);
+    await secondBubble.click({ button: 'right', timeout: 5000 });
+    await delay(800);
 
-    const ctxOpen = await exists('[data-testid="context-menu"], [data-context-menu-content]');
-    if (ctxOpen) {
-      await clickEl('[data-testid="ctx-copy"]');
+    const ctxCopy = page.locator('[data-testid="ctx-copy"]');
+    const ctxCopyVisible = await ctxCopy.isVisible({ timeout: 3000 }).catch(() => false);
+    if (ctxCopyVisible) {
+      await ctxCopy.click({ timeout: 3000 });
       await delay(300);
     }
 
-    // Right-click third message for Delete
-    const thirdMsg = page.locator('.msg-row').nth(2);
-    await thirdMsg.click({ button: 'right', timeout: 5000 });
-    await delay(500);
+    // Right-click third message bubble for Delete
+    const thirdBubble = page.locator('.bubble').nth(2);
+    await thirdBubble.click({ button: 'right', timeout: 5000 });
+    await delay(800);
 
-    const ctxOpen2 = await exists('[data-testid="context-menu"], [data-context-menu-content]');
-    if (ctxOpen2) {
-      await clickEl('[data-testid="ctx-delete"]');
+    const ctxDelete = page.locator('[data-testid="ctx-delete"]');
+    const ctxDeleteVisible = await ctxDelete.isVisible({ timeout: 3000 }).catch(() => false);
+    if (ctxDeleteVisible) {
+      await ctxDelete.click({ timeout: 3000 });
       await delay(500);
 
       // Confirm dialog appears
-      const confirmDialog = await exists('[data-testid="confirm-dialog"], [data-testid="confirm-dialog-confirm"]');
-      if (confirmDialog) {
+      const confirmBtn = page.locator('[data-testid="confirm-dialog-confirm"]');
+      const confirmVisible = await confirmBtn.isVisible({ timeout: 3000 }).catch(() => false);
+      if (confirmVisible) {
         await cdpScreenshot(page, 's4-delete-confirm');
-        await clickEl('[data-testid="confirm-dialog-confirm"]');
+        await confirmBtn.click({ timeout: 3000 });
         await delay(500);
       }
     }
@@ -495,16 +499,17 @@ test.describe('User Stories', () => {
 
     await cdpScreenshot(page, 's5-member-toggle');
 
-    // Click a member if the list is visible
-    const hasMembers = await exists('[data-testid^="member-"]');
-    if (hasMembers) {
+    // Click a member to open profile card
+    // With mocked WebSocket, the member list uses the store's participants
+    // Check for member items or user avatar in sidebar as fallback
+    const hasMemberItems = await exists('[data-testid^="member-"]');
+    if (hasMemberItems) {
       await clickEl('[data-testid^="member-"]');
-      await delay(300);
+      await delay(400);
 
       const profileCard = await exists('[data-testid="profile-card"]');
       expect(profileCard).toBe(true);
 
-      // Check profile card has name
       const profileName = await exists('[data-testid="profile-card-name"]');
       expect(profileName).toBe(true);
 
@@ -513,6 +518,16 @@ test.describe('User Stories', () => {
       // Close card
       await ce(`window.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
       await delay(300);
+    } else {
+      // No member items available with mocked WebSocket -- try clicking the user avatar in sidebar
+      const hasUserAvatar = await exists('[data-testid="sidebar-user-profile"]');
+      if (hasUserAvatar) {
+        await clickEl('[data-testid="sidebar-user-profile"]');
+        await delay(400);
+        // Profile card or settings may open
+        await cdpScreenshot(page, 's5-user-profile-click');
+      }
+      // Skip profile card assertion when no members are rendered
     }
 
     // Press Ctrl+K again — search reopens, input auto-focused

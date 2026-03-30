@@ -330,16 +330,17 @@ export class MqttChatStore {
   }
 
   /**
-   * Delete a message by ID (immutable update for Svelte 5 reactivity).
-   * @param {string} messageId
+   * Delete a message by ID.
+   * Replaces the messages array (immutable update) to trigger Svelte 5 reactivity.
+   * @param {string} messageId - The ID of the message to remove.
    */
   deleteMessage(messageId) {
     this.messages = this.messages.filter(m => m.id !== messageId);
   }
 
   /**
-   * Toggle muted flag on a channel.
-   * @param {string} channelId
+   * Toggle muted flag on a channel (muted channels suppress notifications).
+   * @param {string} channelId - The channel to mute/unmute.
    */
   muteChannel(channelId) {
     const ch = this.channels.find(c => c.id === channelId);
@@ -347,9 +348,10 @@ export class MqttChatStore {
   }
 
   /**
-   * Forward a message body to a target channel by re-publishing it.
-   * @param {object} message
-   * @param {string} targetChannelId
+   * Forward a message to a different channel.
+   * Creates a new message with the same body and a `forwarded_from` reference.
+   * @param {object} message - The original message object to forward.
+   * @param {string} targetChannelId - The channel to forward the message to.
    */
   forwardMessage(message, targetChannelId) {
     const prevChannel = this.activeChannel;
@@ -392,9 +394,11 @@ export class MqttChatStore {
   }
 
   /**
-   * Add or toggle a reaction on a message.
-   * @param {string} messageId
-   * @param {string} emoji
+   * Add or toggle a reaction emoji on a message.
+   * If the user already reacted with this emoji, it is removed.
+   * Triggers reactivity via array spread.
+   * @param {string} messageId - The message to react to.
+   * @param {string} emoji - The emoji character to toggle.
    */
   addReaction(messageId, emoji) {
     const msg = this.messages.find(m => m.id === messageId);
@@ -425,8 +429,9 @@ export class MqttChatStore {
   }
 
   /**
-   * Pin or unpin a message.
-   * @param {object} message
+   * Pin or unpin a message in its channel.
+   * Pinned messages appear in the pinned-messages panel.
+   * @param {object} message - The message object to pin/unpin.
    */
   togglePin(message) {
     const idx = this.pinnedMessages.findIndex(m => m.id === message.id);
