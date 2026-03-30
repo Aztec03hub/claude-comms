@@ -3,6 +3,7 @@
   import MessageGroup from './MessageGroup.svelte';
   import DateSeparator from './DateSeparator.svelte';
   import ScrollToBottom from './ScrollToBottom.svelte';
+  import { MessageSquare } from 'lucide-svelte';
   import { isSameDay } from '../lib/utils.js';
 
   let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact } = $props();
@@ -78,9 +79,14 @@
 >
   {#if messages.length === 0}
     <div class="empty-state">
-      <div class="empty-icon">#</div>
+      <div class="empty-icon-ring">
+        <div class="empty-icon-inner">
+          <MessageSquare size={28} strokeWidth={1.5} />
+        </div>
+      </div>
       <div class="empty-title">No messages yet</div>
-      <div class="empty-subtitle">Start the conversation by sending a message below.</div>
+      <div class="empty-subtitle">This is the very beginning of the conversation.</div>
+      <div class="empty-hint">Type a message below to get things started.</div>
     </div>
   {:else}
     {#each groupedMessages as group, i}
@@ -126,32 +132,62 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    opacity: 0.5;
+    gap: 6px;
+    animation: emptyFadeIn 0.6s ease both;
   }
 
-  .empty-icon {
+  .empty-icon-ring {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgba(245,158,11,0.06), rgba(245,158,11,0.02));
+    border: 1px solid rgba(245,158,11,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+    animation: emptyPulse 4s ease-in-out infinite;
+  }
+
+  .empty-icon-inner {
     width: 48px;
     height: 48px;
-    border-radius: 14px;
+    border-radius: 50%;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
-    color: var(--text-faint);
-    margin-bottom: 4px;
+    color: var(--ember-400);
+    opacity: 0.7;
   }
 
   .empty-title {
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--text-secondary);
+    letter-spacing: -0.2px;
   }
 
   .empty-subtitle {
-    font-size: 12.5px;
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .empty-hint {
+    font-size: 12px;
     color: var(--text-faint);
+    margin-top: 4px;
+  }
+
+  @keyframes emptyFadeIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes emptyPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.04); opacity: 0.85; }
   }
 </style>

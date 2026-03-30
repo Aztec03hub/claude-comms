@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { X } from 'lucide-svelte';
+  import { X, SearchX, Search as SearchIcon } from 'lucide-svelte';
   import { getParticipantColor, getInitials, formatTime } from '../lib/utils.js';
 
   let { store, onClose } = $props();
@@ -70,19 +70,35 @@
   <div class="search-results">
     {#if results.length > 0}
       <div class="search-results-count">{results.length} result{results.length !== 1 ? 's' : ''} for "{searchQuery}"</div>
-    {/if}
-    {#each results as result (result.id)}
-      {@const color = getParticipantColor(result.sender.key)}
-      <div class="search-result">
-        <div class="search-result-header">
-          <div class="search-result-avatar" style="background: {color.gradient}">{getInitials(result.sender.name)}</div>
-          <span class="search-result-name" style="color: {color.textColor}">{result.sender.name}</span>
-          <span class="search-result-channel">#{result.channel || result.conv}</span>
-          <span class="search-result-time">{formatTime(result.ts, 'relative')}</span>
+      {#each results as result (result.id)}
+        {@const color = getParticipantColor(result.sender.key)}
+        <div class="search-result">
+          <div class="search-result-header">
+            <div class="search-result-avatar" style="background: {color.gradient}">{getInitials(result.sender.name)}</div>
+            <span class="search-result-name" style="color: {color.textColor}">{result.sender.name}</span>
+            <span class="search-result-channel">#{result.channel || result.conv}</span>
+            <span class="search-result-time">{formatTime(result.ts, 'relative')}</span>
+          </div>
+          <div class="search-result-text">{@html highlightMatch(result.body.slice(0, 150), searchQuery)}</div>
         </div>
-        <div class="search-result-text">{@html highlightMatch(result.body.slice(0, 150), searchQuery)}</div>
+      {/each}
+    {:else if searchQuery.trim()}
+      <div class="search-empty">
+        <div class="search-empty-icon">
+          <SearchX size={24} strokeWidth={1.5} />
+        </div>
+        <div class="search-empty-title">No results found</div>
+        <div class="search-empty-hint">No messages match "{searchQuery}"</div>
       </div>
-    {/each}
+    {:else}
+      <div class="search-empty">
+        <div class="search-empty-icon muted">
+          <SearchIcon size={24} strokeWidth={1.5} />
+        </div>
+        <div class="search-empty-title">Search messages</div>
+        <div class="search-empty-hint">Find messages, files, and links across all channels.</div>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -218,5 +234,53 @@
     color: var(--ember-300);
     padding: 0 2px;
     border-radius: 2px;
+  }
+
+  .search-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    gap: 8px;
+    animation: emptyFadeIn 0.4s ease both;
+  }
+
+  .search-empty-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(245,158,11,0.06);
+    border: 1px solid rgba(245,158,11,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ember-400);
+    opacity: 0.7;
+    margin-bottom: 4px;
+  }
+
+  .search-empty-icon.muted {
+    background: var(--bg-surface);
+    border-color: var(--border);
+    color: var(--text-faint);
+  }
+
+  .search-empty-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .search-empty-hint {
+    font-size: 12px;
+    color: var(--text-faint);
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  @keyframes emptyFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 </style>
