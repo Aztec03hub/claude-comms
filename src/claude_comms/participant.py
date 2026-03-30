@@ -17,6 +17,20 @@ NAME_PATTERN = re.compile(r"^[\w-]{1,64}$")
 
 ParticipantType = Literal["claude", "human"]
 
+# Allowed connection types
+CONNECTION_TYPES = ("web", "tui", "mcp", "cli", "api")
+
+
+class ConnectionInfo(BaseModel):
+    """A single active connection for a participant."""
+
+    client: str = Field(description="Client type: web, tui, mcp, cli, api")
+    instance_id: str | None = Field(
+        default=None, description="Instance identifier"
+    )
+    since: str = Field(description="ISO 8601 timestamp when connection was established")
+    last_seen: str = Field(description="ISO 8601 timestamp of last activity")
+
 
 def generate_key() -> str:
     """Generate an immutable 8-character hex participant key.
@@ -72,9 +86,13 @@ class Participant(BaseModel):
         ...,
         description="Participant type: claude or human",
     )
-    client: str = Field(
-        default="unknown",
-        description="Client type: web, tui, mcp, or unknown",
+    client: str | None = Field(
+        default=None,
+        description="Deprecated: use connections instead. Kept for backward compat.",
+    )
+    connections: dict[str, ConnectionInfo] = Field(
+        default_factory=dict,
+        description="Active connections keyed by '{client}-{instanceId}'",
     )
 
     @field_validator("key")
@@ -92,6 +110,18 @@ class Participant(BaseModel):
         if not NAME_PATTERN.match(v):
             raise ValueError(f"name must match {NAME_PATTERN.pattern!r}, got {v!r}")
         return v
+
+    # -- Connection helpers ------------------------------------------------
+
+    @property
+    def is_online(self) -> bool:
+        """True if the participant has at least one active connection."""
+        return len(self.connections) > 0
+
+    @property
+    def active_client_types(self) -> list[str]:
+        """Unique client types across all active connections."""
+        return list(set(c.client for c in self.connections.values()))
 
     # -- Convenience constructors -----------------------------------------
 

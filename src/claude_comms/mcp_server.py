@@ -100,8 +100,13 @@ def get_channel_participants(channel: str) -> list[dict]:
             "key": m.key,
             "name": m.name,
             "type": m.type,
-            "client": getattr(m, "client", "mcp"),
-            "status": "online",
+            "connections": {
+                k: v.model_dump() for k, v in m.connections.items()
+            },
+            "online": m.is_online,
+            # Backward compat
+            "client": m.client or (m.active_client_types[0] if m.active_client_types else "unknown"),
+            "status": "online" if m.is_online else "offline",
         }
         for m in members
     ]

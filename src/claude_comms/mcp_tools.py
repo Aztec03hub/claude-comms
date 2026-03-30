@@ -504,7 +504,22 @@ def tool_comms_members(
     members = registry.members(conversation)
     return {
         "conversation": conversation,
-        "members": [{"key": m.key, "name": m.name, "type": m.type} for m in members],
+        "members": [
+            {
+                "key": m.key,
+                "name": m.name,
+                "type": m.type,
+                # New: connection-aware fields
+                "connections": {
+                    k: v.model_dump() for k, v in m.connections.items()
+                },
+                "online": m.is_online,
+                # Backward compat: top-level client and status
+                "client": m.client or (m.active_client_types[0] if m.active_client_types else None),
+                "status": "online" if m.is_online else "offline",
+            }
+            for m in members
+        ],
         "count": len(members),
     }
 
