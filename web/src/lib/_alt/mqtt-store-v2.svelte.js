@@ -1,4 +1,11 @@
 /**
+ * ALTERNATIVE STORE — Module-level runes pattern.
+ * Created as a workaround for a Svelte 5 class-based $state/$derived
+ * reactivity issue (resolved via untrack() in ConnectionStatus.svelte).
+ * Kept as reference for future use if class-based reactivity issues recur.
+ * NOT imported anywhere — tree-shaken from production builds.
+ *
+ * Original header:
  * mqtt-store-v2.svelte.js — Module-level runes store (NUCLEAR OPTION)
  *
  * Svelte 5's $state/$derived in class fields has a fundamental issue with
