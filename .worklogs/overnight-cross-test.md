@@ -103,7 +103,7 @@ Even after the spread fix, messages added from the MQTT `on('message')` callback
 
 ## Recommendations
 
-1. **Apply setTimeout(0) deferral to `#handleChatMessage`** -- Same pattern as the `#fetchHistory` fix. This would defer the `this.messages = [...]` assignment to the next microtask, giving Svelte 5's reactive system time to process the update.
+1. **Investigate Svelte 5 `$derived` in class-based reactive stores** -- The `setTimeout(0)` deferral was tried and rejected by a concurrent session (see commit `045bb21`). The note says deferred updates break `$derived` tracking. A deeper investigation into how Svelte 5 handles `$state` mutations from non-reactive contexts (MQTT callbacks) is needed. Consider using `$effect` at the component level instead of `$derived` in the store class.
 
 2. **Clean up retained presence on broker startup** -- Add a broker cleanup step that removes stale retained presence messages older than a configurable threshold.
 
