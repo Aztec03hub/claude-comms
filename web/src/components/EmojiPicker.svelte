@@ -113,7 +113,7 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 100;
-    width: 340px;
+    width: 380px;
     background: rgba(37, 37, 40, 0.95);
     backdrop-filter: blur(20px) saturate(1.2);
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -183,7 +183,7 @@
     grid-template-columns: repeat(8, 1fr);
     gap: 2px;
     padding: 4px 10px 10px;
-    max-height: 200px;
+    max-height: 260px;
     overflow-y: auto;
   }
 

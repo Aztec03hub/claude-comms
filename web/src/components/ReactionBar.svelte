@@ -29,15 +29,16 @@
   .reaction {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 9px;
+    gap: 5px;
+    padding: 4px 10px;
     border-radius: 12px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
     font-size: 12px;
     cursor: pointer;
     transition: var(--transition-fast);
     user-select: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 
   .reaction:hover {
@@ -51,12 +52,13 @@
   }
 
   .reaction.active {
-    border-color: rgba(245,158,11,0.3);
-    background: rgba(245,158,11,0.08);
+    border-color: rgba(245,158,11,0.4);
+    background: rgba(245,158,11,0.12);
+    box-shadow: 0 1px 4px rgba(245, 158, 11, 0.15);
   }
 
-  .emoji { font-size: 14px; }
-  .count { color: var(--text-muted); font-size: 11px; font-weight: 600; }
+  .emoji { font-size: 15px; }
+  .count { color: var(--text-secondary); font-size: 11px; font-weight: 700; }
   .reaction.active .count { color: var(--ember-400); }
 
   .reaction-add {
