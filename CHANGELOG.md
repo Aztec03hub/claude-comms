@@ -11,9 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Comprehensive Functional Browser Testing (10 Parallel Agents)
 
-- **10 parallel testing agents** deployed for functional browser testing across the entire web UI
-- **16 Playwright E2E spec files** (`web/e2e/`) covering: messages (10 tests), emoji picker (10), channel switching (7), console smoke test (18 interactions), app loading (5), sidebar (8), chat (6), panels (6), modals (7), member list (6+11), context menu (5), console errors (3), channel modal flow, keyboard shortcuts, theme/responsive
+- **10 parallel testing agents** deployed for functional browser testing across the entire web UI -- **104 Playwright tests** written, **12 bugs found and fixed**
+- **16 Playwright E2E spec files** (`web/e2e/`) covering: messages (10 tests), emoji picker (10), channel switching (7), console smoke test (18 interactions), app loading (5), sidebar (8), chat (6), panels (11), modals (7), member list (6+11), context menu (5), console errors (3), channel modal flow (11), keyboard shortcuts (10), theme/responsive (7)
 - **120+ test screenshots** captured across all testing areas (`mockups/test-*.png`, `mockups/screenshot-*.png`)
+- **464 total tests** across the project: 360 Python + 104 Playwright browser E2E
 - **Zero JS runtime errors** confirmed across all 18 interaction types during comprehensive smoke testing
 - **`playwright.config.js`** -- Headless Chromium, screenshots on failure, video on failure, 1 retry, 30s timeout, built-in web server config, CDP workaround for mqtt.js event loop blocking
 - **npm test scripts** -- `test` (headless), `test:ui` (Playwright UI mode), `test:headed` (visible browser)
@@ -36,9 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`addReaction` method missing** -- Store had no method to add/toggle reactions on messages; emoji picker selection was a TODO that never persisted reactions
 - **React button had no onclick handler** -- `MessageActions.svelte` "React" button did nothing when clicked
+- **localStorage key not persisted** -- Each browser session generated a new random key via `generateKey()`, creating phantom participants that accumulated as retained MQTT presence messages. Fixed by persisting user key in localStorage.
+- **Ctrl+K shortcut missing** -- No keyboard shortcut existed to open the search panel. Added global `handleGlobalKeydown` with `svelte:window onkeydown` binding for Ctrl+K / Cmd+K toggle.
+- **Escape key priority ordering** -- Multiple components independently listened for Escape, causing all open panels to close simultaneously. Centralized Escape handling in `App.svelte` with priority order: modal > context menu > emoji picker > profile card > pinned panel > search panel > thread panel.
+- **Focus return after closing panels** -- After pressing Escape to close a panel, focus was lost to `document.body`. Now returns focus to the message input after any Escape-triggered close.
+- **ThemeToggle not wired** -- `ThemeToggle.svelte` component existed but was never imported or rendered in `App.svelte`. Wired into the chat header actions bar.
+- **No light theme CSS** -- Only dark theme variables existed. Added `:root[data-theme="light"]` rule block with full light color palette and converted hardcoded backgrounds in Sidebar, MemberList, and chat header to CSS variables.
+- **Mobile viewport overflow** -- At 320px and 480px viewports, content overflowed the screen width. Fixed sidebar to `display: none` at 480px, hid header elements, reduced padding, added `overflow: hidden` on layout containers.
+- **Context menu viewport edge clamping** -- Context menu positioned at raw cursor coordinates without boundary clamping, rendering off-screen near viewport edges. Added `$derived` clamped coordinates constraining the menu within 8px of all edges.
+- **Search panel z-index / close button unclickable** -- Search panel (`z-index: 50`) sat behind the chat header (`z-index: 101`), making its close button unreachable. Repositioned panel below the header.
+- **Search input not auto-focused** -- Opening the search panel did not focus the input field. Added `onMount` handler with `bind:this` to auto-focus.
+- **Header glow pseudo-element intercepting clicks** -- `.chat-header::after` glow effect could intercept pointer events. Added `pointer-events: none`.
 - **Duplicate channels in sidebar** -- Starred channels appeared in both "Starred" and "Conversations" sections because conversations list rendered all channels instead of filtering out starred ones. Added `$derived` `unstarredChannels` filter.
-- **Search panel covers header buttons** -- Chat header had `z-index: 2` while search panel had `z-index: 50`, making header buttons unclickable when search was open. Raised header to `z-index: 101`.
-- **Escape key doesn't close channel creation modal** -- ChannelModal only handled Escape on the name input's `onkeydown`, not globally. Added `<svelte:window onkeydown>` handler.
 - **Messages don't appear without MQTT broker** -- `sendMessage()` only published to MQTT with no local echo. Added immediate local store update via `#handleChatMessage()` with deduplication, and removed the broker-required guard so the UI works offline.
 - **Toast notifications never auto-dismiss** -- `addToast`/`dismissToast` used in-place array mutations (`push`/`splice`) on `$state` arrays inside `setTimeout` closures, which didn't reliably trigger Svelte 5 reactivity. Switched to immutable updates (`[...arr]`/`filter()`).
 
@@ -248,7 +258,9 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - **`web/e2e/app-loads.spec.js`** (5 tests) -- page load, 3-column layout, header, input, no console errors
 - **`web/e2e/context-menu.spec.js`** (5 tests) -- right-click menu, items, close behaviors
 - **`web/e2e/console-errors.spec.js`** (3 tests) -- navigate all interactions without JS errors, rapid operations
-- Plus: `channel-modal-flow.spec.js`, `keyboard.spec.js`, `theme-responsive.spec.js`, `context-debug.spec.js`
+- **`web/e2e/channel-modal-flow.spec.js`** (11 tests) -- open modal, form fields, type name/description, private toggle, cancel, backdrop close, Escape close, create channel, active state, empty name validation
+- **`web/e2e/keyboard.spec.js`** (10 tests) -- Ctrl+K opens search, Escape priority ordering, focus return to input, Enter/Shift+Enter, Tab navigation, focus rings, Ctrl+K while typing
+- **`web/e2e/theme-responsive.spec.js`** (7 tests) -- dark/light theme toggle, 5 viewport sizes (1920-320px), resize transitions, no mobile overflow
 
 ### Architecture Decisions
 
@@ -272,8 +284,8 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 ### Project Stats
 
 - **64 source files** across Python, Svelte, JS, CSS, and shell scripts
-- **360 Python tests** (10 test modules, ~0.5s) + **16 Playwright browser E2E spec files** with **120+ test screenshots**
-- **10 parallel testing agents** deployed for comprehensive functional browser testing
+- **464 total tests**: 360 Python (10 test modules, ~0.5s) + 104 Playwright browser E2E (16 spec files) with **120+ test screenshots**
+- **10 parallel testing agents** deployed for comprehensive functional browser testing, finding and fixing **12 bugs**
 - **Zero JS runtime errors** confirmed across all interaction types
 - **27 Svelte components** (26 in `components/` + `App.svelte`) with **60+ `data-testid` attributes**
 - **18 Python source files** (14 modules + TUI subpackage)

@@ -722,7 +722,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **360 Python tests** across 10 test files (~0.5s) plus **Playwright browser E2E tests** across 16 spec files with 120+ test screenshots:
+The test suite includes **464 total tests**: **360 Python tests** across 10 test files (~0.5s) plus **104 Playwright browser E2E tests** across 16 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -739,7 +739,7 @@ The test suite includes **360 Python tests** across 10 test files (~0.5s) plus *
 
 ### Playwright E2E Tests
 
-The web UI has **16 browser-level E2E spec files** across functional testing areas, running against headless Chromium. These were authored by **10 parallel testing agents** deployed for comprehensive functional coverage:
+The web UI has **104 browser-level E2E tests** across **16 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** who collectively found and fixed **12 bugs** during comprehensive functional coverage:
 
 ```bash
 cd web
@@ -763,13 +763,13 @@ npx playwright test --headed # Visible browser
 | `test-members.spec.js` | 11 | Avatars, presence dots, profile card positioning, Escape close, role badges, mobile hiding |
 | `context-menu.spec.js` | 5 | Right-click menu, menu items, click closes, outside click, Escape closes |
 | `console-errors.spec.js` | 3 | Navigate all interactions without JS errors, rapid send, rapid switch |
-| `channel-modal-flow.spec.js` | -- | Channel creation flow |
-| `keyboard.spec.js` | -- | Keyboard shortcut interactions |
-| `theme-responsive.spec.js` | -- | Theme and responsive layout testing |
+| `channel-modal-flow.spec.js` | 11 | Channel creation flow, form validation, dismiss methods, new channel appears in sidebar |
+| `keyboard.spec.js` | 10 | Ctrl+K search, Escape priority ordering, focus return, Tab navigation, focus rings, Shift+Enter |
+| `theme-responsive.spec.js` | 7 | Dark/light theme toggle, 5 viewport sizes (1920-320px), resize transitions, mobile overflow |
 
-**Zero JS runtime errors** confirmed across all 18 interaction types during the console smoke test.
+**Zero JS runtime errors** confirmed across all 18 interaction types during the console smoke test. **12 bugs found and fixed** by the testing swarm: `addReaction` missing, localStorage key persistence, Ctrl+K shortcut, Escape priority ordering, focus return after panel close, ThemeToggle wiring, light theme CSS, mobile viewport overflow, context menu edge clamping, search panel z-index, search auto-focus, and header pointer-events.
 
-Tests cover app loading, sidebar interactions, chat messaging, emoji picker and reactions, channel switching, panel open/close, modal behavior, member list and profile cards, context menus, keyboard shortcuts, responsive layout, and JS console error monitoring. The MQTT broker does not need to be running -- tests use local echo and WebSocket mocks.
+Tests cover app loading, sidebar interactions, chat messaging, emoji picker and reactions, channel switching, panel open/close, modal behavior, member list and profile cards, context menus, keyboard shortcuts, theme toggle, responsive layout, and JS console error monitoring. The MQTT broker does not need to be running -- tests use local echo and WebSocket mocks.
 
 **mqtt.js Playwright workaround:** The mqtt.js library blocks the browser event loop during WebSocket reconnection cycles (~3s interval), causing Playwright's standard `page.click()` and `page.fill()` to hang indefinitely. Tests use two workarounds: (1) WebSocket mock via `addInitScript` to prevent MQTT from connecting, and (2) CDP `Runtime.evaluate` to bypass Playwright's actionability wait system. This is documented in the emoji and channel switching test work logs.
 
