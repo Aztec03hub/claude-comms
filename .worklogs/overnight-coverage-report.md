@@ -1,64 +1,60 @@
 # Python Test Coverage Report
 
 **Date:** 2026-03-30
-**Tests:** 746 passed, 0 failed
-**Overall Coverage:** 68% (767 of 2376 statements missing)
+**Tests:** 818 passed, 0 failed (+72 tests since last report)
+**Overall Coverage:** 76% (577 of 2376 statements missing) -- up from 68%
 
 ## Coverage by File
 
-| File | Stmts | Miss | Cover |
-|------|-------|------|-------|
-| `__init__.py` | 1 | 0 | 100% |
-| `__main__.py` | 3 | 3 | **0%** |
-| `broker.py` | 227 | 26 | 89% |
-| `cli.py` | 501 | 390 | **22%** |
-| `config.py` | 64 | 3 | 95% |
-| `hook_installer.py` | 132 | 14 | 89% |
-| `log_exporter.py` | 160 | 7 | 96% |
-| `mcp_server.py` | 160 | 129 | **19%** |
-| `mcp_tools.py` | 264 | 4 | 98% |
-| `mention.py` | 26 | 0 | 100% |
-| `message.py` | 68 | 0 | 100% |
-| `participant.py` | 49 | 0 | 100% |
-| `tui/__init__.py` | 5 | 3 | 40% |
-| `tui/app.py` | 312 | 140 | **55%** |
-| `tui/channel_list.py` | 93 | 3 | 97% |
-| `tui/chat_view.py` | 129 | 8 | 94% |
-| `tui/message_input.py` | 71 | 6 | 92% |
-| `tui/participant_list.py` | 72 | 13 | 82% |
-| `tui/status_bar.py` | 39 | 18 | **54%** |
+| File | Stmts | Miss | Cover | Prev | Delta |
+|------|-------|------|-------|------|-------|
+| `__init__.py` | 1 | 0 | 100% | 100% | -- |
+| `__main__.py` | 3 | 3 | **0%** | 0% | -- |
+| `broker.py` | 227 | 26 | 89% | 89% | -- |
+| `cli.py` | 501 | 293 | **42%** | 22% | +20% |
+| `config.py` | 64 | 3 | 95% | 95% | -- |
+| `hook_installer.py` | 132 | 14 | 89% | 89% | -- |
+| `log_exporter.py` | 160 | 7 | 96% | 96% | -- |
+| `mcp_server.py` | 160 | 86 | **46%** | 19% | +27% |
+| `mcp_tools.py` | 264 | 4 | 98% | 98% | -- |
+| `mention.py` | 26 | 0 | 100% | 100% | -- |
+| `message.py` | 68 | 0 | 100% | 100% | -- |
+| `participant.py` | 49 | 0 | 100% | 100% | -- |
+| `tui/__init__.py` | 5 | 3 | 40% | 40% | -- |
+| `tui/app.py` | 312 | 93 | **70%** | 55% | +15% |
+| `tui/channel_list.py` | 93 | 3 | 97% | 97% | -- |
+| `tui/chat_view.py` | 129 | 8 | 94% | 94% | -- |
+| `tui/message_input.py` | 71 | 6 | 92% | 92% | -- |
+| `tui/participant_list.py` | 72 | 10 | 86% | 82% | +4% |
+| `tui/status_bar.py` | 39 | 18 | **54%** | 54% | -- |
 
-## Lowest Coverage Files (action needed)
+## Biggest Improvements
 
-### 1. `__main__.py` -- 0% (3 lines missing)
-- Lines 3-6: Entry point (`__main__` block) -- trivial but untested.
+1. **`mcp_server.py`** -- 19% -> 46% (+27%, 43 new lines covered)
+2. **`cli.py`** -- 22% -> 42% (+20%, 97 new lines covered)
+3. **`tui/app.py`** -- 55% -> 70% (+15%, 47 new lines covered)
+4. **`tui/participant_list.py`** -- 82% -> 86% (+4%, 3 new lines covered)
 
-### 2. `mcp_server.py` -- 19% (129 lines missing)
-- Lines 60-73: Server startup/initialization
+## Remaining Gaps
+
+### 1. `cli.py` -- 42% (293 lines missing)
+- Lines 175-570: `send`, `listen`, `logs`, `log-export`, `history`, `search` commands
+- Lines 602-624: `participants` command
+- Lines 701-712, 800-834: `channel` and `hook` subcommands
+- Lines 929-949, 1020-1120: `daemon` commands, `start-broker`
+
+### 2. `mcp_server.py` -- 46% (86 lines missing)
 - Lines 125-163: Server configuration and tool registration
-- Lines 186-394: All MCP request handlers (the bulk of the server logic)
+- Lines 248-280: Request handlers
 - Lines 410-466: Server lifecycle management
-- **Impact:** Nearly all MCP server functionality is untested. This is the highest-risk gap -- the MCP server is a core integration surface.
 
-### 3. `cli.py` -- 22% (390 lines missing)
-- Lines 88-96: Config loading helpers
-- Lines 175-570: The `send`, `listen`, `logs`, `log-export`, `history`, `search` commands
-- Lines 585-624: `participants` command
-- Lines 654-727: `channel` subcommands (create, list, join, leave, info, delete)
-- Lines 760-989: `hook install/uninstall/status/test`, `forward` commands
-- Lines 1001-1120: `start-broker`, `daemon start/stop/status/restart`
-- **Impact:** Most CLI commands beyond `init` and `status` have zero test coverage. These are the primary user-facing entry points.
-
-### 4. `tui/app.py` -- 55% (140 lines missing)
+### 3. `tui/app.py` -- 70% (93 lines missing)
 - Lines 149-228: Channel switching, message sending, participant updates
 - Lines 232-291: Connection management, reconnection logic
-- Lines 295-368: Event handlers (on_mount, on_key, compose)
 - Lines 390-444: MQTT message processing
-- Lines 478-537: Status updates, error handling
-- **Impact:** Core TUI interaction flows (sending messages, switching channels, handling connection drops) are untested.
 
-### 5. `tui/status_bar.py` -- 54% (18 lines missing)
-- Lines 38-73: All rendering and update logic in the status bar widget.
+### 4. `tui/status_bar.py` -- 54% (18 lines missing)
+- Lines 38-73: All rendering and update logic
 
 ## Well-Covered Files (90%+)
 
@@ -74,4 +70,4 @@
 
 ## Summary
 
-The data model layer (`message.py`, `mention.py`, `participant.py`, `mcp_tools.py`) is thoroughly tested. The biggest gaps are in the **MCP server** (19%), **CLI commands** (22%), and **TUI app** (55%). These three files account for 659 of the 767 missing lines (86% of all uncovered code). Prioritizing `mcp_server.py` and the untested CLI commands would yield the greatest coverage improvement.
+Overall coverage rose from **68% to 76%** with 72 new tests (746 -> 818 total). The three previously weakest files all saw significant improvement: `mcp_server.py` (+27%), `cli.py` (+20%), and `tui/app.py` (+15%). Together these 72 tests covered 190 previously-untested lines. The remaining 577 missing lines are concentrated in CLI command handlers (293), MCP server lifecycle (86), and TUI app interaction flows (93).
