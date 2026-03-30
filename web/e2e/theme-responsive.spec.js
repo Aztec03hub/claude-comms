@@ -2,15 +2,14 @@ import { test, expect } from '@playwright/test';
 
 const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
-test.setTimeout(60000);
+test.setTimeout(45000);
 
-// Block Google Fonts to prevent "waiting for fonts to load" hangs in headless
+// Block Google Fonts to prevent "waiting for fonts" hangs
 test.beforeEach(async ({ page }) => {
   await page.route('**/*.googleapis.com/**', route => route.abort());
   await page.route('**/*.gstatic.com/**', route => route.abort());
 });
 
-// Helper: navigate and wait for app shell
 async function loadApp(page, url = '/') {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForFunction(
@@ -20,6 +19,18 @@ async function loadApp(page, url = '/') {
   await page.waitForTimeout(200);
 }
 
+// Best-effort screenshot - don't fail the test if it times out
+async function safeScreenshot(page, name) {
+  try {
+    await Promise.race([
+      page.screenshot({ path: `${SCREENSHOT_DIR}/${name}.png` }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('screenshot timeout')), 8000))
+    ]);
+  } catch {
+    console.log(`Screenshot ${name} skipped (timeout)`);
+  }
+}
+
 test.describe('Theme Toggle', () => {
   test('default dark and toggles to light and back', async ({ page }) => {
     await loadApp(page);
@@ -27,13 +38,11 @@ test.describe('Theme Toggle', () => {
     // Verify dark mode
     const bgColor = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     console.log('Default bg:', bgColor);
-    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-    expect(match).toBeTruthy();
-    expect(Number(match[1])).toBeLessThan(30);
+    expect(Number(bgColor.match(/rgb\((\d+)/)[1])).toBeLessThan(30);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-dark-default.png` });
+    await safeScreenshot(page, 'test-responsive-dark-default');
 
-    // Toggle to light via JS (avoids HMR/click issues)
+    // Toggle to light
     await page.evaluate(() => document.querySelector('[data-testid="theme-toggle"]').click());
     await page.waitForTimeout(300);
 
@@ -42,10 +51,9 @@ test.describe('Theme Toggle', () => {
 
     const bgLight = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     console.log('Light bg:', bgLight);
-    const matchL = bgLight.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-    expect(Number(matchL[1])).toBeGreaterThan(200);
+    expect(Number(bgLight.match(/rgb\((\d+)/)[1])).toBeGreaterThan(200);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-theme-light.png` });
+    await safeScreenshot(page, 'test-responsive-theme-light');
 
     // Toggle back to dark
     await page.evaluate(() => document.querySelector('[data-testid="theme-toggle"]').click());
@@ -58,7 +66,7 @@ test.describe('Theme Toggle', () => {
     console.log('Dark again bg:', bgDark);
     expect(Number(bgDark.match(/rgb\((\d+)/)[1])).toBeLessThan(30);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-theme-dark-again.png` });
+    await safeScreenshot(page, 'test-responsive-theme-dark-again');
   });
 });
 
@@ -74,12 +82,11 @@ test.describe('Responsive Layout', () => {
     const ml = await page.locator('[data-testid="member-list"]').boundingBox();
     const ch = await page.locator('[data-testid="chat-header"]').boundingBox();
     console.log('1920: sidebar=%d members=%d chat=%d', sb?.width, ml?.width, ch?.width);
-
     expect(sb.width).toBeGreaterThan(200);
     expect(ml.width).toBeGreaterThan(150);
     expect(ch.width).toBeGreaterThan(500);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-1920x1080.png` });
+    await safeScreenshot(page, 'test-responsive-1920x1080');
   });
 
   test('1024x768 still 3 columns', async ({ page }) => {
@@ -89,7 +96,7 @@ test.describe('Responsive Layout', () => {
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('[data-testid="member-list"]')).toBeVisible({ timeout: 5000 });
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-1024x768.png` });
+    await safeScreenshot(page, 'test-responsive-1024x768');
   });
 
   test('768x1024 tablet', async ({ page }) => {
@@ -100,7 +107,7 @@ test.describe('Responsive Layout', () => {
     expect(await page.locator('[data-testid="member-list"]').isVisible()).toBe(true);
     console.log('768x1024 - Member list visible: true');
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-768x1024.png` });
+    await safeScreenshot(page, 'test-responsive-768x1024');
   });
 
   test('480x800 mobile', async ({ page }) => {
@@ -114,7 +121,7 @@ test.describe('Responsive Layout', () => {
     console.log('480x800 scroll width:', bw);
     expect(bw).toBeLessThanOrEqual(485);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-480x800.png` });
+    await safeScreenshot(page, 'test-responsive-480x800');
   });
 
   test('320x568 no overflow', async ({ page }) => {
@@ -128,16 +135,16 @@ test.describe('Responsive Layout', () => {
     console.log('320x568 scroll width:', bw);
     expect(bw).toBeLessThanOrEqual(325);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-320x568.png` });
+    await safeScreenshot(page, 'test-responsive-320x568');
   });
 
   test('resize 1440 to 480', async ({ page }) => {
+    test.setTimeout(60000);
     await page.setViewportSize({ width: 1440, height: 900 });
     await loadApp(page);
 
     await expect(page.locator('[data-testid="member-list"]')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 5000 });
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-resize-wide-1440.png` });
 
     await page.setViewportSize({ width: 480, height: 900 });
     await page.waitForTimeout(500);
@@ -145,6 +152,6 @@ test.describe('Responsive Layout', () => {
     expect(await page.locator('[data-testid="member-list"]').isVisible()).toBe(false);
     expect(await page.locator('[data-testid="sidebar"]').isVisible()).toBe(false);
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-responsive-resize-narrow-480.png` });
+    await safeScreenshot(page, 'test-responsive-resize-narrow-480');
   });
 });
