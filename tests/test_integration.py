@@ -38,6 +38,7 @@ from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_check,
     tool_comms_join,
+    tool_comms_leave,
     tool_comms_members,
     tool_comms_read,
     tool_comms_send,
@@ -1073,3 +1074,435 @@ class TestGenerateClientIdIntegration:
         from claude_comms.broker import generate_client_id
         with pytest.raises(ValueError):
             generate_client_id("mcp", None)
+
+
+# ===================================================================
+# Round 2: MCP Tools logic — all 9 tools, ParticipantRegistry, pagination
+# ===================================================================
+
+
+class TestAllCommsToolsWithMockPublish:
+    """Test all 9 comms_* tool functions with mock publish."""
+
+    def _setup(self):
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="tester", conversation="general")
+        return registry, store, r["key"]
+
+    def test_comms_join_new_participant(self) -> None:
+        registry = ParticipantRegistry()
+        result = tool_comms_join(registry, name="alice", conversation="general")
+        assert result["status"] == "joined"
+        assert result["name"] == "alice"
+        assert result["type"] == "claude"
+        assert len(result["key"]) == 8
+
+    def test_comms_join_rejoin_by_key(self) -> None:
+        registry = ParticipantRegistry()
+        r1 = tool_comms_join(registry, name="alice", conversation="general")
+        r2 = tool_comms_join(registry, key=r1["key"], conversation="dev")
+        assert r2["key"] == r1["key"]
+        assert r2["conversation"] == "dev"
+
+    def test_comms_join_invalid_conv(self) -> None:
+        registry = ParticipantRegistry()
+        result = tool_comms_join(registry, name="alice", conversation="INVALID!")
+        assert result.get("error") is True
+
+    def test_comms_leave_success(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_leave(registry, key=r["key"], conversation="general")
+        assert result["status"] == "left"
+
+    def test_comms_leave_not_member(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_leave(registry, key=r["key"], conversation="other")
+        assert result["status"] == "not_a_member"
+
+    def test_comms_leave_invalid_key(self) -> None:
+        registry = ParticipantRegistry()
+        result = tool_comms_leave(registry, key="ZZZZZZZZ", conversation="general")
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_comms_send_broadcast(self) -> None:
+        registry, store, key = self._setup()
+        captured = []
+
+        async def mock_pub(topic, payload):
+            captured.append((topic, payload))
+
+        result = await tool_comms_send(
+            registry, mock_pub, key=key, conversation="general",
+            message="Hello world!",
+        )
+        assert result["status"] == "sent"
+        assert result["recipients"] is None
+        assert len(captured) == 1
+        assert "claude-comms/conv/general/messages" in captured[0][0]
+
+    @pytest.mark.asyncio
+    async def test_comms_send_targeted(self) -> None:
+        registry = ParticipantRegistry()
+        r1 = tool_comms_join(registry, name="alice", conversation="general")
+        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        captured = []
+
+        async def mock_pub(topic, payload):
+            captured.append((topic, payload))
+
+        result = await tool_comms_send(
+            registry, mock_pub, key=r1["key"], conversation="general",
+            message="Hey Bob!", recipients=["bob"],
+        )
+        assert result["status"] == "sent"
+        assert r2["key"] in result["recipients"]
+        msg_data = json.loads(captured[0][1])
+        assert "[@bob]" in msg_data["body"]
+
+    @pytest.mark.asyncio
+    async def test_comms_send_empty_body_rejected(self) -> None:
+        registry, _, key = self._setup()
+
+        async def mock_pub(topic, payload):
+            pass
+
+        result = await tool_comms_send(
+            registry, mock_pub, key=key, conversation="general",
+            message="   ",
+        )
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_comms_send_invalid_conv(self) -> None:
+        registry, _, key = self._setup()
+
+        async def mock_pub(topic, payload):
+            pass
+
+        result = await tool_comms_send(
+            registry, mock_pub, key=key, conversation="BAD!CONV",
+            message="hi",
+        )
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_comms_send_broker_failure(self) -> None:
+        registry, _, key = self._setup()
+
+        async def failing_pub(topic, payload):
+            raise ConnectionError("Broker down")
+
+        result = await tool_comms_send(
+            registry, failing_pub, key=key, conversation="general",
+            message="will fail",
+        )
+        assert result.get("error") is True
+        assert "broker" in result["message"].lower() or "failed" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_comms_send_unresolvable_recipients(self) -> None:
+        registry, _, key = self._setup()
+
+        async def mock_pub(topic, payload):
+            pass
+
+        result = await tool_comms_send(
+            registry, mock_pub, key=key, conversation="general",
+            message="hey", recipients=["ghost-user"],
+        )
+        assert result.get("error") is True
+
+    def test_comms_read_empty(self) -> None:
+        registry, store, key = self._setup()
+        result = tool_comms_read(registry, store, key=key, conversation="general")
+        assert result["count"] == 0
+        assert result["messages"] == []
+
+    def test_comms_read_with_messages(self) -> None:
+        registry, store, key = self._setup()
+        for i in range(5):
+            store.add("general", {
+                "id": f"r2-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "other", "type": "claude"},
+                "body": f"Message {i}", "conv": "general",
+            })
+        result = tool_comms_read(registry, store, key=key, conversation="general")
+        assert result["count"] == 5
+
+    def test_comms_read_with_since(self) -> None:
+        registry, store, key = self._setup()
+        for i in range(10):
+            store.add("general", {
+                "id": f"since-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": f"m{i}", "conv": "general",
+            })
+        result = tool_comms_read(
+            registry, store, key=key, conversation="general",
+            since="2026-03-13T14:07:00-05:00",
+        )
+        assert result["count"] == 2  # messages 8, 9
+
+    def test_comms_read_count_clamped(self) -> None:
+        """Count should be clamped between 1 and 200."""
+        registry, store, key = self._setup()
+        for i in range(5):
+            store.add("general", {
+                "id": f"clamp-{i}", "ts": f"2026-03-13T14:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "m", "conv": "general",
+            })
+        # count=0 should be clamped to 1
+        result = tool_comms_read(
+            registry, store, key=key, conversation="general", count=0,
+        )
+        assert result["count"] == 1
+
+    def test_comms_check_no_unread(self) -> None:
+        registry, store, key = self._setup()
+        result = tool_comms_check(registry, store, key=key)
+        assert result["total_unread"] == 0
+
+    def test_comms_check_with_unread(self) -> None:
+        registry, store, key = self._setup()
+        store.add("general", {
+            "id": "unread-1", "ts": "2026-03-13T15:00:00-05:00",
+            "sender": {"key": "other123", "name": "o", "type": "claude"},
+            "body": "hi", "conv": "general",
+        })
+        result = tool_comms_check(registry, store, key=key)
+        assert result["total_unread"] == 1
+
+    def test_comms_check_specific_conversation(self) -> None:
+        registry, store, key = self._setup()
+        result = tool_comms_check(
+            registry, store, key=key, conversation="general",
+        )
+        assert result["total_unread"] == 0
+
+    def test_comms_members(self) -> None:
+        registry = ParticipantRegistry()
+        r1 = tool_comms_join(registry, name="alice", conversation="general")
+        tool_comms_join(registry, name="bob", conversation="general")
+        result = tool_comms_members(registry, key=r1["key"], conversation="general")
+        assert result["count"] == 2
+        names = {m["name"] for m in result["members"]}
+        assert "alice" in names and "bob" in names
+
+    def test_comms_members_empty_conv(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_members(registry, key=r["key"], conversation="empty")
+        assert result["count"] == 0
+
+    def test_comms_conversations(self) -> None:
+        from claude_comms.mcp_tools import tool_comms_conversations
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        tool_comms_join(registry, key=r["key"], conversation="dev")
+        result = tool_comms_conversations(registry, store, key=r["key"])
+        conv_ids = {c["conversation"] for c in result["conversations"]}
+        assert "general" in conv_ids and "dev" in conv_ids
+
+    def test_comms_update_name(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="old-name", conversation="general")
+        result = tool_comms_update_name(registry, key=r["key"], new_name="new-name")
+        assert result["status"] == "updated"
+        assert result["name"] == "new-name"
+
+    def test_comms_update_name_invalid(self) -> None:
+        registry = ParticipantRegistry()
+        r = tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_update_name(registry, key=r["key"], new_name="bad name!")
+        assert result.get("error") is True
+
+    def test_comms_history_all(self) -> None:
+        from claude_comms.mcp_tools import tool_comms_history
+        registry, store, key = self._setup()
+        for i in range(5):
+            store.add("general", {
+                "id": f"hist-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": f"History {i}", "conv": "general",
+            })
+        result = tool_comms_history(registry, store, key=key, conversation="general")
+        assert result["count"] == 5
+
+    def test_comms_history_with_query(self) -> None:
+        from claude_comms.mcp_tools import tool_comms_history
+        registry, store, key = self._setup()
+        store.add("general", {
+            "id": "hq-1", "ts": "2026-03-13T10:00:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "The quick brown fox", "conv": "general",
+        })
+        store.add("general", {
+            "id": "hq-2", "ts": "2026-03-13T10:01:00-05:00",
+            "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+            "body": "The lazy dog", "conv": "general",
+        })
+        result = tool_comms_history(
+            registry, store, key=key, conversation="general", query="fox",
+        )
+        assert result["count"] == 1
+
+
+class TestParticipantRegistryDetailed:
+    """Detailed tests for ParticipantRegistry."""
+
+    def test_join_creates_new_participant(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("alice", "general")
+        assert p.name == "alice"
+        assert len(p.key) == 8
+
+    def test_join_same_name_returns_same_participant(self) -> None:
+        registry = ParticipantRegistry()
+        p1 = registry.join("alice", "general")
+        p2 = registry.join("alice", "dev")
+        assert p1.key == p2.key
+
+    def test_join_with_key_returns_existing(self) -> None:
+        registry = ParticipantRegistry()
+        p1 = registry.join("alice", "general")
+        p2 = registry.join("alice", "dev", key=p1.key)
+        assert p2.key == p1.key
+
+    def test_leave_returns_true_if_was_member(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("alice", "general")
+        assert registry.leave(p.key, "general") is True
+        assert registry.leave(p.key, "general") is False  # already left
+
+    def test_resolve_name_case_insensitive(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("Alice", "general")
+        assert registry.resolve_name("alice") == p.key
+        assert registry.resolve_name("ALICE") == p.key
+
+    def test_resolve_recipients_mixed_names_and_keys(self) -> None:
+        registry = ParticipantRegistry()
+        p1 = registry.join("alice", "general")
+        p2 = registry.join("bob", "general")
+        resolved = registry.resolve_recipients(["alice", p2.key])
+        assert p1.key in resolved
+        assert p2.key in resolved
+
+    def test_resolve_recipients_unknown_dropped(self) -> None:
+        registry = ParticipantRegistry()
+        registry.join("alice", "general")
+        resolved = registry.resolve_recipients(["alice", "ghost", "00000000"])
+        # "ghost" is not resolvable, "00000000" is not registered
+        # alice should resolve, "00000000" is valid hex but not registered
+        assert len(resolved) >= 1
+
+    def test_resolve_recipients_dedup(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("alice", "general")
+        resolved = registry.resolve_recipients(["alice", p.key])
+        assert len(resolved) == 1
+
+    def test_update_name_reindexes(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("old-name", "general")
+        updated = registry.update_name(p.key, "new-name")
+        assert updated.name == "new-name"
+        assert registry.resolve_name("old-name") is None
+        assert registry.resolve_name("new-name") == p.key
+
+    def test_update_name_nonexistent_key(self) -> None:
+        registry = ParticipantRegistry()
+        result = registry.update_name("deadbeef", "whatever")
+        assert result is None
+
+    def test_members_multi_conversation(self) -> None:
+        registry = ParticipantRegistry()
+        p1 = registry.join("alice", "general")
+        p2 = registry.join("bob", "general")
+        registry.join("charlie", "dev")
+        general_members = registry.members("general")
+        assert len(general_members) == 2
+        dev_members = registry.members("dev")
+        assert len(dev_members) == 1
+
+    def test_conversations_for(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("alice", "general")
+        registry.join("alice", "dev", key=p.key)
+        convs = set(registry.conversations_for(p.key))
+        assert convs == {"general", "dev"}
+
+    def test_name_to_key_map(self) -> None:
+        registry = ParticipantRegistry()
+        registry.join("alice", "general")
+        registry.join("bob", "general")
+        m = registry.name_to_key_map("general")
+        assert "alice" in m
+        assert "bob" in m
+
+    def test_read_cursor_lifecycle(self) -> None:
+        registry = ParticipantRegistry()
+        p = registry.join("alice", "general")
+        assert registry.get_cursor(p.key, "general") is None
+        registry.update_cursor(p.key, "general", "2026-03-13T14:00:00Z")
+        assert registry.get_cursor(p.key, "general") == "2026-03-13T14:00:00Z"
+
+
+class TestTokenAwarePaginationIntegration:
+    """Token-aware pagination in comms_read and comms_history."""
+
+    def test_large_messages_trigger_truncation(self) -> None:
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="tester", conversation="general")
+        # Each message ~2000 chars = ~500 tokens. 100 messages = 50k tokens > 20k limit
+        for i in range(100):
+            store.add("general", {
+                "id": f"big-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "x" * 2000, "conv": "general",
+            })
+        result = tool_comms_read(
+            registry, store, key=r["key"], conversation="general", count=100,
+        )
+        assert result["count"] < 100
+        assert result["has_more"] is True
+
+    def test_small_messages_no_truncation(self) -> None:
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="tester", conversation="general")
+        for i in range(10):
+            store.add("general", {
+                "id": f"sm-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "short", "conv": "general",
+            })
+        result = tool_comms_read(
+            registry, store, key=r["key"], conversation="general",
+        )
+        assert result["count"] == 10
+        assert result["has_more"] is False
+
+    def test_history_truncation(self) -> None:
+        from claude_comms.mcp_tools import tool_comms_history
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        r = tool_comms_join(registry, name="tester", conversation="general")
+        for i in range(100):
+            store.add("general", {
+                "id": f"hist-big-{i}", "ts": f"2026-03-13T10:{i:02d}:00-05:00",
+                "sender": {"key": "aabbccdd", "name": "x", "type": "claude"},
+                "body": "y" * 2000, "conv": "general",
+            })
+        result = tool_comms_history(
+            registry, store, key=r["key"], conversation="general", count=100,
+        )
+        assert result["count"] < 100
+        assert result["has_more"] is True
