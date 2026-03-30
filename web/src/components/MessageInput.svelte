@@ -392,9 +392,9 @@
   }
 
   .btn-send {
-    width: 38px;
-    height: 38px;
-    border-radius: var(--radius-sm);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
     border: none;
     background: linear-gradient(135deg, var(--ember-600), var(--ember-400));
     color: #0a0a0c;
