@@ -36,11 +36,11 @@
     { emoji: '👌', name: 'OK Hand', code: ':ok_hand:' },
   ];
 
+  import { onMount } from 'svelte';
+
   function selectEmoji(emojiData) {
     onSelect(emojiData);
   }
-
-  import { onMount } from 'svelte';
 
   onMount(() => { searchInput?.focus(); });
 </script>

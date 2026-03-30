@@ -202,6 +202,11 @@
     animation-delay: 0.4s;
   }
 
+  @keyframes connPulse {
+    0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 6px rgba(52,211,153,0.4); }
+    50% { transform: scale(1.2); opacity: 0.8; box-shadow: 0 0 10px rgba(52,211,153,0.5); }
+  }
+
   @keyframes connBannerPulse {
     0%, 100% { background: linear-gradient(90deg, rgba(245,158,11,0.12), rgba(245,158,11,0.08)); }
     50% { background: linear-gradient(90deg, rgba(245,158,11,0.16), rgba(245,158,11,0.1)); }
