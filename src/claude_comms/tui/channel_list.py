@@ -120,7 +120,6 @@ class ChannelList(Vertical):
     }
     .channel-header-row {
         height: 1;
-        color: inherit;
     }
     .channel-preview {
         height: 1;

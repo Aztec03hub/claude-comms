@@ -223,11 +223,15 @@ class ClaudeCommsApp(App):
         chat_view = self.query_one("#chat-view", ChatView)
         chat_view.add_message(msg)
 
+        # Update channel list preview and unread
+        channel_list = self.query_one("#channel-sidebar", ChannelList)
+        # Auto-add channel if we haven't seen it
+        channel_list.add_channel(msg.conv)
+        # Set last message preview
+        channel_list.set_channel_preview(msg.conv, msg.sender.name, msg.body)
+
         # If message is not for the active conversation, bump unread
         if msg.conv != self._active_conv:
-            channel_list = self.query_one("#channel-sidebar", ChannelList)
-            # Auto-add channel if we haven't seen it
-            channel_list.add_channel(msg.conv)
             channel_list.increment_unread(msg.conv)
 
     async def _handle_presence(self, topic: str, payload: bytes) -> None:
