@@ -5,7 +5,7 @@
   import ScrollToBottom from './ScrollToBottom.svelte';
   import { isSameDay } from '../lib/utils.js';
 
-  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile } = $props();
+  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact } = $props();
 
   let messagesEl = $state(null);
   let showScrollBtn = $state(false);
@@ -91,6 +91,7 @@
           {onOpenThread}
           onContextMenu={handleMessageContextMenu}
           {onShowProfile}
+          {onReact}
         />
       {/if}
     {/each}

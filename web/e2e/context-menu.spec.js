@@ -1,86 +1,130 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Right-click context menu', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('.app-layout');
-  });
+const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:5176';
 
-  // Helper: send a message and wait for it to render as a message bubble
-  async function ensureMessage(page) {
+// Single consolidated test to avoid repeated page loads under heavy system load.
+// Runs all 9 context menu checks sequentially in one page session.
+test('Right-click context menu - full functional test', async ({ page, context }) => {
+  test.setTimeout(120000);
+
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto(BASE_URL);
+  await page.waitForSelector('.input-area', { timeout: 60000 });
+
+  // Helper: send a message
+  async function sendMessage(text) {
     const input = page.locator('[data-testid="message-input"]');
-    await input.fill('Test message for context menu');
+    await input.fill(text);
     await input.press('Enter');
-
-    // Wait for an actual message row (not date separator) to appear
-    const msgRow = page.locator('.msg-row:not(.system)');
-    await msgRow.first().waitFor({ state: 'visible', timeout: 5000 });
+    const bubble = page.locator('.bubble').filter({ hasText: text });
+    await expect(bubble).toBeVisible({ timeout: 10000 });
   }
 
-  test('right-clicking a message shows context menu', async ({ page }) => {
-    await ensureMessage(page);
+  // ── TEST 1: Send 3 messages ──
+  console.log('TEST 1: Sending 3 messages...');
+  await sendMessage('First context test message');
+  await sendMessage('Second context test message');
+  await sendMessage('Third context test message');
+  const bubbles = page.locator('.bubble');
+  await expect(bubbles).toHaveCount(3, { timeout: 5000 });
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-01-messages-sent.png', fullPage: true });
+  console.log('TEST 1: PASSED');
 
-    const firstMsg = page.locator('.msg-row:not(.system)').first();
-    await firstMsg.click({ button: 'right' });
+  // ── TEST 2: Right-click shows context menu ──
+  console.log('TEST 2: Right-click shows context menu...');
+  const firstBubble = page.locator('.bubble').first();
+  await firstBubble.click({ button: 'right' });
+  const contextMenu = page.locator('[data-testid="context-menu"]');
+  await expect(contextMenu).toBeVisible({ timeout: 5000 });
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-02-menu-visible.png', fullPage: true });
+  console.log('TEST 2: PASSED');
 
-    const contextMenu = page.locator('[data-testid="context-menu"]');
-    await expect(contextMenu).toBeVisible();
-  });
+  // ── TEST 3: All 7 required items present ──
+  console.log('TEST 3: Checking all menu items...');
+  await expect(page.locator('[data-testid="ctx-reply"]')).toContainText('Reply');
+  await expect(page.locator('[data-testid="ctx-forward"]')).toContainText('Forward');
+  await expect(page.locator('[data-testid="ctx-pin"]')).toContainText('Pin');
+  await expect(page.locator('[data-testid="ctx-copy"]')).toContainText('Copy');
+  await expect(page.locator('[data-testid="ctx-react"]')).toContainText('React');
+  await expect(page.locator('[data-testid="ctx-unread"]')).toContainText('Mark Unread');
+  await expect(page.locator('[data-testid="ctx-delete"]')).toContainText('Delete');
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-03-all-items.png', fullPage: true });
+  console.log('TEST 3: PASSED');
 
-  test('context menu has Reply, Pin, Copy, React, Delete options', async ({ page }) => {
-    await ensureMessage(page);
+  // ── TEST 9: Delete has danger styling (check while menu is open) ──
+  console.log('TEST 9: Checking delete danger styling...');
+  const deleteBtn = page.locator('[data-testid="ctx-delete"]');
+  await expect(deleteBtn).toHaveClass(/danger/);
+  const color = await deleteBtn.evaluate(el => getComputedStyle(el).color);
+  const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  expect(match).toBeTruthy();
+  const r = parseInt(match[1]);
+  const g = parseInt(match[2]);
+  const b = parseInt(match[3]);
+  expect(r).toBeGreaterThan(180);
+  expect(r).toBeGreaterThan(g * 2);
+  expect(r).toBeGreaterThan(b * 2);
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-09-danger-styling.png', fullPage: true });
+  console.log('TEST 9: PASSED (Delete has red danger color)');
 
-    const firstMsg = page.locator('.msg-row:not(.system)').first();
-    await firstMsg.click({ button: 'right' });
+  // ── TEST 5: Click outside closes menu ──
+  // First close the current menu by clicking outside
+  console.log('TEST 5: Click outside closes menu...');
+  const backdrop = page.locator('.ctx-backdrop');
+  await backdrop.click({ position: { x: 5, y: 5 } });
+  await expect(backdrop).not.toBeVisible();
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-05-click-outside.png', fullPage: true });
+  console.log('TEST 5: PASSED');
 
-    const contextMenu = page.locator('[data-testid="context-menu"]');
-    await expect(contextMenu).toBeVisible();
+  // ── TEST 6: Escape closes menu ──
+  console.log('TEST 6: Escape closes menu...');
+  await firstBubble.click({ button: 'right' });
+  await expect(contextMenu).toBeVisible({ timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-06-escape-close.png', fullPage: true });
+  console.log('TEST 6: PASSED');
 
-    await expect(page.locator('[data-testid="ctx-reply"]')).toBeVisible();
-    await expect(page.locator('[data-testid="ctx-pin"]')).toBeVisible();
-    await expect(page.locator('[data-testid="ctx-copy"]')).toBeVisible();
-    await expect(page.locator('[data-testid="ctx-react"]')).toBeVisible();
-    await expect(page.locator('[data-testid="ctx-delete"]')).toBeVisible();
-  });
+  // ── TEST 7: Copy copies to clipboard ──
+  console.log('TEST 7: Copy copies to clipboard...');
+  // Right-click the first bubble which has 'First context test message'
+  await firstBubble.click({ button: 'right' });
+  await expect(contextMenu).toBeVisible({ timeout: 5000 });
+  await page.locator('[data-testid="ctx-copy"]').click();
+  await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
+  const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+  expect(clipboardText).toContain('First context test message');
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-07-copy.png', fullPage: true });
+  console.log('TEST 7: PASSED');
 
-  test('clicking a context menu item closes the menu', async ({ page }) => {
-    await ensureMessage(page);
+  // ── TEST 4: Reply opens thread panel ──
+  console.log('TEST 4: Reply opens thread panel...');
+  await firstBubble.click({ button: 'right' });
+  await expect(contextMenu).toBeVisible({ timeout: 5000 });
+  await page.locator('[data-testid="ctx-reply"]').click();
+  await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
+  await expect(page.locator('[data-testid="thread-panel"]')).toBeVisible();
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-04-reply-thread.png', fullPage: true });
+  console.log('TEST 4: PASSED');
 
-    const firstMsg = page.locator('.msg-row:not(.system)').first();
-    await firstMsg.click({ button: 'right' });
+  // Close thread panel
+  await page.locator('[data-testid="thread-panel-close"]').click();
 
-    const contextMenu = page.locator('[data-testid="context-menu"]');
-    await expect(contextMenu).toBeVisible();
+  // ── TEST 8: Edge positioning - menu doesn't overflow ──
+  console.log('TEST 8: Edge positioning...');
+  const lastBubble = page.locator('.bubble').last();
+  const box = await lastBubble.boundingBox();
+  // Right-click at the far right edge
+  await page.mouse.click(box.x + box.width - 2, box.y + box.height - 2, { button: 'right' });
+  await expect(contextMenu).toBeVisible({ timeout: 5000 });
+  const menuBox = await contextMenu.boundingBox();
+  const viewport = page.viewportSize();
+  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport.width + 2);
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(viewport.height + 2);
+  expect(menuBox.x).toBeGreaterThanOrEqual(-2);
+  expect(menuBox.y).toBeGreaterThanOrEqual(-2);
+  await page.screenshot({ path: '/home/plafayette/claude-comms/mockups/test-context-08-edge-position.png', fullPage: true });
+  console.log('TEST 8: PASSED');
 
-    await page.locator('[data-testid="ctx-copy"]').click();
-
-    await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
-  });
-
-  test('clicking outside closes the context menu', async ({ page }) => {
-    await ensureMessage(page);
-
-    const firstMsg = page.locator('.msg-row:not(.system)').first();
-    await firstMsg.click({ button: 'right' });
-
-    const backdrop = page.locator('.ctx-backdrop');
-    await expect(backdrop).toBeVisible();
-
-    await backdrop.click({ position: { x: 5, y: 5 } });
-
-    await expect(backdrop).not.toBeVisible();
-  });
-
-  test('escape closes the context menu', async ({ page }) => {
-    await ensureMessage(page);
-
-    const firstMsg = page.locator('.msg-row:not(.system)').first();
-    await firstMsg.click({ button: 'right' });
-
-    await expect(page.locator('[data-testid="context-menu"]')).toBeVisible();
-
-    await page.keyboard.press('Escape');
-
-    await expect(page.locator('.ctx-backdrop')).not.toBeVisible();
-  });
+  console.log('ALL 9 TESTS PASSED');
 });

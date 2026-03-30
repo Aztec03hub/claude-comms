@@ -4,6 +4,9 @@
   let starredCollapsed = $state(false);
   let convoCollapsed = $state(false);
 
+  // Exclude starred channels from the conversations list to avoid duplicates
+  let unstarredChannels = $derived(store.channels.filter(c => !c.starred));
+
   function handleChannelClick(channelId) {
     store.switchChannel(channelId);
   }
@@ -42,7 +45,7 @@
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
             role="button"
             tabindex="0"
-            data-testid="channel-item-{channel.id}"
+            data-testid="starred-channel-item-{channel.id}"
           >
             <div class="ch-icon">
               <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2v12M12 2v12M2 6h12M2 10h12"/></svg>
@@ -70,7 +73,7 @@
   </div>
   {#if !convoCollapsed}
     <div class="channel-list">
-      {#each store.channels as channel (channel.id)}
+      {#each unstarredChannels as channel (channel.id)}
         <div
           class="channel-item"
           class:active={channel.id === store.activeChannel}
@@ -133,7 +136,7 @@
   .sidebar-left {
     width: var(--sidebar-w);
     min-width: var(--sidebar-w);
-    background: rgba(19, 19, 21, 0.85);
+    background: var(--bg-sidebar);
     backdrop-filter: blur(20px);
     border-right: 1px solid var(--border);
     display: flex;
@@ -530,12 +533,7 @@
 
   @media (max-width: 480px) {
     .sidebar-left {
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      z-index: 100;
-      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+      display: none;
     }
   }
 </style>

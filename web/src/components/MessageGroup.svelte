@@ -1,7 +1,7 @@
 <script>
   import MessageBubble from './MessageBubble.svelte';
 
-  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile } = $props();
+  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact } = $props();
 </script>
 
 {#each messages as msg, i (msg.id)}
@@ -13,5 +13,6 @@
     {onOpenThread}
     {onContextMenu}
     {onShowProfile}
+    {onReact}
   />
 {/each}

@@ -1,4 +1,5 @@
 <script>
+  import { tick } from 'svelte';
   import { MqttChatStore } from './lib/mqtt-store.svelte.js';
   import { requestPermission, sendNotification } from './lib/notifications.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -14,8 +15,16 @@
   import PinnedPanel from './components/PinnedPanel.svelte';
   import SearchPanel from './components/SearchPanel.svelte';
   import ThreadPanel from './components/ThreadPanel.svelte';
+  import ThemeToggle from './components/ThemeToggle.svelte';
 
   const store = new MqttChatStore();
+
+  let theme = $state('dark');
+
+  function toggleTheme() {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+  }
 
   let showChannelModal = $state(false);
   let showEmojiPicker = $state(false);
@@ -28,6 +37,7 @@
   let toasts = $state([]);
   let threadParent = $state(null);
   let emojiPickerTarget = $state(null);
+  let messageInputEl = $state(null);
 
   // Connect on mount
   $effect(() => {
@@ -35,6 +45,51 @@
     requestPermission();
     return () => store.disconnect();
   });
+
+  // Global keyboard shortcuts
+  function handleGlobalKeydown(e) {
+    // Ctrl+K — open search panel
+    if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      showSearchPanel = !showSearchPanel;
+      if (showSearchPanel) showThreadPanel = false;
+      return;
+    }
+
+    // Escape — close panels in priority order:
+    // modal > context menu > emoji picker > profile card > pinned > search > thread
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      if (showChannelModal) {
+        showChannelModal = false;
+      } else if (contextMenu.show) {
+        handleCloseContextMenu();
+      } else if (showEmojiPicker) {
+        showEmojiPicker = false;
+        emojiPickerTarget = null;
+      } else if (showProfileCard) {
+        showProfileCard = false;
+      } else if (showPinnedPanel) {
+        showPinnedPanel = false;
+      } else if (showSearchPanel) {
+        showSearchPanel = false;
+      } else if (showThreadPanel) {
+        showThreadPanel = false;
+        threadParent = null;
+      } else {
+        return; // Nothing to close
+      }
+
+      // Return focus to message input after panel is removed from DOM
+      setTimeout(() => {
+        const input = document.querySelector('[data-testid="message-input"]');
+        if (input) input.focus();
+      }, 100);
+      return;
+    }
+  }
 
   // Notify on new messages (when not focused)
   $effect(() => {
@@ -102,12 +157,21 @@
     showProfileCard = true;
   }
 
+  function handleReact(message) {
+    emojiPickerTarget = message;
+    showEmojiPicker = true;
+  }
+
   function handleEmojiSelect(emojiData) {
-    // Emoji selected, could add reaction to target message
+    if (emojiPickerTarget) {
+      store.addReaction(emojiPickerTarget.id, emojiData.emoji);
+    }
     showEmojiPicker = false;
     emojiPickerTarget = null;
   }
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="app-layout">
   <Sidebar
@@ -135,6 +199,7 @@
         <button class="header-btn" title="Pinned messages" onclick={() => showPinnedPanel = !showPinnedPanel} data-testid="header-pin-btn">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2l5 5-3 3-1 4-4-4-4 1 3-3z"/></svg>
         </button>
+        <ThemeToggle mode={theme} onToggle={toggleTheme} />
         <button class="header-btn" title="Settings" data-testid="header-settings-btn">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3m10 0h1.5M3.1 3.1l1 1m7.8 7.8l1 1M12.9 3.1l-1 1M4.1 11.9l-1 1"/></svg>
         </button>
@@ -155,6 +220,7 @@
       onOpenThread={handleOpenThread}
       onContextMenu={handleContextMenu}
       onShowProfile={handleShowProfile}
+      onReact={handleReact}
     />
 
     {#if showThreadPanel && threadParent}
@@ -235,6 +301,7 @@
     width: 100%;
     height: 100%;
     position: relative;
+    overflow: hidden;
   }
 
   .center {
@@ -244,6 +311,7 @@
     min-width: 0;
     position: relative;
     z-index: 1;
+    overflow: hidden;
   }
 
   .center::before {
@@ -267,7 +335,7 @@
     border-bottom: 1px solid var(--border);
     position: relative;
     z-index: 101;
-    background: linear-gradient(180deg, var(--bg-base), rgba(17,17,19,0.97));
+    background: linear-gradient(180deg, var(--bg-base), var(--bg-base));
     backdrop-filter: blur(16px) saturate(1.2);
   }
 
@@ -362,5 +430,23 @@
   .header-btn:hover {
     background: var(--bg-surface);
     color: var(--text-primary);
+  }
+
+  @media (max-width: 480px) {
+    .chat-header {
+      padding: 10px 12px;
+      gap: 6px;
+    }
+
+    .header-topic,
+    .header-sep,
+    .header-members {
+      display: none;
+    }
+
+    .header-btn {
+      width: 28px;
+      height: 28px;
+    }
   }
 </style>

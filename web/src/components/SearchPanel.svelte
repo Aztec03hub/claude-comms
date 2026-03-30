@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { getParticipantColor, getInitials, formatTime } from '../lib/utils.js';
 
   let { store, onClose } = $props();
@@ -6,8 +7,16 @@
   let searchQuery = $state('');
   let activeFilter = $state('all');
   let results = $state([]);
+  let searchInputEl = $state(null);
 
   const filters = ['All', 'Messages', 'Files', 'Code', 'Links'];
+
+  onMount(() => {
+    // Auto-focus the search input when panel opens
+    if (searchInputEl) searchInputEl.focus();
+  });
+
+  // Escape handled by App.svelte global handler
 
   function handleSearch() {
     if (!searchQuery.trim()) {
@@ -29,6 +38,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="search-panel" data-testid="search-panel">
   <div class="search-panel-header">
     <div class="search-panel-top">
@@ -40,6 +50,7 @@
       type="text"
       placeholder="Search..."
       bind:value={searchQuery}
+      bind:this={searchInputEl}
       oninput={handleInput}
       data-testid="search-panel-input"
     >
@@ -80,7 +91,7 @@
     right: 0;
     bottom: 0;
     width: 380px;
-    z-index: 50;
+    z-index: 110;
     background: rgba(20, 20, 22, 0.96);
     backdrop-filter: blur(20px);
     border-left: 1px solid var(--border);

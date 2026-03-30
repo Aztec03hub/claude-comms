@@ -276,4 +276,18 @@
   .btn-send:hover::after {
     animation: sendShine 0.6s ease;
   }
+
+  @media (max-width: 480px) {
+    .input-area {
+      padding: 8px 10px 12px;
+    }
+
+    .input-toolbar {
+      display: none;
+    }
+
+    .input-wrap {
+      padding: 2px 4px 2px 10px;
+    }
+  }
 </style>

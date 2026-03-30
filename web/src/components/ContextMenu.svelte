@@ -1,6 +1,12 @@
 <script>
   let { x = 0, y = 0, message = null, onAction, onClose } = $props();
 
+  // Clamp position to keep menu within viewport
+  const MENU_WIDTH = 200;
+  const MENU_HEIGHT = 290; // approximate height of all items
+  let clampedX = $derived(Math.min(x, window.innerWidth - MENU_WIDTH - 8));
+  let clampedY = $derived(Math.min(y, window.innerHeight - MENU_HEIGHT - 8));
+
   function handleAction(action) {
     onAction({ action, message });
   }
@@ -10,12 +16,12 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} />
+<!-- Escape handled by App.svelte global handler -->
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="ctx-backdrop" onclick={handleBackdrop}>
-  <div class="context-menu" style="top: {y}px; left: {x}px;" data-testid="context-menu">
+  <div class="context-menu" style="top: {clampedY}px; left: {clampedX}px;" data-testid="context-menu">
     <button class="ctx-item" onclick={() => handleAction('reply')} data-testid="ctx-reply">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4L1 7.5 5 11"/><path d="M1 7.5h8a4 4 0 014 4v.5"/></svg>
       <span>Reply</span>

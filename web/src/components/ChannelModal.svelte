@@ -14,11 +14,10 @@
 
   function handleKeydown(e) {
     if (e.key === 'Enter') handleCreate();
-    if (e.key === 'Escape') onClose();
   }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} />
+<!-- Escape handled by App.svelte global handler -->
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->

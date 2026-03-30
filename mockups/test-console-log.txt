@@ -1,0 +1,81 @@
+
+--- STEP: 1-load-page ---
+
+--- STEP: 2-click-sidebar-channels ---
+  Found 4 channel items
+  Clicking channel: starred-channel-item-project-alpha
+  Clicking channel: starred-channel-item-lora-training
+  Clicking channel: channel-item-general
+  Clicking channel: channel-item-random
+
+--- STEP: 2b-switch-to-general ---
+
+--- STEP: 3-send-messages ---
+  Sent message 1
+[STEP-ERROR] 3-send-messages: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 4-search-panel-open ---
+[STEP-ERROR] 4-search-panel-open: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 4b-search-panel-close ---
+[STEP-ERROR] 4b-search-panel-close: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 5-pinned-panel-open ---
+[STEP-ERROR] 5-pinned-panel-open: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 5b-pinned-panel-close ---
+[STEP-ERROR] 5b-pinned-panel-close: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 6-channel-modal-fill-cancel ---
+[STEP-ERROR] 6-channel-modal-fill-cancel: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 7-channel-modal-create ---
+[STEP-ERROR] 7-channel-modal-create: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 7b-switch-back-general ---
+[STEP-ERROR] 7b-switch-back-general: Step failed: locator.click: Timeout 5000ms exceeded.
+[ERROR] (7b-switch-back-general) WebSocket is already in CLOSING or CLOSED state.
+
+--- STEP: 8-context-menu-open ---
+
+--- STEP: 9-context-menu-close ---
+
+--- STEP: 10-emoji-picker-open ---
+
+--- STEP: 11-emoji-picker-close ---
+
+--- STEP: 12-member-click ---
+[STEP-ERROR] 12-member-click: Step failed: locator.click: Timeout 5000ms exceeded.
+
+--- STEP: 13-profile-card-close ---
+
+--- STEP: 14-ctrl-k-shortcut ---
+
+--- STEP: 15-escape-close ---
+
+--- STEP: 16-resize-480px ---
+
+--- STEP: 17-resize-1440px ---
+
+
+========================================
+SMOKE TEST REPORT
+========================================
+
+Total console entries: 40
+App errors (non-ignored): 0
+App warnings (non-ignored): 0
+Step failures (test infra): 9
+
+--- STEP FAILURES (test infra, not app bugs) ---
+  during "3-send-messages": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "4-search-panel-open": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "4b-search-panel-close": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "5-pinned-panel-open": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "5b-pinned-panel-close": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "6-channel-modal-fill-cancel": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "7-channel-modal-create": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "7b-switch-back-general": Step failed: locator.click: Timeout 5000ms exceeded.
+  during "12-member-click": Step failed: locator.click: Timeout 5000ms exceeded.
+
+No application JS errors or warnings detected across all interactions.

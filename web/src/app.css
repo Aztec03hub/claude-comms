@@ -258,6 +258,49 @@ body::after {
   to { opacity: 1; }
 }
 
+/* ── Light Theme ── */
+:root[data-theme="light"] {
+  --bg-deepest: #f5f3f0;
+  --bg-base: #faf9f7;
+  --bg-sidebar: #f0eee9;
+  --bg-surface: #e8e5e0;
+  --bg-elevated: #ddd9d3;
+  --bg-bubble-claude: #f0eee9;
+  --bg-bubble-human: #fef3e0;
+  --ember-500: #d97706;
+  --ember-400: #f59e0b;
+  --ember-300: #b45309;
+  --ember-600: #92400e;
+  --ember-700: #78350f;
+  --ember-800: #451a03;
+  --gold: #b45309;
+  --gold-dim: #92400e;
+  --text-primary: #1a1816;
+  --text-secondary: #4a4540;
+  --text-muted: #8a8480;
+  --text-faint: #b5b0a8;
+  --border: #d5d0c8;
+  --border-subtle: #e0dbd3;
+  --border-glow: rgba(217, 119, 6, 0.15);
+  --focus-ring: 0 0 0 2px rgba(217, 119, 6, 0.35);
+}
+
+:root[data-theme="light"] body {
+  background: var(--bg-deepest);
+  color: var(--text-primary);
+}
+
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(ellipse 600px 400px at 15% 50%, rgba(217,119,6,0.04) 0%, transparent 70%),
+    radial-gradient(ellipse 500px 500px at 85% 30%, rgba(245,158,11,0.03) 0%, transparent 70%),
+    radial-gradient(ellipse 400px 300px at 50% 80%, rgba(180,83,9,0.03) 0%, transparent 70%);
+}
+
+:root[data-theme="light"] body::after {
+  opacity: 0.008;
+}
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
   :root {
@@ -269,5 +312,11 @@ body::after {
   :root {
     --sidebar-w: 220px;
     --right-w: 0px;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --sidebar-w: 0px;
   }
 }

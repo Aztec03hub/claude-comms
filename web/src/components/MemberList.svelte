@@ -78,7 +78,7 @@
   .sidebar-right {
     width: var(--right-w);
     min-width: var(--right-w);
-    background: rgba(19, 19, 21, 0.85);
+    background: var(--bg-sidebar);
     backdrop-filter: blur(20px);
     border-left: 1px solid var(--border);
     display: flex;

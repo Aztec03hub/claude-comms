@@ -2,8 +2,10 @@
   import { formatTime, getParticipantColor, getInitials } from '../lib/utils.js';
 
   let { messages = [], onClose } = $props();
+  // Escape handled by App.svelte global handler
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="pinned-panel" data-testid="pinned-panel">
   <div class="pinned-header">
     <div class="pinned-title">
@@ -39,7 +41,7 @@
     position: absolute;
     top: 88px;
     right: 16px;
-    z-index: 50;
+    z-index: 105;
     width: 340px;
     background: rgba(37, 37, 40, 0.92);
     backdrop-filter: blur(20px) saturate(1.2);
