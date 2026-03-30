@@ -1,3 +1,13 @@
+<!--
+  @component ConfirmDialog
+  @description A reusable confirmation dialog with customizable title, message, and confirm/cancel actions. Supports a danger variant for destructive operations.
+  @prop {string} title - Dialog heading text (default: 'Confirm').
+  @prop {string} message - Body text describing the action to confirm (default: 'Are you sure?').
+  @prop {string} confirmLabel - Label for the confirm button (default: 'Confirm').
+  @prop {boolean} confirmDanger - When true, styles the confirm button as a red destructive action.
+  @prop {Function} onConfirm - Callback invoked when the user clicks the confirm button.
+  @prop {Function} onCancel - Callback invoked when the user cancels or dismisses the dialog.
+-->
 <script>
   import { Dialog } from "bits-ui";
 

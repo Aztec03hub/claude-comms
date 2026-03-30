@@ -1,3 +1,15 @@
+<!--
+  @component ChatView
+  @description Main chat message viewport that groups consecutive messages by sender, inserts date separators, auto-scrolls to new messages, tracks read receipts via IntersectionObserver, and shows a scroll-to-bottom button when the user scrolls up.
+  @prop {Array} messages - Fallback array of message objects (used when store is not provided).
+  @prop {object} currentUser - The current user's profile object.
+  @prop {object} participants - Map of participant keys to participant objects.
+  @prop {Function} onOpenThread - Callback invoked with a message to open its thread panel.
+  @prop {Function} onContextMenu - Callback invoked with context menu event data.
+  @prop {Function} onShowProfile - Callback invoked with a participant to show their profile card.
+  @prop {Function} onReact - Callback invoked when a reaction is added to a message.
+  @prop {object|null} store - Optional ChatStore instance for reactive message syncing and seen tracking.
+-->
 <script>
   import { flushSync } from 'svelte';
   import MessageBubble from './MessageBubble.svelte';

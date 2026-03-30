@@ -1,3 +1,9 @@
+<!--
+  @component EmojiPicker
+  @description Floating emoji picker dialog with category tabs, search input, a grid of frequently-used emojis, and a live preview footer. Auto-focuses the search on mount.
+  @prop {Function} onSelect - Callback invoked with the selected emoji data object ({ emoji, name, code }).
+  @prop {Function} onClose - Callback invoked when the picker is dismissed (backdrop click or Escape).
+-->
 <script>
   import { onMount } from 'svelte';
 

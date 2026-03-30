@@ -1,3 +1,10 @@
+<!--
+  @component ConnectionStatus
+  @description Displays a top-of-page banner showing MQTT connection state: connected (with participant count, auto-hides after 3s), connecting (with animated dots), or error (with retry countdown). Dismissable by the user.
+  @prop {boolean} connected - Whether the MQTT connection is currently established.
+  @prop {number} onlineCount - Number of participants currently online.
+  @prop {string|null} error - Error message string when connection fails, or null.
+-->
 <script>
   import { untrack } from 'svelte';
   import { RefreshCw, X } from 'lucide-svelte';

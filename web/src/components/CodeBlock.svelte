@@ -1,3 +1,10 @@
+<!--
+  @component CodeBlock
+  @description Renders a syntax-highlighted code block with line numbers, language label, and a copy-to-clipboard button. Uses a keyword-based highlighter tuned to the Carbon Ember color palette.
+  @prop {string} language - The programming language label displayed in the header (default: 'code').
+  @prop {string} code - Raw code string (used if lines is empty).
+  @prop {Array<string>} lines - Pre-split array of code lines (takes precedence over code).
+-->
 <script>
   import { Copy, Check } from 'lucide-svelte';
 

@@ -1,3 +1,9 @@
+<!--
+  @component ChannelModal
+  @description Modal dialog for creating a new conversation channel. Validates and sanitizes the channel name (lowercase, no spaces, max 63 chars), accepts an optional description, and provides a private channel toggle.
+  @prop {Function} onClose - Callback invoked when the modal is dismissed.
+  @prop {Function} onCreate - Callback invoked with (sanitizedName, description) when the user confirms creation.
+-->
 <script>
   import { Dialog } from "bits-ui";
 

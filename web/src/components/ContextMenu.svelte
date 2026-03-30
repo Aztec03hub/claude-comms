@@ -1,3 +1,12 @@
+<!--
+  @component ContextMenu
+  @description Right-click context menu for message actions (reply, forward, pin, copy, react, mark unread, delete). Uses bits-ui ContextMenu primitives and positions itself at the triggering click coordinates.
+  @prop {number} x - Horizontal click coordinate for menu positioning.
+  @prop {number} y - Vertical click coordinate for menu positioning.
+  @prop {object|null} message - The message object the context menu was opened on.
+  @prop {Function} onAction - Callback invoked with { action, message } when an item is selected.
+  @prop {Function} onClose - Callback invoked when the menu is dismissed.
+-->
 <script>
   import { ContextMenu } from 'bits-ui';
   import { Reply, Forward, Pin, Copy, Smile, MailOpen, Trash2 } from 'lucide-svelte';

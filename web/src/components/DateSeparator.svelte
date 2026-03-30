@@ -1,3 +1,8 @@
+<!--
+  @component DateSeparator
+  @description Renders a horizontal date divider between message groups, showing a formatted date label (e.g., "Today", "Yesterday", or a full date) with decorative gradient lines.
+  @prop {string|number} ts - Timestamp (ISO string or epoch ms) for the date to display.
+-->
 <script>
   import { formatDateSeparator } from '../lib/utils.js';
 

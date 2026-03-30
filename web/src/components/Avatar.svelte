@@ -1,3 +1,12 @@
+<!--
+  @component Avatar
+  @description Displays a circular avatar with the user's initials, gradient background, optional online/offline/idle status indicator, and optional click handler for viewing profiles.
+  @prop {string} name - The user's display name, used to derive initials.
+  @prop {string} gradient - CSS gradient string for the avatar background.
+  @prop {string|null} status - Online presence status: 'online', 'offline', 'idle', or null.
+  @prop {number} size - Diameter of the avatar in pixels (default: 34).
+  @prop {Function|null} onClick - Optional click handler, typically to open a profile card.
+-->
 <script>
   import { getInitials } from '../lib/utils.js';
 
