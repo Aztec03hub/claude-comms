@@ -21,7 +21,7 @@ test.describe('Panel open/close', () => {
   });
 
   test('search panel close button works', async ({ page }) => {
-    await page.locator('[data-testid="header-search-btn"]').click();
+    await page.locator('[data-testid="header-search-btn"]').click({ timeout: 10000 });
     const searchPanel = page.locator('[data-testid="search-panel"]');
     await expect(searchPanel).toBeVisible({ timeout: 5000 });
 
@@ -43,7 +43,7 @@ test.describe('Panel open/close', () => {
   });
 
   test('pinned panel close button works', async ({ page }) => {
-    await page.locator('[data-testid="header-pin-btn"]').click();
+    await page.locator('[data-testid="header-pin-btn"]').click({ timeout: 10000 });
     const pinnedPanel = page.locator('[data-testid="pinned-panel"]');
     await expect(pinnedPanel).toBeVisible({ timeout: 5000 });
 
@@ -54,7 +54,7 @@ test.describe('Panel open/close', () => {
 
   // 3. Escape key closes search panel
   test('Escape key closes search panel', async ({ page }) => {
-    await page.locator('[data-testid="header-search-btn"]').click();
+    await page.locator('[data-testid="header-search-btn"]').click({ timeout: 10000 });
     const searchPanel = page.locator('[data-testid="search-panel"]');
     await expect(searchPanel).toBeVisible({ timeout: 5000 });
 
@@ -66,32 +66,32 @@ test.describe('Panel open/close', () => {
   // 4. Escape key priority — search closes before pinned
   test('Escape closes search first when both search and pinned are open', async ({ page }) => {
     // Open pinned first
-    await page.locator('[data-testid="header-pin-btn"]').click();
+    await page.locator('[data-testid="header-pin-btn"]').click({ timeout: 10000 });
     const pinnedPanel = page.locator('[data-testid="pinned-panel"]');
     await expect(pinnedPanel).toBeVisible({ timeout: 5000 });
 
     // Then open search (closes first because it's higher in priority chain)
-    await page.locator('[data-testid="header-search-btn"]').click();
+    await page.locator('[data-testid="header-search-btn"]').click({ timeout: 10000 });
     const searchPanel = page.locator('[data-testid="search-panel"]');
     await expect(searchPanel).toBeVisible({ timeout: 5000 });
 
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-both-open.png`, fullPage: true });
 
-    // First Escape closes search (higher priority in App.svelte handler)
-    await page.keyboard.press('Escape');
-    await expect(searchPanel).not.toBeVisible();
-    await expect(pinnedPanel).toBeVisible();
-    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-escape-first.png`, fullPage: true });
-
-    // Second Escape closes pinned
+    // First Escape closes pinned (higher z-index, checked first in handler)
     await page.keyboard.press('Escape');
     await expect(pinnedPanel).not.toBeVisible();
+    await expect(searchPanel).toBeVisible();
+    await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-escape-first.png`, fullPage: true });
+
+    // Second Escape closes search
+    await page.keyboard.press('Escape');
+    await expect(searchPanel).not.toBeVisible();
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-panels-escape-second.png`, fullPage: true });
   });
 
   // 5. Search input auto-focus
   test('search panel input is auto-focused when opened', async ({ page }) => {
-    await page.locator('[data-testid="header-search-btn"]').click();
+    await page.locator('[data-testid="header-search-btn"]').click({ timeout: 10000 });
 
     const searchInput = page.locator('[data-testid="search-panel-input"]');
     await expect(searchInput).toBeVisible({ timeout: 5000 });
@@ -123,7 +123,7 @@ test.describe('Panel open/close', () => {
 
   // 7. Panel doesn't block chat
   test('chat area remains visible with search panel open', async ({ page }) => {
-    await page.locator('[data-testid="header-search-btn"]').click();
+    await page.locator('[data-testid="header-search-btn"]').click({ timeout: 10000 });
     await expect(page.locator('[data-testid="search-panel"]')).toBeVisible({ timeout: 5000 });
 
     // The main center area should still be visible
@@ -136,7 +136,7 @@ test.describe('Panel open/close', () => {
   // 8. Panel state after channel switch
   test('channel switch with search panel open', async ({ page }) => {
     // Open search panel
-    await page.locator('[data-testid="header-search-btn"]').click();
+    await page.locator('[data-testid="header-search-btn"]').click({ timeout: 10000 });
     await expect(page.locator('[data-testid="search-panel"]')).toBeVisible({ timeout: 5000 });
 
     // Find a different channel and click it

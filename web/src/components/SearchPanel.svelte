@@ -87,11 +87,11 @@
 <style>
   .search-panel {
     position: absolute;
-    top: 0;
+    top: 56px;
     right: 0;
     bottom: 0;
     width: 380px;
-    z-index: 102;
+    z-index: 50;
     background: rgba(20, 20, 22, 0.96);
     backdrop-filter: blur(20px);
     border-left: 1px solid var(--border);

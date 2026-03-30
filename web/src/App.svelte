@@ -409,8 +409,6 @@
     display: flex;
     gap: 2px;
     margin-left: auto;
-    position: relative;
-    z-index: 103;
   }
 
   .header-btn {
