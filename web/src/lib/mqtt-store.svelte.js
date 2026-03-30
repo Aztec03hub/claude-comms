@@ -298,12 +298,16 @@ export class MqttChatStore {
         this.userProfile.key = identity.key;
         this.userProfile.name = identity.name;
         this.userProfile.type = identity.type;
-        // Cache in localStorage for offline fallback
+        // Cache in localStorage for offline fallback — always overwrite
         safeStorage.setItem('claude-comms-user-key', identity.key);
         safeStorage.setItem('claude-comms-user-name', identity.name);
+      } else {
+        // API returned non-OK — clear stale localStorage to force re-fetch next time
+        safeStorage.removeItem('claude-comms-user-key');
       }
     } catch {
-      // Daemon not running — fall back to localStorage identity
+      // Daemon not running or CORS blocked — log for debugging
+      console.error('[claude-comms] Failed to fetch identity from', MCP_API_URL + '/api/identity');
     }
 
     // localStorage fallback if daemon fetch didn't populate the key
