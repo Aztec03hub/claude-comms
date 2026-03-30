@@ -1,12 +1,15 @@
 # Overnight Test Expansion Work Log
 
 **Date:** 2026-03-30
-**Starting test count:** 573
-**Ending test count:** 678
-**New tests added:** 105
+**Starting test count:** 678
+**Ending test count:** 714
+**New tests added this session:** 36
 
 ## Files Created
 
+- `tests/test_gaps_expanded.py` — 36 tests (new this session)
+
+### Previously existing gap test files (105 tests from prior session)
 - `tests/test_gaps_hook_installer.py` — 20 tests
 - `tests/test_gaps_log_exporter.py` — 22 tests
 - `tests/test_gaps_mcp_tools.py` — 20 tests
@@ -63,6 +66,35 @@
 - `load_config` with non-dict YAML content (e.g., a list) will raise `TypeError`/`AttributeError` since `_deep_merge` expects dicts. No graceful fallback exists for this edge case.
 - Log rotation uses `>=` comparison, so a file exactly at max_size_bytes will trigger rotation.
 
+## New Coverage in test_gaps_expanded.py
+
+### hook_installer
+- Settings roundtrip integrity (add/remove/add cycles, key replacement)
+- Unix script detail checks (tail -n 5 limit, wc -l count, overflow message)
+
+### log_exporter
+- from_config: string log_dir, empty rotation defaults, shared deduplicator
+- Unicode in text and JSONL logs (emoji, CJK characters)
+- write_presence in text-only mode
+- format_log_entry: very long body, empty body
+
+### mcp_tools
+- comms_conversations unread tracking (multi-conv, after partial read)
+- comms_members invalid conv ID, members after leave
+- Registry conversations_for (multiple joins, unknown key)
+- comms_history: no results for query, case-insensitive search
+
+### config
+- Password resolution: env overrides yaml, empty env does not override
+- _default_username: returns string, fallback to "unnamed" on error
+- Full save/load roundtrip verifying all field categories
+
+### message
+- Topic format with different conv IDs
+- reply_to preservation in roundtrip and default None
+- Conv ID boundary lengths (63, 64 chars, hyphens at max length)
+- Field access (sender fields, UUID validity, timezone in ts)
+
 ## Suite Status
 
-All 678 tests passing, 0 failures, 34 warnings (all pre-existing auth warnings).
+All 714 tests passing, 0 failures, 34 warnings (all pre-existing auth warnings).
