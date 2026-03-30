@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time as _time
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,10 @@ class ClaudeCommsApp(App):
         # MQTT client reference (set by worker)
         self._mqtt_client = None
 
+        # Typing indicator debounce: publish at most once per 2 seconds
+        self._last_typing_publish: float = 0.0
+        self._TYPING_DEBOUNCE_SECS: float = 2.0
+
     # -- Compose the UI -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -148,6 +153,27 @@ class ClaudeCommsApp(App):
 
         client_id = generate_client_id("tui", self._key)
 
+        # Build LWT (Last Will and Testament) so the broker auto-publishes
+        # an offline presence message if this client crashes/disconnects.
+        from claude_comms.message import now_iso as _now_iso
+
+        lwt_topic = (
+            f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
+        )
+        lwt_payload = json.dumps({
+            "key": self._key,
+            "name": self._name,
+            "type": self._type,
+            "status": "offline",
+            "client": "tui",
+        })
+        lwt = aiomqtt.Will(
+            topic=lwt_topic,
+            payload=lwt_payload,
+            qos=1,
+            retain=True,
+        )
+
         try:
             async with aiomqtt.Client(
                 hostname=self._mqtt_host,
@@ -155,6 +181,7 @@ class ClaudeCommsApp(App):
                 username=self._mqtt_user,
                 password=self._mqtt_pass,
                 identifier=client_id,
+                will=lwt,
             ) as client:
                 self._mqtt_client = client
 
@@ -342,10 +369,44 @@ class ClaudeCommsApp(App):
         except Exception:
             pass
 
+    # -- Typing indicators ----------------------------------------------------
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Publish a typing indicator when the user types (debounced)."""
+        # Only act on the message input widget
+        if event.input.id != "message-input":
+            return
+        now = _time.monotonic()
+        if now - self._last_typing_publish >= self._TYPING_DEBOUNCE_SECS:
+            self._last_typing_publish = now
+            self._publish_typing(True)
+
+    @work(thread=False)
+    async def _publish_typing(self, typing: bool) -> None:
+        """Publish typing indicator via MQTT (QoS 0, fire-and-forget)."""
+        if not self._mqtt_client:
+            return
+        from claude_comms.message import now_iso
+
+        payload = json.dumps({
+            "key": self._key,
+            "name": self._name,
+            "typing": typing,
+            "ts": now_iso(),
+        })
+        topic = f"claude-comms/conv/{self._active_conv}/typing/{self._key}"
+        try:
+            await self._mqtt_client.publish(topic, payload, qos=0)
+        except Exception:
+            pass  # typing indicators are best-effort
+
     # -- Message sending -------------------------------------------------------
 
     def on_message_submitted(self, event: MessageSubmitted) -> None:
         """Handle submitted message from the input widget."""
+        # Clear typing indicator on send
+        self._last_typing_publish = 0.0
+        self._publish_typing(False)
         self._send_message(event.body)
 
     @work(thread=False)

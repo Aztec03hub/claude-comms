@@ -186,12 +186,9 @@ class TestStatusCommand:
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
         monkeypatch.setattr("claude_comms.cli._read_pid", lambda: 12345)
 
-        # Mock the broker connectivity probe to avoid actual connection
-        async def fake_probe():
-            return False
-
-        import asyncio
-        monkeypatch.setattr("asyncio.run", lambda coro: False)
+        # Mock the broker connectivity probe to avoid actual connection.
+        # The probe now returns (connected, participant_count).
+        monkeypatch.setattr("asyncio.run", lambda coro: (False, 0))
 
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
@@ -304,3 +301,51 @@ class TestConfigEnvPasswordResolution:
         assert loaded["web"]["port"] == 9921
         assert loaded["default_conversation"] == "general"
         assert loaded["logging"]["format"] == "both"
+
+
+# ===================================================================
+# CLI --version flag
+# ===================================================================
+
+
+class TestVersionFlag:
+    """Test 'claude-comms --version' prints the version and exits."""
+
+    def test_version_flag(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "claude-comms" in result.output
+        # Should contain a semver-like version string
+        assert "0." in result.output or "1." in result.output
+
+    def test_version_short_flag(self) -> None:
+        result = runner.invoke(app, ["-V"])
+        assert result.exit_code == 0
+        assert "claude-comms" in result.output
+
+
+# ===================================================================
+# CLI status shows participant count
+# ===================================================================
+
+
+class TestStatusParticipantCount:
+    """Test that 'claude-comms status' shows participant info when daemon running."""
+
+    def test_status_shows_participants_line(self, tmp_path: Path, monkeypatch) -> None:
+        config_path = tmp_path / ".claude-comms" / "config.yaml"
+        config = get_default_config()
+        config["logging"]["dir"] = str(tmp_path / "logs")
+        save_config(config, config_path)
+
+        monkeypatch.setattr("claude_comms.cli.get_config_path", lambda: config_path)
+        monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
+        monkeypatch.setattr("claude_comms.cli._read_pid", lambda: 12345)
+
+        # Simulate probe returning connected with 3 participants
+        monkeypatch.setattr("asyncio.run", lambda coro: (True, 3))
+
+        result = runner.invoke(app, ["status"])
+        assert result.exit_code == 0
+        assert "Participants" in result.output
+        assert "3" in result.output

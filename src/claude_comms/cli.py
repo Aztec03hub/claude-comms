@@ -23,11 +23,33 @@ from rich.table import Table
 
 from claude_comms.config import get_config_path, get_default_config, load_config, save_config
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from claude_comms import __version__
+
+        typer.echo(f"claude-comms {__version__}")
+        raise typer.Exit()
+
+
 app = typer.Typer(
     name="claude-comms",
     help="Distributed inter-Claude messaging platform.",
     no_args_is_help=True,
 )
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """Distributed inter-Claude messaging platform."""
+
 
 conv_app = typer.Typer(help="Conversation management commands.")
 app.add_typer(conv_app, name="conv")
@@ -710,13 +732,15 @@ def status() -> None:
         f"[cyan]Default conversation:[/cyan] {config.get('default_conversation', 'general')}"
     )
 
-    # Broker connectivity probe (only if daemon running)
+    # Broker connectivity probe + participant count (only if daemon running)
     if daemon_running:
         host = broker_cfg.get("host", "127.0.0.1")
         port = broker_cfg.get("port", 1883)
         auth = broker_cfg.get("auth", {})
 
-        async def _probe() -> bool:
+        async def _probe() -> tuple[bool, int]:
+            """Return (connected, participant_count)."""
+            participant_count = 0
             try:
                 import aiomqtt  # type: ignore[import-untyped]
 
@@ -724,20 +748,38 @@ def status() -> None:
                 if auth.get("enabled") and auth.get("username") and auth.get("password"):
                     kw["username"] = auth["username"]
                     kw["password"] = auth["password"]
-                async with aiomqtt.Client(**kw):
-                    return True
+                async with aiomqtt.Client(**kw) as client:
+                    # Try to get participant count from the REST API
+                    try:
+                        import urllib.request
+                        mcp_host_val = mcp_cfg.get("host", "127.0.0.1")
+                        mcp_port_val = mcp_cfg.get("port", 9920)
+                        default_conv = config.get("default_conversation", "general")
+                        url = f"http://{mcp_host_val}:{mcp_port_val}/api/participants/{default_conv}"
+                        with urllib.request.urlopen(url, timeout=2) as resp:
+                            data = json.loads(resp.read())
+                            participant_count = len(data.get("participants", []))
+                    except Exception:
+                        pass
+                    return True, participant_count
             except Exception:
-                return False
+                return False, 0
 
         try:
-            connected = asyncio.run(_probe())
+            connected, participant_count = asyncio.run(_probe())
         except Exception:
             connected = False
+            participant_count = 0
 
         if connected:
             console.print("[green]Broker connectivity:[/green] OK")
         else:
             console.print("[red]Broker connectivity:[/red] FAILED")
+
+        if participant_count > 0:
+            console.print(f"[cyan]Participants:[/cyan] {participant_count} online")
+        else:
+            console.print("[cyan]Participants:[/cyan] 0 (or registry unavailable)")
 
 
 # ---------------------------------------------------------------------------
