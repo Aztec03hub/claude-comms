@@ -367,7 +367,12 @@ class EmbeddedBroker:
     # -- Lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
-        """Start the embedded MQTT broker and replay JSONL logs."""
+        """Start the embedded MQTT broker and replay JSONL logs.
+
+        Catches ``websockets.exceptions.ConnectionClosedOK`` and
+        ``struct.error`` internally — these are benign client-side
+        disconnects (known amqtt bug) and must not crash the broker.
+        """
         if self._running:
             raise RuntimeError("Broker is already running")
 
@@ -403,6 +408,44 @@ class EmbeddedBroker:
 
         # Write PID file
         self._write_pid()
+
+        # Install exception handler on the event loop to suppress known
+        # amqtt WebSocket disconnect errors that would otherwise crash
+        # the broker process.
+        loop = asyncio.get_running_loop()
+        _original_handler = loop.get_exception_handler()
+
+        def _ws_exception_handler(
+            loop: asyncio.AbstractEventLoop, context: dict[str, Any]
+        ) -> None:
+            exc = context.get("exception")
+            if exc is not None:
+                import struct
+
+                try:
+                    from websockets.exceptions import ConnectionClosedOK  # type: ignore[import-untyped]
+                    ws_closed_type = ConnectionClosedOK
+                except ImportError:
+                    ws_closed_type = None  # type: ignore[assignment]
+
+                if isinstance(exc, struct.error) and "unpack requires" in str(exc):
+                    logger.warning(
+                        "Suppressed benign amqtt struct.error from WS disconnect: %s", exc
+                    )
+                    return
+                if ws_closed_type is not None and isinstance(exc, ws_closed_type):
+                    logger.warning(
+                        "Suppressed benign amqtt ConnectionClosedOK from WS disconnect: %s", exc
+                    )
+                    return
+
+            # Fall through to original handler or default
+            if _original_handler is not None:
+                _original_handler(loop, context)
+            else:
+                loop.default_exception_handler(context)
+
+        loop.set_exception_handler(_ws_exception_handler)
 
         logger.info(
             "Broker started — TCP %s:%d, WS %s:%d",

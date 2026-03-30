@@ -1,5 +1,5 @@
 /**
- * Diagnostic: send MCP message, open page, check if it arrives
+ * Diagnostic: Add logging directly to the mqtt store's message handler
  */
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'fs';
@@ -20,50 +20,75 @@ async function run() {
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
 
   // Wait for MQTT connection
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(3000);
+
+  // Inspect the store directly
+  const storeInfo = await page.evaluate(() => {
+    // Svelte 5 stores aren't easily accessible from outside
+    // But we can check the DOM for the connection status
+    const status = document.querySelector('[data-testid="connection-status"]');
+    const emptyState = document.querySelector('.empty-state');
+    return {
+      statusText: status?.textContent || 'no status element',
+      hasEmptyState: !!emptyState,
+    };
+  });
+  console.log('Store info:', JSON.stringify(storeInfo));
 
   // Signal ready
   writeFileSync(join(__dirname, '..', '.crosstest-ready'), 'ready');
-  console.log('Signaled ready. Will wait 15s for MCP messages...');
+  console.log('Signaled ready. Sending a message from the UI first...');
 
-  // Wait for messages
-  for (let i = 0; i < 15; i++) {
+  // Try sending a message from the UI to see if LOCAL messages work
+  const input = page.locator('[data-testid="message-input"]');
+  await input.click();
+  await input.fill('LOCAL-TEST: Message from browser');
+  await page.locator('[data-testid="send-button"]').click();
+  await page.waitForTimeout(1000);
+
+  const localCheck = await page.evaluate(() => {
+    const msgs = document.querySelectorAll('[data-message-id]');
+    return {
+      messageCount: msgs.length,
+      texts: Array.from(msgs).map(el => el.textContent?.substring(0, 80)),
+    };
+  });
+  console.log('After local send:', JSON.stringify(localCheck));
+
+  // Now wait for MCP messages
+  console.log('Waiting 20s for MCP messages...');
+  for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(1000);
 
-    // Check all text in message elements
-    const allText = await page.evaluate(() => {
-      const msgs = document.querySelectorAll('.msg-body, .message-body, .message-content, .bubble-body');
-      return Array.from(msgs).map(el => el.textContent).join(' | ');
-    });
-
-    if (allText.length > 0) {
-      console.log(`[${i+1}s] Messages found: ${allText.substring(0, 200)}`);
-    }
-
-    // Also check the entire body for our marker
-    const bodyText = await page.textContent('body');
-    if (bodyText.includes('CROSSTEST-DIAG')) {
-      console.log(`[${i+1}s] FOUND CROSSTEST-DIAG in body!`);
-      break;
-    }
-
-    // Debug: count message elements by various selectors
-    const counts = await page.evaluate(() => {
+    const state = await page.evaluate(() => {
+      const msgs = document.querySelectorAll('[data-message-id]');
       return {
-        'msg-body': document.querySelectorAll('.msg-body').length,
-        'message-body': document.querySelectorAll('.message-body').length,
-        'message-bubble': document.querySelectorAll('.message-bubble').length,
-        'msg-group': document.querySelectorAll('.msg-group').length,
-        'data-testid-msg': document.querySelectorAll('[data-testid="message-bubble"]').length,
+        messageCount: msgs.length,
+        bodyHasCrosstest: document.body.textContent.includes('CROSSTEST'),
+        texts: Array.from(msgs).map(el => el.textContent?.substring(0, 100)),
       };
     });
-    console.log(`[${i+1}s] Element counts:`, JSON.stringify(counts));
+
+    if (i % 3 === 0) {
+      console.log(`[${i+1}s]`, JSON.stringify(state));
+    }
+
+    if (state.bodyHasCrosstest) {
+      console.log('MCP message found!');
+      break;
+    }
   }
 
-  await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png'), fullPage: false });
+  await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
 
-  // Print all console logs
-  consoleLogs.forEach(l => console.log('  LOG: ' + l));
+  // Print filtered console logs
+  const mqttLogs = consoleLogs.filter(l =>
+    l.includes('MQTT') || l.includes('mqtt') || l.includes('message') ||
+    l.includes('error') || l.includes('Error') || l.includes('parse') ||
+    l.includes('handle')
+  );
+  console.log('\nRelevant logs:');
+  mqttLogs.forEach(l => console.log('  ' + l));
 
   await browser.close();
 }

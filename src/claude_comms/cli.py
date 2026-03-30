@@ -178,9 +178,14 @@ def start(
     console.print("[bold]Starting claude-comms daemon...[/bold]")
 
     async def _run_daemon() -> None:
+        import logging as _logging
+
+        _daemon_logger = _logging.getLogger("claude_comms.cli")
+
         from claude_comms.broker import EmbeddedBroker
 
         broker_instance: EmbeddedBroker | None = None
+        broker_task: asyncio.Task | None = None
         loop = asyncio.get_running_loop()
 
         # Write PID immediately so `stop` can find us
@@ -195,16 +200,63 @@ def start(
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _handle_signal)
 
+        async def _run_broker_with_retry(
+            max_retries: int = 10,
+        ) -> None:
+            """Run the broker in a retry loop to survive transient crashes.
+
+            Known amqtt bug: WebSocket clients that disconnect abruptly
+            cause ``struct.error`` / ``ConnectionClosedOK`` exceptions
+            that can propagate up and kill the broker.  This wrapper
+            catches those, waits 2 seconds, and restarts.
+            """
+            nonlocal broker_instance
+            retries = 0
+            while retries < max_retries and not shutdown_event.is_set():
+                try:
+                    broker_instance = EmbeddedBroker.from_config(config)
+                    await broker_instance.start()
+                    console.print(
+                        f"  [green]Broker[/green] listening on "
+                        f"tcp://{broker_instance.host}:{broker_instance.port}, "
+                        f"ws://{broker_instance.ws_host}:{broker_instance.ws_port}"
+                    )
+                    # Block until shutdown is requested
+                    await shutdown_event.wait()
+                    break
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    retries += 1
+                    _daemon_logger.error(
+                        "Broker crashed (attempt %d/%d): %s", retries, max_retries, e
+                    )
+                    console.print(
+                        f"  [red]Broker crashed[/red] (attempt {retries}/{max_retries}): {e}"
+                    )
+                    if broker_instance is not None and broker_instance.is_running:
+                        try:
+                            await broker_instance.stop()
+                        except Exception:
+                            pass
+                        broker_instance = None
+                    if retries < max_retries and not shutdown_event.is_set():
+                        await asyncio.sleep(2)
+                        _daemon_logger.info("Restarting broker...")
+                        console.print("  [yellow]Restarting broker...[/yellow]")
+                    else:
+                        _daemon_logger.error("Broker exceeded max retries, giving up")
+                        console.print(
+                            "  [red]Broker exceeded max retries, giving up[/red]"
+                        )
+                        raise
+
         try:
             # 1) Start embedded broker if we are the host
             if broker_mode == "host":
-                broker_instance = EmbeddedBroker.from_config(config)
-                await broker_instance.start()
-                console.print(
-                    f"  [green]Broker[/green] listening on "
-                    f"tcp://{broker_instance.host}:{broker_instance.port}, "
-                    f"ws://{broker_instance.ws_host}:{broker_instance.ws_port}"
-                )
+                broker_task = asyncio.create_task(_run_broker_with_retry())
+                # Give the broker a moment to start before proceeding
+                await asyncio.sleep(0.5)
             else:
                 remote = config.get("broker", {})
                 console.print(
@@ -312,12 +364,12 @@ def start(
             await pub_client.__aexit__(None, None, None)
             if web_task is not None:
                 web_uvi_server.should_exit = True
-            # Wait for tasks to finish
-            for t in [mcp_task, mqtt_sub_task, web_task]:
+            # Wait for tasks to finish (broker_task unblocks via shutdown_event)
+            for t in [mcp_task, mqtt_sub_task, web_task, broker_task]:
                 if t is not None:
                     try:
                         await t
-                    except asyncio.CancelledError:
+                    except (asyncio.CancelledError, Exception):
                         pass
 
         finally:
