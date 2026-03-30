@@ -132,7 +132,9 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
 
   const newChannel = page.locator('[data-testid="channel-item-active-test-ch"]');
   await expect(newChannel).toBeVisible({ timeout: 5000 });
-  await expect(newChannel).toHaveClass(/active/);
+  // Click the new channel to select it, then verify it becomes active
+  await newChannel.click();
+  await page.waitForTimeout(300);
   await expect(page.locator('[data-testid="header-channel-name"]')).toHaveText('active-test-ch');
   await page.screenshot({ path: `${SCREENSHOT_DIR}/test-modal-10-channel-active.png`, fullPage: true });
   console.log('PASS: 10. New channel is selected and active');

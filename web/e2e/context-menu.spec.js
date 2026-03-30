@@ -119,6 +119,8 @@ test('Right-click context menu - full functional test', async ({ page, context }
   // ── TEST 8: Edge positioning - menu doesn't overflow ──
   console.log('TEST 8: Edge positioning...');
   const lastBubble = page.locator('.bubble').last();
+  await lastBubble.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
   const box = await lastBubble.boundingBox();
   // Right-click at the far right edge
   await page.mouse.click(box.x + box.width - 2, box.y + box.height - 2, { button: 'right' });
