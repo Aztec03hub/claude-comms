@@ -64,7 +64,7 @@
           <div class="member-info">
             <div class="member-name" style="color: {color.textColor}">
               {member.name}
-              <span class="member-client">{member.client || 'unknown'}</span>
+              <span class="member-client client-{member.client || 'unknown'}">{member.client || 'unknown'}</span>
             </div>
             {#if isTyping}
               <div class="member-typing">
@@ -101,7 +101,7 @@
           <div class="member-info">
             <div class="member-name" style="color: var(--text-muted)">
               {member.name}
-              <span class="member-client">{member.client || 'unknown'}</span>
+              <span class="member-client client-{member.client || 'unknown'}">{member.client || 'unknown'}</span>
             </div>
             <span class="member-badge member-tag">Member</span>
           </div>
@@ -267,14 +267,32 @@
   .member-name { font-size: 13px; font-weight: 500; display: flex; align-items: baseline; gap: 4px; }
 
   .member-client {
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 500;
+    font-style: italic;
     text-transform: lowercase;
-    background: var(--bg-surface);
-    padding: 1px 5px;
-    border-radius: 4px;
-    border: 1px solid var(--border);
+    margin-left: 3px;
+    padding: 0 4px;
+    border-radius: 3px;
+    line-height: 1.4;
+  }
+
+  /* Color-code by client type */
+  .member-client.client-web {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.1);
+  }
+  .member-client.client-tui {
+    color: #a78bfa;
+    background: rgba(167, 139, 250, 0.1);
+  }
+  .member-client.client-mcp {
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.1);
+  }
+  .member-client.client-unknown {
+    color: var(--text-faint);
+    background: transparent;
   }
 
   .member-badge {
