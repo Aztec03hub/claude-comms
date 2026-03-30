@@ -45,6 +45,24 @@ MAX_OUTPUT_CHARS = 80_000  # 20k tokens * 4 chars/token
 
 
 # ---------------------------------------------------------------------------
+# Recipient visibility filter
+# ---------------------------------------------------------------------------
+
+
+def _is_visible(msg: dict[str, Any], viewer_key: str) -> bool:
+    """Return True if *msg* should be visible to *viewer_key*.
+
+    Broadcast messages (recipients is null/empty) are visible to everyone.
+    Targeted messages are visible only to the sender and listed recipients.
+    """
+    recipients = msg.get("recipients")
+    if not recipients:  # null or empty list = broadcast
+        return True
+    sender_key = msg.get("sender", {}).get("key", "")
+    return viewer_key in recipients or viewer_key == sender_key
+
+
+# ---------------------------------------------------------------------------
 # Participant registry  (in-memory, thread-safe)
 # ---------------------------------------------------------------------------
 
@@ -386,6 +404,9 @@ def tool_comms_read(
 
     # Get all messages then filter
     all_msgs = store.get(conversation)
+
+    # Filter out targeted messages not visible to this participant
+    all_msgs = [m for m in all_msgs if _is_visible(m, key)]
 
     if since:
         all_msgs = [m for m in all_msgs if m.get("ts", "") > since]
