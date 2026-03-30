@@ -26,6 +26,7 @@ export class MqttChatStore {
   connectionError = $state(null);
   typingUsers = $state({});
   pinnedMessages = $state([]);
+  inAppToasts = $state(true);
   userProfile = $state({
     key: '',
     name: 'Phil',
