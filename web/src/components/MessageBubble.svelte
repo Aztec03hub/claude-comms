@@ -15,12 +15,12 @@
 
   function handleContext(e) {
     e.preventDefault();
-    onContextMenu({ detail: { x: e.clientX, y: e.clientY, message } });
+    onContextMenu({ x: e.clientX, y: e.clientY, message });
   }
 
   function handleAvatarClick() {
     const p = participants[message.sender.key] || message.sender;
-    onShowProfile({ detail: p });
+    onShowProfile(p);
   }
 </script>
 

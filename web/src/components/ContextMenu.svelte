@@ -2,7 +2,7 @@
   let { x = 0, y = 0, message = null, onAction, onClose } = $props();
 
   function handleAction(action) {
-    onAction({ detail: { action, message } });
+    onAction({ action, message });
   }
 
   function handleBackdrop(e) {

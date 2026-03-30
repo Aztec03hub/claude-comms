@@ -29,7 +29,7 @@
   {#if store.starredChannels.length > 0}
     <div class="section-label" class:collapsed={starredCollapsed}>
       <span class="star">\u2605</span> Starred
-      <span class="arrow" onclick={() => starredCollapsed = !starredCollapsed}>\u25BE</span>
+      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred">\u25BE</button>
     </div>
     {#if !starredCollapsed}
       <div class="channel-list" style="flex: none;">
@@ -39,6 +39,7 @@
             class:active={channel.id === store.activeChannel}
             class:unread={channel.unread > 0}
             onclick={() => handleChannelClick(channel.id)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
             role="button"
             tabindex="0"
           >
@@ -64,7 +65,7 @@
 
   <div class="section-label" class:collapsed={convoCollapsed}>
     Conversations
-    <span class="arrow" onclick={() => convoCollapsed = !convoCollapsed}>\u25BE</span>
+    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations">\u25BE</button>
   </div>
   {#if !convoCollapsed}
     <div class="channel-list">
@@ -74,6 +75,7 @@
           class:active={channel.id === store.activeChannel}
           class:unread={channel.unread > 0}
           onclick={() => handleChannelClick(channel.id)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
           role="button"
           tabindex="0"
         >
@@ -108,6 +110,7 @@
     <div
       class="user-avatar-wrap"
       onclick={() => onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' })}
+      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' }); }}
       role="button"
       tabindex="0"
     >

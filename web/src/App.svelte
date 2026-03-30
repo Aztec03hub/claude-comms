@@ -79,7 +79,7 @@
   }
 
   function handleContextMenu(e) {
-    contextMenu = { show: true, x: e.detail.x, y: e.detail.y, message: e.detail.message };
+    contextMenu = { show: true, x: e.x, y: e.y, message: e.message };
   }
 
   function handleCloseContextMenu() {
@@ -87,7 +87,7 @@
   }
 
   function handleContextAction(e) {
-    const { action, message } = e.detail;
+    const { action, message } = e;
     handleCloseContextMenu();
 
     if (action === 'reply') handleOpenThread(message);
@@ -99,12 +99,12 @@
     }
   }
 
-  function handleShowProfile(e) {
-    profileCardTarget = e.detail;
+  function handleShowProfile(participant) {
+    profileCardTarget = participant;
     showProfileCard = true;
   }
 
-  function handleEmojiSelect(e) {
+  function handleEmojiSelect(emojiData) {
     // Emoji selected, could add reaction to target message
     showEmojiPicker = false;
     emojiPickerTarget = null;
@@ -126,10 +126,10 @@
       <span class="header-name">{store.activeChannel}</span>
       <span class="header-sep"></span>
       <span class="header-topic">{store.activeChannelMeta?.topic || ''}</span>
-      <div class="header-members" onclick={() => {}}>
+      <button class="header-members" type="button">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="4.5" cy="4" r="2.5"/><path d="M0 11.5c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/><circle cx="8.5" cy="4" r="2" opacity=".5"/></svg>
         {store.onlineCount + store.offlineParticipants.length}
-      </div>
+      </button>
       <div class="header-actions">
         <button class="header-btn" title="Search" onclick={() => { showSearchPanel = !showSearchPanel; showThreadPanel = false; }}>
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="14.5" y2="14.5"/></svg>

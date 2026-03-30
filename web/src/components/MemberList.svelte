@@ -20,7 +20,7 @@
         {@const isTyping = typingUsers[member.key]?.typing}
         <div
           class="member"
-          onclick={() => onShowProfile({ detail: member })}
+          onclick={() => onShowProfile(member)}
           role="button"
           tabindex="0"
         >
@@ -52,7 +52,7 @@
       {#each offline as member (member.key)}
         <div
           class="member"
-          onclick={() => onShowProfile({ detail: member })}
+          onclick={() => onShowProfile(member)}
           role="button"
           tabindex="0"
         >

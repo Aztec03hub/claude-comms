@@ -36,7 +36,7 @@
   ];
 
   function selectEmoji(emojiData) {
-    onSelect({ detail: emojiData });
+    onSelect(emojiData);
   }
 
   function handleBackdropClick(e) {
