@@ -4,6 +4,33 @@ import { generateUUID, generateKey } from './utils.js';
 const BROKER_URL = 'ws://localhost:9001/mqtt';
 const TOPIC_PREFIX = 'claude-comms';
 const TYPING_TTL_MS = 5000;
+const BASE_RECONNECT_MS = 3000;
+const MAX_RECONNECT_MS = 30000;
+const BACKOFF_AFTER_ATTEMPTS = 5;
+const MAX_MESSAGE_LENGTH = 10000;
+const MAX_CHANNEL_NAME_LENGTH = 50;
+const MAX_DISPLAY_NAME_LENGTH = 50;
+
+/**
+ * Safe localStorage wrapper that falls back gracefully
+ * when storage is unavailable (private browsing, quota exceeded, etc.).
+ */
+const safeStorage = {
+  getItem(key) {
+    try {
+      return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+    } catch {
+      return null;
+    }
+  },
+  setItem(key, value) {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
+    } catch {
+      // localStorage unavailable (private browsing, quota exceeded) -- silently ignore
+    }
+  }
+};
 
 /**
  * MqttChatStore — Svelte 5 runes-based reactive MQTT chat store.
@@ -38,6 +65,9 @@ export class MqttChatStore {
   #seenIds = new Set();
   #typingTimers = {};
   #myTypingTimer = null;
+  #seenMessageIds = new Set();
+  #failureCount = 0;
+  #backoffActive = false;
 
   // ── Derived State ──
   activeMessages = $derived(
@@ -156,17 +186,32 @@ export class MqttChatStore {
     this.#client.on('connect', () => {
       this.connected = true;
       this.connectionError = null;
+      this.#failureCount = 0;
+      this.#backoffActive = false;
       this.#subscribeAll();
       this.#publishPresence('online');
+      // Add ourselves to the participant list so we appear in the member sidebar
+      this.participants[this.userProfile.key] = {
+        key: this.userProfile.key,
+        name: this.userProfile.name,
+        type: this.userProfile.type,
+        status: 'online',
+      };
     });
 
     this.#client.on('error', (err) => {
+      this.#failureCount++;
       if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
-        this.connectionError = 'Broker unavailable — is amqtt running on ' + BROKER_URL + '?';
+        this.connectionError = 'Broker unavailable — is "claude-comms start" running? (expected at ' + BROKER_URL + ')';
       } else if (err.message?.includes('WebSocket')) {
-        this.connectionError = 'WebSocket connection failed — check broker WebSocket listener.';
+        this.connectionError = 'WebSocket connection failed — is "claude-comms start" running? Check broker WebSocket listener on ' + BROKER_URL + '.';
       } else {
         this.connectionError = 'MQTT error: ' + (err.message || String(err));
+      }
+
+      // After repeated failures, activate exponential backoff
+      if (this.#failureCount >= BACKOFF_AFTER_ATTEMPTS && !this.#backoffActive) {
+        this.#activateBackoff();
       }
     });
 
@@ -176,12 +221,18 @@ export class MqttChatStore {
 
     this.#client.on('offline', () => {
       this.connected = false;
+      this.#failureCount++;
       if (!this.connectionError) {
         this.connectionError = 'Connection lost — waiting to reconnect...';
+      }
+
+      if (this.#failureCount >= BACKOFF_AFTER_ATTEMPTS && !this.#backoffActive) {
+        this.#activateBackoff();
       }
     });
 
     this.#client.on('reconnect', () => {
+      if (this.#backoffActive) return; // suppress during backoff
       this.connectionError = 'Reconnecting to broker...';
     });
 
@@ -328,6 +379,28 @@ export class MqttChatStore {
       ch.unreadFrom = message.id;
       ch.unread = Math.max(ch.unread, 1);
     }
+  }
+
+  /**
+   * Mark a message as "seen" (read) by the current user.
+   * This is a local-only tracker — it updates the message's `read_by` count
+   * so the ReadReceipt component shows meaningful data. Does not publish
+   * over MQTT; real distributed read receipts would require a dedicated
+   * topic (e.g., `conv/{channel}/read-cursors`).
+   * @param {string} messageId - The ID of the message that was viewed.
+   */
+  markSeen(messageId) {
+    if (this.#seenMessageIds.has(messageId)) return;
+    this.#seenMessageIds.add(messageId);
+
+    const msg = this.messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    // Only track reads on messages from other users
+    if (msg.sender?.key === this.userProfile.key) return;
+
+    // Increment the read_by count (used by ReadReceipt component)
+    msg.read_by = (msg.read_by || 0) + 1;
   }
 
   /**

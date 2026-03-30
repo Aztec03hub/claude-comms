@@ -52,6 +52,7 @@ class ClaudeCommsApp(App):
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+n", "new_conversation", "New Conv", show=True),
         Binding("ctrl+k", "switch_conversation", "Switch Conv", show=True, priority=True),
+        Binding("f1", "show_help", "Help", show=True),
     ]
 
     def __init__(self, config: dict[str, Any] | None = None, **kwargs) -> None:
@@ -409,6 +410,10 @@ class ClaudeCommsApp(App):
             idx = -1
         next_idx = (idx + 1) % len(self._conversations)
         self._switch_to_conv(self._conversations[next_idx])
+
+    def action_show_help(self) -> None:
+        """F1 — show keybinding help overlay."""
+        self.push_screen(HelpScreen())
 
     def _on_new_conv_created(self, conv_id: str) -> None:
         """Callback when user creates a new conversation."""

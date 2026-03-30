@@ -6,7 +6,7 @@
   import { MessageSquare } from 'lucide-svelte';
   import { isSameDay } from '../lib/utils.js';
 
-  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact } = $props();
+  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, store = null } = $props();
 
   let messagesEl = $state(null);
   let showScrollBtn = $state(false);
@@ -62,6 +62,45 @@
       unreadBelow = 0;
     }
   }
+
+  // ── "Seen" tracking ──
+  // Uses IntersectionObserver to mark messages as read when they scroll into view.
+  // This feeds the ReadReceipt component with meaningful read_by counts.
+  let seenObserver = $state(null);
+
+  $effect(() => {
+    if (!messagesEl || !store) return;
+
+    seenObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const msgId = entry.target.dataset.messageId;
+            if (msgId) store.markSeen(msgId);
+          }
+        }
+      },
+      { root: messagesEl, threshold: 0.5 }
+    );
+
+    return () => {
+      seenObserver?.disconnect();
+    };
+  });
+
+  // Observe new message elements as they appear
+  $effect(() => {
+    if (!messagesEl || !seenObserver) return;
+    // Re-observe whenever messages change
+    const _len = messages.length;
+    requestAnimationFrame(() => {
+      if (!messagesEl) return;
+      const msgEls = messagesEl.querySelectorAll('[data-message-id]');
+      for (const el of msgEls) {
+        seenObserver.observe(el);
+      }
+    });
+  });
 
   function handleMessageContextMenu(e) {
     onContextMenu(e);

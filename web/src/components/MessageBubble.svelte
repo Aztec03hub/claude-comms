@@ -3,15 +3,65 @@
   import MessageActions from './MessageActions.svelte';
   import ReactionBar from './ReactionBar.svelte';
   import ReadReceipt from './ReadReceipt.svelte';
+  import LinkPreview from './LinkPreview.svelte';
   import { formatTime, parseMentions, getParticipantColor } from '../lib/utils.js';
+
+  // URL regex for detecting links in message text
+  const LINK_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
+
+  /**
+   * Parse message body into segments: text, mention, and link.
+   * First splits on mentions, then splits text segments on URLs.
+   */
+  function parseBody(body) {
+    const mentionSegments = parseMentions(body);
+    const result = [];
+    for (const seg of mentionSegments) {
+      if (seg.type !== 'text') {
+        result.push(seg);
+        continue;
+      }
+      // Split text segments on URLs
+      let lastIndex = 0;
+      let match;
+      LINK_REGEX.lastIndex = 0;
+      while ((match = LINK_REGEX.exec(seg.value)) !== null) {
+        if (match.index > lastIndex) {
+          result.push({ type: 'text', value: seg.value.slice(lastIndex, match.index) });
+        }
+        result.push({ type: 'link', value: match[0] });
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < seg.value.length) {
+        result.push({ type: 'text', value: seg.value.slice(lastIndex) });
+      }
+    }
+    return result;
+  }
 
   let { message, consecutive = false, currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onMore } = $props();
 
   let isHuman = $derived(message.sender.type === 'human');
   let isMine = $derived(message.sender.key === currentUser?.key);
   let senderColor = $derived(getParticipantColor(message.sender.key));
-  let bodySegments = $derived(parseMentions(message.body));
+  let bodySegments = $derived(parseBody(message.body));
   let hasCode = $derived(message.body.includes('```'));
+
+  // Detect URLs in message body for link previews
+  const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
+  let detectedUrls = $derived.by(() => {
+    const matches = message.body.match(URL_REGEX);
+    if (!matches) return [];
+    // Deduplicate and limit to 3 previews per message
+    return [...new Set(matches)].slice(0, 3).map(url => {
+      try {
+        const parsed = new URL(url);
+        return { url, domain: parsed.hostname.replace(/^www\./, '') };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  });
 
   function handleContext(e) {
     e.preventDefault();
@@ -65,11 +115,21 @@
       {#each bodySegments as seg}
         {#if seg.type === 'mention'}
           <span class="mention">{seg.value}</span>
+        {:else if seg.type === 'link'}
+          <a class="inline-link" href={seg.value} target="_blank" rel="noopener noreferrer">{seg.value}</a>
         {:else}
           {seg.value}
         {/if}
       {/each}
     </div>
+
+    {#each detectedUrls as link}
+      <LinkPreview
+        url={link.url}
+        domain={link.domain}
+        title={link.domain}
+      />
+    {/each}
 
     {#if message.reactions?.length}
       <ReactionBar
