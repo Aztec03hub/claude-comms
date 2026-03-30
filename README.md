@@ -746,7 +746,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **~949 total tests**: **714 Python tests** across 12 test files plus **43 TUI tests** (Textual `run_test()`) plus **235 Playwright browser E2E tests** across 25 spec files with 120+ test screenshots:
+The test suite includes **~981 total tests**: **746 Python tests** across 12 test files plus **43 TUI tests** (Textual `run_test()`) plus **235 Playwright browser E2E tests** across 25 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -763,7 +763,7 @@ The test suite includes **~949 total tests**: **714 Python tests** across 12 tes
 | `test_cli.py` | 19 | CLI init, status, config env vars, force overwrite, key generation, stale PID |
 | `test_tui.py` | 43 | TUI app rendering, channel switching, message sending, keyboard shortcuts, edge cases, @mention tab completion, unread badges, presence |
 
-**Note:** Python test count grew from 504 to 714 via expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules (67 new tests in the overnight 2026-03-30 session). Playwright E2E tests expanded to 235 across 25 spec files including 12 user story E2E tests across 2 rounds.
+**Note:** Python test count grew from 504 to 746 via expanded gap tests across broker, log exporter, MCP tools, notification hook, CLI modules, and 25 new API endpoint tests (67 new tests in the overnight 2026-03-30 session, plus 32 more in the final overnight session). Playwright E2E tests expanded to 235 across 25 spec files including 12 user story E2E tests across 2 rounds.
 
 ### Playwright E2E Tests
 
@@ -856,7 +856,7 @@ claude-comms/
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
-+-- tests/                            # pytest test suite (714 tests)
++-- tests/                            # pytest test suite (746 tests)
 |   +-- conftest.py                   # Shared fixtures
 |   +-- test_*.py                     # 12 test modules (unit, integration, E2E)
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
