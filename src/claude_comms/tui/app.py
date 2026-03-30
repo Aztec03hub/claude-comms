@@ -155,7 +155,6 @@ class ClaudeCommsApp(App):
 
         # Build LWT (Last Will and Testament) so the broker auto-publishes
         # an offline presence message if this client crashes/disconnects.
-        from claude_comms.message import now_iso as _now_iso
 
         lwt_topic = (
             f"claude-comms/conv/{self._active_conv}/presence/{self._key}"

@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 from claude_comms.config import (
-    _DEFAULT_CONFIG,
     generate_identity_key,
     get_config_path,
     get_default_config,

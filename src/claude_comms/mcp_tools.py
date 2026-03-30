@@ -14,12 +14,11 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from claude_comms.broker import MessageStore
 from claude_comms.mention import build_mention_prefix
-from claude_comms.message import Message, now_iso, validate_conv_id
+from claude_comms.message import Message, validate_conv_id
 from claude_comms.participant import Participant, validate_key, validate_name
 
 

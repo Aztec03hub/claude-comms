@@ -12,50 +12,36 @@ from __future__ import annotations
 
 import json
 import os
-import stat
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-import yaml
 
 from claude_comms.broker import MessageDeduplicator, MessageStore
 from claude_comms.config import (
-    _deep_merge,
     get_default_config,
     load_config,
     save_config,
 )
 from claude_comms.hook_installer import (
     _add_hook_to_settings,
-    _build_hook_entry,
     _generate_unix_script,
     _load_settings,
     _remove_hook_from_settings,
     _save_settings,
-    install_hook,
-    uninstall_hook,
 )
 from claude_comms.log_exporter import (
     LogExporter,
-    _check_rotation,
     format_log_entry,
-    format_log_header,
-    format_presence_event,
 )
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
-    tool_comms_check,
     tool_comms_conversations,
     tool_comms_history,
     tool_comms_join,
     tool_comms_leave,
     tool_comms_members,
     tool_comms_read,
-    tool_comms_send,
-    tool_comms_update_name,
 )
-from claude_comms.message import Message, Sender, validate_conv_id
+from claude_comms.message import Message, validate_conv_id
 
 
 # ===================================================================

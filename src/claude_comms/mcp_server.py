@@ -252,7 +252,8 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         # Publishes to both conv-scoped and system-scoped topics to
         # match the Web UI's dual-presence pattern.
         if not result.get("error") and _publish_fn:
-            import json as _json, asyncio as _asyncio
+            import json as _json
+            import asyncio as _asyncio
             from claude_comms.message import now_iso as _now_iso
             _ts = _now_iso()
             presence_payload = _json.dumps({

@@ -10,7 +10,6 @@ Exports: install_hook, uninstall_hook
 from __future__ import annotations
 
 import json
-import os
 import platform
 import stat
 import sys

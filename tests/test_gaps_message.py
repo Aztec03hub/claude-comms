@@ -16,8 +16,6 @@ import json
 import pytest
 
 from claude_comms.message import (
-    CONV_ID_PATTERN,
-    RESERVED_CONV_IDS,
     Message,
     Sender,
     validate_conv_id,

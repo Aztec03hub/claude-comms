@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from claude_comms.mention import (
     build_mention_prefix,

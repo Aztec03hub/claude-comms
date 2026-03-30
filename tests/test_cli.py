@@ -6,14 +6,8 @@ WITHOUT requiring a running broker or daemon.
 
 from __future__ import annotations
 
-import json
-import os
-import stat
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch, MagicMock
 
-import pytest
 from typer.testing import CliRunner
 
 from claude_comms.cli import app
@@ -21,7 +15,6 @@ from claude_comms.config import (
     get_default_config,
     load_config,
     save_config,
-    get_config_path,
 )
 
 

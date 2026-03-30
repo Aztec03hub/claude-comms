@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import os
-import stat
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,7 +21,6 @@ import yaml
 from claude_comms.config import (
     _DEFAULT_CONFIG,
     _deep_merge,
-    generate_identity_key,
     get_default_config,
     load_config,
     save_config,

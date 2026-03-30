@@ -10,18 +10,13 @@ Covers:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
-import pytest
 
-from claude_comms.broker import MessageDeduplicator
 from claude_comms.log_exporter import (
     LogExporter,
     _check_rotation,
     _rotate_file,
     format_log_entry,
-    format_log_header,
     format_presence_event,
 )
 

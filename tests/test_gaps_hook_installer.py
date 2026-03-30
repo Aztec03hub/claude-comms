@@ -11,23 +11,14 @@ Covers:
 from __future__ import annotations
 
 import json
-import stat
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from claude_comms.hook_installer import (
-    _add_hook_to_settings,
-    _build_hook_entry,
-    _generate_unix_script,
     _generate_windows_script,
-    _hook_script_name,
     _is_claude_comms_hook_entry,
-    _load_settings,
-    _remove_hook_from_settings,
-    _save_settings,
     generate_hook_script,
     install_hook,
     uninstall_hook,

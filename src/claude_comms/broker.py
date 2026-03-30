@@ -13,7 +13,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import threading
 from collections import OrderedDict
 from pathlib import Path

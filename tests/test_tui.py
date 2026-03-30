@@ -14,11 +14,10 @@ Rounds:
 
 from __future__ import annotations
 
-import asyncio
 import pytest
 
-from textual.widgets import Input, Static, Label
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Input, Static
+from textual.containers import Horizontal
 
 from claude_comms.tui.app import ClaudeCommsApp, NewConversationScreen, HelpScreen
 from claude_comms.tui.channel_list import ChannelList, ChannelItem

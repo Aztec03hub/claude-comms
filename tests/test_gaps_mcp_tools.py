@@ -23,14 +23,11 @@ from claude_comms.mcp_tools import (
     MAX_OUTPUT_CHARS,
     ParticipantRegistry,
     tool_comms_check,
-    tool_comms_conversations,
     tool_comms_history,
     tool_comms_join,
     tool_comms_leave,
-    tool_comms_members,
     tool_comms_read,
     tool_comms_send,
-    tool_comms_update_name,
 )
 
 

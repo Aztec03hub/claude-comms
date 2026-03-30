@@ -14,10 +14,8 @@ Tests component interactions WITHOUT a real MQTT broker:
 from __future__ import annotations
 
 import json
-import os
 import stat
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -33,7 +31,7 @@ from claude_comms.hook_installer import (
     _generate_windows_script,
     generate_hook_script,
 )
-from claude_comms.log_exporter import LogExporter, format_log_entry, format_log_header
+from claude_comms.log_exporter import LogExporter
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_check,
@@ -50,7 +48,7 @@ from claude_comms.mention import (
     resolve_mentions,
     strip_mentions,
 )
-from claude_comms.message import Message, Sender
+from claude_comms.message import Message
 
 
 # ===================================================================

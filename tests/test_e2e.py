@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -940,19 +939,16 @@ class TestLogExporterEdgeCases:
     """Test edge cases in log exporter formatting."""
 
     def test_format_log_entry_empty_dict(self) -> None:
-        from claude_comms.log_exporter import format_log_entry
         result = format_log_entry({})
         assert result == "[EMPTY MESSAGE]"
 
     def test_format_log_entry_missing_sender(self) -> None:
-        from claude_comms.log_exporter import format_log_entry
         msg = {"ts": "2026-03-13T14:00:00-05:00", "body": "no sender"}
         result = format_log_entry(msg)
         assert "unknown" in result
         assert "no sender" in result
 
     def test_format_log_entry_missing_ts(self) -> None:
-        from claude_comms.log_exporter import format_log_entry
         msg = {
             "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
             "body": "no timestamp",
@@ -962,7 +958,6 @@ class TestLogExporterEdgeCases:
         assert "no timestamp" in result
 
     def test_format_log_entry_invalid_ts(self) -> None:
-        from claude_comms.log_exporter import format_log_entry
         msg = {
             "ts": "not-a-timestamp",
             "sender": {"key": "aabbccdd", "name": "test", "type": "claude"},
@@ -973,7 +968,6 @@ class TestLogExporterEdgeCases:
         assert "not-a-timestamp" in result
 
     def test_format_log_entry_sender_not_dict(self) -> None:
-        from claude_comms.log_exporter import format_log_entry
         msg = {
             "ts": "2026-03-13T14:00:00-05:00",
             "sender": "not-a-dict",

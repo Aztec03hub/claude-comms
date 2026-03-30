@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections import OrderedDict
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +10,6 @@ import pytest
 
 from claude_comms.broker import (
     DEFAULT_HOST,
-    DEFAULT_MAX_REPLAY,
     DEFAULT_PORT,
     DEFAULT_WS_HOST,
     DEFAULT_WS_PORT,

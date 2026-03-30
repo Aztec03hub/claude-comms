@@ -7,15 +7,12 @@ the shared state objects.
 
 from __future__ import annotations
 
-import asyncio
 import json
-from typing import Any
 
 import pytest
 
 from claude_comms.broker import MessageStore
 from claude_comms.mcp_tools import (
-    MAX_OUTPUT_CHARS,
     ParticipantRegistry,
     tool_comms_check,
     tool_comms_conversations,
