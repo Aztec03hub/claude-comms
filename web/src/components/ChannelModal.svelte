@@ -28,8 +28,9 @@
     </div>
     <div class="modal-body">
       <div class="modal-field">
-        <label class="modal-label">Channel Name</label>
+        <label class="modal-label" for="channel-name-input">Channel Name</label>
         <input
+          id="channel-name-input"
           class="modal-input"
           type="text"
           placeholder="e.g. project-phoenix"
@@ -39,8 +40,9 @@
         <div class="modal-hint">Names must be lowercase, no spaces. Use dashes instead.</div>
       </div>
       <div class="modal-field">
-        <label class="modal-label">Description</label>
+        <label class="modal-label" for="channel-desc-input">Description</label>
         <textarea
+          id="channel-desc-input"
           class="modal-textarea"
           placeholder="What is this channel about?"
           bind:value={description}

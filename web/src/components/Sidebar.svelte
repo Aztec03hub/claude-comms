@@ -287,6 +287,10 @@
     transition: var(--transition-fast);
     cursor: pointer;
     user-select: none;
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    font-family: inherit;
   }
 
   .section-label.collapsed .arrow { transform: rotate(-90deg); }

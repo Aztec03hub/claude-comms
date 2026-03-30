@@ -337,6 +337,7 @@
     color: var(--text-muted);
     cursor: pointer;
     transition: var(--transition-fast);
+    font-family: inherit;
   }
 
   .header-members:hover {

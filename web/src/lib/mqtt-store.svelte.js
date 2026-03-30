@@ -98,7 +98,7 @@ export class MqttChatStore {
       keepalive: 30,
       reconnectPeriod: 3000,
       will: {
-        topic: TOPIC_PREFIX + '/conv/' + this.activeChannel + '/presence/' + this.userProfile.key,
+        topic: TOPIC_PREFIX + '/system/participants/' + this.userProfile.key,
         payload: JSON.stringify({
           key: this.userProfile.key,
           name: this.userProfile.name,
@@ -288,23 +288,19 @@ export class MqttChatStore {
   }
 
   #handleMessage(topic, msg) {
-    const parts = topic.split('/');
+    if (!topic.startsWith(TOPIC_PREFIX + '/')) return;
+    const topicParts = topic.slice(TOPIC_PREFIX.length + 1).split('/');
 
-    // claude-comms/conv/{channel}/messages
-    if (parts[2] === 'conv' || parts[1] === 'conv') {
-      const topicParts = topic.replace(TOPIC_PREFIX + '/', '').split('/');
-
-      if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
-        this.#handleChatMessage(topicParts[1], msg);
-      } else if (topicParts[0] === 'conv' && topicParts[2] === 'presence') {
-        this.#handlePresence(msg);
-      } else if (topicParts[0] === 'conv' && topicParts[2] === 'typing') {
-        this.#handleTyping(msg);
-      } else if (topicParts[0] === 'conv' && topicParts[2] === 'meta') {
-        this.#handleMeta(topicParts[1], msg);
-      } else if (topicParts[0] === 'system' && topicParts[1] === 'participants') {
-        this.#handleParticipantRegistry(msg);
-      }
+    if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
+      this.#handleChatMessage(topicParts[1], msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'presence') {
+      this.#handlePresence(msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'typing') {
+      this.#handleTyping(topicParts[1], msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'meta') {
+      this.#handleMeta(topicParts[1], msg);
+    } else if (topicParts[0] === 'system' && topicParts[1] === 'participants') {
+      this.#handleParticipantRegistry(msg);
     }
   }
 
@@ -345,11 +341,11 @@ export class MqttChatStore {
     };
   }
 
-  #handleTyping(msg) {
+  #handleTyping(channel, msg) {
     this.typingUsers[msg.key] = {
       typing: msg.typing,
       ts: msg.ts,
-      channel: this.activeChannel
+      channel
     };
 
     // Auto-expire typing indicator

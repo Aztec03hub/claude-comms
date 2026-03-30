@@ -44,13 +44,11 @@
     >
     <div class="search-panel-filters">
       {#each filters as filter}
-        <span
+        <button
           class="search-filter"
           class:active={activeFilter === filter.toLowerCase()}
           onclick={() => activeFilter = filter.toLowerCase()}
-          role="button"
-          tabindex="0"
-        >{filter}</span>
+        >{filter}</button>
       {/each}
     </div>
   </div>
@@ -150,6 +148,7 @@
     color: var(--text-muted);
     cursor: pointer;
     transition: var(--transition-fast);
+    font-family: inherit;
   }
 
   .search-filter:hover { border-color: var(--ember-700); color: var(--text-secondary); }

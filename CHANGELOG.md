@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+#### Web Client Bug Sweep
+
+- **MQTT topic routing** -- `#handleMessage` used fragile `parts[2] === 'conv' || parts[1] === 'conv'` condition which missed `system/participants/+` topics entirely (participant registry never populated). Replaced with proper prefix-strip and direct `topicParts[0]` matching.
+- **MQTT typing channel extraction** -- `#handleTyping` used `this.activeChannel` instead of extracting the channel from the MQTT topic, causing typing indicators to always appear in the viewer's active channel instead of the actual typing channel.
+- **MQTT LWT topic** -- Last Will and Testament published to a channel-specific presence topic (`conv/{channel}/presence/{key}`), which only notified that single channel. Changed to `system/participants/{key}` so offline status is visible globally.
+- **Sidebar onShowProfile event mismatch** -- Sidebar passed raw participant object to `onShowProfile` while App.svelte's handler expected `e.detail` wrapper. Normalized all event callback props to pass data directly (no `{ detail: ... }` wrapper) across Sidebar, MemberList, MessageBubble, ContextMenu, and EmojiPicker.
+- **A11y: clickable divs/spans without keyboard handlers** -- Added `onkeydown` handlers (Enter/Space) to all interactive `div`/`span` elements: channel items (Sidebar), member items (MemberList), sender name and thread indicator (MessageBubble), user avatar (Sidebar).
+- **A11y: non-semantic clickable elements** -- Converted header-members from `div` to `button` (App.svelte), section collapse arrows from `span` to `button` (Sidebar), search filter pills from `span` to `button` (SearchPanel).
+- **A11y: labels without associated controls** -- Added `for`/`id` associations to Channel Name and Description labels in ChannelModal.
+- **A11y: icon-only button without label** -- Added `aria-label="Send reply"` to ThreadPanel send button.
+- **A11y: noninteractive tabindex on Avatar** -- Split Avatar into two branches (clickable with role/tabindex/onkeydown vs. static without) to eliminate the noninteractive tabindex warning.
+
 - **Dependency conflict resolved** -- Changed `mcp[cli]` to `mcp` (without the `[cli]` extra) and pinned `typer>=0.15.0,<0.16.0` in `pyproject.toml`. The `[cli]` extra required `typer>=0.16.0` which conflicted with `amqtt`'s pin on `typer==0.15.4`.
 
 ### Design

@@ -6,18 +6,31 @@
   let initials = $derived(getInitials(name));
 </script>
 
-<div
-  class="avatar"
-  style="background: {gradient}; width: {size}px; height: {size}px; font-size: {Math.round(size * 0.32)}px;"
-  onclick={onClick}
-  role={onClick ? 'button' : undefined}
-  tabindex={onClick ? 0 : undefined}
->
-  {initials}
-  {#if status}
-    <div class="status-indicator" class:online={status === 'online'} class:offline={status === 'offline'} class:idle={status === 'idle'}></div>
-  {/if}
-</div>
+{#if onClick}
+  <div
+    class="avatar"
+    style="background: {gradient}; width: {size}px; height: {size}px; font-size: {Math.round(size * 0.32)}px;"
+    onclick={onClick}
+    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
+    role="button"
+    tabindex="0"
+  >
+    {initials}
+    {#if status}
+      <div class="status-indicator" class:online={status === 'online'} class:offline={status === 'offline'} class:idle={status === 'idle'}></div>
+    {/if}
+  </div>
+{:else}
+  <div
+    class="avatar"
+    style="background: {gradient}; width: {size}px; height: {size}px; font-size: {Math.round(size * 0.32)}px;"
+  >
+    {initials}
+    {#if status}
+      <div class="status-indicator" class:online={status === 'online'} class:offline={status === 'offline'} class:idle={status === 'idle'}></div>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .avatar {

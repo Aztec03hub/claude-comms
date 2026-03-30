@@ -68,7 +68,7 @@
         bind:value={replyText}
         onkeydown={handleKeydown}
       >
-      <button class="thread-send" onclick={handleSend}>
+      <button class="thread-send" onclick={handleSend} aria-label="Send reply">
         <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M1.7 1.1a.75.75 0 01.9-.2l12 6a.75.75 0 010 1.3l-12 6a.75.75 0 01-1.05-.9L3.6 8 1.55 2.8a.75.75 0 01.15-.7z"/></svg>
       </button>
     </div>

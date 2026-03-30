@@ -24,6 +24,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="msg-row"
   class:claude={!isHuman}
@@ -49,6 +50,7 @@
           class="sender-name"
           style="color: {senderColor.textColor}"
           onclick={handleAvatarClick}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleAvatarClick(); }}
           role="button"
           tabindex="0"
         >{message.sender.name}</span>
@@ -71,7 +73,7 @@
     {/if}
 
     {#if message.thread_count}
-      <div class="thread-indicator" onclick={() => onOpenThread(message)} role="button" tabindex="0">
+      <div class="thread-indicator" onclick={() => onOpenThread(message)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenThread(message); }} role="button" tabindex="0">
         <span class="thread-count">{message.thread_count} replies</span>
       </div>
     {/if}

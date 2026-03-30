@@ -21,6 +21,7 @@
         <div
           class="member"
           onclick={() => onShowProfile(member)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile(member); }}
           role="button"
           tabindex="0"
         >
@@ -53,6 +54,7 @@
         <div
           class="member"
           onclick={() => onShowProfile(member)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile(member); }}
           role="button"
           tabindex="0"
         >
