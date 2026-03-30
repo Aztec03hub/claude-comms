@@ -121,10 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Comprehensive Functional Browser Testing (10 Parallel Agents)
 
-- **10 parallel testing agents** deployed for functional browser testing across the entire web UI -- **104 Playwright tests** written, **12 bugs found and fixed**
-- **16 Playwright E2E spec files** (`web/e2e/`) covering: messages (10 tests), emoji picker (10), channel switching (7), console smoke test (18 interactions), app loading (5), sidebar (8), chat (6), panels (11), modals (7), member list (6+11), context menu (5), console errors (3), channel modal flow (11), keyboard shortcuts (10), theme/responsive (7)
+- **10 parallel testing agents** deployed for functional browser testing across the entire web UI -- **121+ Playwright tests** written, **12 bugs found and fixed**
+- **20 Playwright E2E spec files** (`web/e2e/`) covering: messages (10 tests), emoji picker (10), channel switching (7), console smoke test (18 interactions), app loading (5), sidebar (8), chat (6), panels (11), modals (7), member list (6+11), context menu (5), console errors (3), channel modal flow (11), keyboard shortcuts (10), theme/responsive (7), user stories (7)
 - **120+ test screenshots** captured across all testing areas (`mockups/test-*.png`, `mockups/screenshot-*.png`)
-- **464 total tests** across the project: 360 Python + 104 Playwright browser E2E
+- **668+ total tests** across the project: 504 Python + 43 TUI + 121+ Playwright browser E2E
 - **Zero JS runtime errors** confirmed across all 18 interaction types during comprehensive smoke testing
 - **`playwright.config.js`** -- Headless Chromium, screenshots on failure, video on failure, 1 retry, 30s timeout, built-in web server config, CDP workaround for mqtt.js event loop blocking
 - **npm test scripts** -- `test` (headless), `test:ui` (Playwright UI mode), `test:headed` (visible browser)
@@ -376,6 +376,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - **`web/e2e/channel-modal-flow.spec.js`** (11 tests) -- open modal, form fields, type name/description, private toggle, cancel, backdrop close, Escape close, create channel, active state, empty name validation
 - **`web/e2e/keyboard.spec.js`** (10 tests) -- Ctrl+K opens search, Escape priority ordering, focus return to input, Enter/Shift+Enter, Tab navigation, focus rings, Ctrl+K while typing
 - **`web/e2e/theme-responsive.spec.js`** (7 tests) -- dark/light theme toggle, 5 viewport sizes (1920-320px), resize transitions, no mobile overflow
+- **`web/e2e/user-stories.spec.js`** (7 tests) -- E2E user stories: new user first experience, team discussion with threads, channel management, reactions/interactions, search/navigation, customization/settings, mobile user
 
 ### Architecture Decisions
 
@@ -404,7 +405,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - **Zero JS runtime errors** confirmed across all interaction types
 - **27 Svelte components** (26 in `components/` + `App.svelte`) with **60+ `data-testid` attributes**
 - **18 Python source files** (14 modules + TUI subpackage)
-- **22 agent work logs** documenting all development and testing activity
+- **63 agent work logs** documenting all development and testing activity
 - **4 deployment targets**: pip install, Docker, docker-compose, VPS
 
 ### Known Issues
@@ -412,6 +413,6 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - WSL2 with Windows-mounted filesystems may not support `chmod 600` on config files (falls back to warning)
 - Architecture plan example key `phil0e8a` contains non-hex characters -- all real keys use `[0-9a-f]{8}` only
 - **mqtt.js event loop blocking** -- The mqtt.js library blocks the browser event loop during WebSocket reconnection, which affects Playwright testing (workaround: WebSocket mock + CDP `Runtime.evaluate`). Does not affect normal user interaction.
-- **Retained presence accumulation** -- Each browser session generates a new unique key and publishes a retained presence message that is never cleaned up. Over time this grows the participant list indefinitely. Recommended fix: deterministic keys via localStorage + TTL-based cleanup.
+- **Retained presence accumulation** -- Previously, each browser session generated a new unique key. Now fixed via localStorage persistence (key survives reloads), but old phantom retained messages from prior sessions are not cleaned up. TTL-based cleanup still recommended for long-running deployments.
 
 [0.1.0]: https://github.com/Aztec03Hub/claude-comms/releases/tag/v0.1.0
