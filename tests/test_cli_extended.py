@@ -93,8 +93,8 @@ class TestStopCommand:
         monkeypatch.setattr("claude_comms.cli._read_pid", lambda: None)
 
         result = runner.invoke(app, ["stop"])
-        assert result.exit_code == 1
-        assert "No daemon PID file" in result.output
+        assert result.exit_code == 0
+        assert "No daemon running" in result.output
 
     def test_stop_stale_pid(self, tmp_path: Path, monkeypatch) -> None:
         """When PID exists but process is gone, clean up the stale file."""

@@ -100,7 +100,7 @@ def get_channel_participants(channel: str) -> list[dict]:
             "key": m.key,
             "name": m.name,
             "type": m.type,
-            "client": "mcp",
+            "client": getattr(m, "client", "mcp"),
             "status": "online",
         }
         for m in members
@@ -127,7 +127,9 @@ async def _mqtt_subscriber(
     from claude_comms.broker import generate_client_id
 
     client_id = generate_client_id("mcp", "00000000")
-    topic = "claude-comms/conv/+/messages"
+    msg_topic = "claude-comms/conv/+/messages"
+    presence_topic = "claude-comms/conv/+/presence/+"
+    system_topic = "claude-comms/system/participants/+"
 
     while True:
         try:
@@ -136,7 +138,9 @@ async def _mqtt_subscriber(
                 port=port,
                 identifier=client_id,
             ) as client:
-                await client.subscribe(topic, qos=1)
+                await client.subscribe(msg_topic, qos=1)
+                await client.subscribe(presence_topic, qos=1)
+                await client.subscribe(system_topic, qos=1)
                 logger.info("MCP subscriber connected to %s:%d", host, port)
                 async for mqtt_msg in client.messages:
                     try:
@@ -145,14 +149,44 @@ async def _mqtt_subscriber(
                             if isinstance(mqtt_msg.payload, bytes)
                             else str(mqtt_msg.payload)
                         )
-                        msg = json.loads(payload)
-                        msg_id = msg.get("id", "")
-                        conv_id = msg.get("conv", "")
-                        if not msg_id or not conv_id:
-                            continue
-                        if deduplicator.is_duplicate(msg_id):
-                            continue
-                        store.add(conv_id, msg)
+                        data = json.loads(payload)
+                        topic_str = str(mqtt_msg.topic)
+                        parts = topic_str.split("/")
+
+                        # Handle messages
+                        if len(parts) >= 4 and parts[2] == "messages":
+                            msg_id = data.get("id", "")
+                            conv_id = data.get("conv", "")
+                            if not msg_id or not conv_id:
+                                continue
+                            if deduplicator.is_duplicate(msg_id):
+                                continue
+                            store.add(conv_id, data)
+
+                        # Handle presence — auto-register participants
+                        elif (len(parts) >= 4 and parts[2] == "presence") or (
+                            len(parts) >= 3 and parts[1] == "participants"
+                        ):
+                            key = data.get("key", "")
+                            name = data.get("name", "")
+                            status = data.get("status", "offline")
+                            client_type = data.get("client", "unknown")
+                            p_type = data.get("type", "claude")
+                            if key and name and status == "online" and _registry:
+                                # Register in the MCP participant registry
+                                conv = parts[2] if parts[1] == "conv" else "general"
+                                _registry.join(
+                                    name, conv, key=key, participant_type=p_type
+                                )
+                                # Store client type for API response
+                                p = _registry.get(key)
+                                if p:
+                                    p.client = client_type  # type: ignore[attr-defined]
+                            elif key and status == "offline" and _registry:
+                                existing = _registry.get(key)
+                                if existing:
+                                    _registry.leave(key, "general")
+
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning("Malformed MQTT message, skipping")
         except asyncio.CancelledError:

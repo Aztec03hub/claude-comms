@@ -587,9 +587,9 @@ def stop() -> None:
     pid = _read_pid()
     if pid is None:
         console.print(
-            "[yellow]No daemon PID file found. Is the daemon running?[/yellow]"
+            "[yellow]No daemon running.[/yellow]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(0)  # Exit 0 so && chains continue
 
     # Check process exists
     try:
