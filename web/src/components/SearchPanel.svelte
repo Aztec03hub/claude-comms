@@ -12,6 +12,9 @@
 
   const filters = ['All', 'Messages', 'Files', 'Code', 'Links'];
 
+  const URL_REGEX = /https?:\/\/[^\s<>)"']+/;
+  const CODE_BLOCK_REGEX = /```/;
+
   onMount(() => {
     // Auto-focus the search input when panel opens
     if (searchInputEl) searchInputEl.focus();
@@ -19,12 +22,39 @@
 
   // Escape handled by App.svelte global handler
 
+  function applyTypeFilter(messages, filter) {
+    if (filter === 'all') return messages;
+    return messages.filter(msg => {
+      const body = msg.body || '';
+      switch (filter) {
+        case 'messages':
+          // Text messages: no code blocks, no URLs
+          return !CODE_BLOCK_REGEX.test(body) && !URL_REGEX.test(body);
+        case 'files':
+          // Messages with file attachment markers
+          return !!(msg.attachments?.length) || /\[file:|\[attachment:/i.test(body);
+        case 'code':
+          return CODE_BLOCK_REGEX.test(body);
+        case 'links':
+          return URL_REGEX.test(body);
+        default:
+          return true;
+      }
+    });
+  }
+
   function handleSearch() {
     if (!searchQuery.trim()) {
       results = [];
       return;
     }
-    results = store.searchMessages(searchQuery);
+    const allResults = store.searchMessages(searchQuery);
+    results = applyTypeFilter(allResults, activeFilter);
+  }
+
+  function handleFilterClick(filter) {
+    activeFilter = filter.toLowerCase();
+    handleSearch();
   }
 
   function handleInput(e) {
@@ -61,7 +91,7 @@
         <button
           class="search-filter"
           class:active={activeFilter === filter.toLowerCase()}
-          onclick={() => activeFilter = filter.toLowerCase()}
+          onclick={() => handleFilterClick(filter)}
           data-testid="search-filter-{filter.toLowerCase()}"
           title="Filter by {filter.toLowerCase()}"
         >{filter}</button>

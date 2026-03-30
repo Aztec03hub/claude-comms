@@ -12,6 +12,9 @@
     if (store?.userProfile) {
       store.userProfile.name = displayName;
     }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('claude-comms-user-name', displayName);
+    }
   }
 
   function toggleDesktopNotifications() {

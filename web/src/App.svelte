@@ -17,6 +17,7 @@
   import ThreadPanel from './components/ThreadPanel.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import UserProfileView from './components/UserProfileView.svelte';
+  import ForwardPicker from './components/ForwardPicker.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
   import { Users, Search, Pin, Settings } from 'lucide-svelte';
 
@@ -46,6 +47,8 @@
   let deleteTarget = $state(null);
   let showUserProfileView = $state(false);
   let userProfileTarget = $state(null);
+  let showForwardPicker = $state(false);
+  let forwardTarget = $state(null);
 
   // Connect on mount
   $effect(() => {
@@ -163,8 +166,8 @@
       emojiPickerTarget = message;
       showEmojiPicker = true;
     } else if (action === 'forward') {
-      navigator.clipboard.writeText(message.body);
-      addToast({ id: 'fwd-' + Date.now(), sender: { name: 'System', key: 'system', type: 'system' }, channel: store.activeChannel, text: 'Forwarding coming soon' });
+      forwardTarget = message;
+      showForwardPicker = true;
     } else if (action === 'unread') {
       store.markUnread(message);
     } else if (action === 'delete') {
@@ -386,6 +389,20 @@
     confirmDanger={true}
     onConfirm={() => { store.deleteMessage(deleteTarget.id); showDeleteConfirm = false; deleteTarget = null; }}
     onCancel={() => { showDeleteConfirm = false; deleteTarget = null; }}
+  />
+{/if}
+
+{#if showForwardPicker && forwardTarget}
+  <ForwardPicker
+    channels={store.channels}
+    currentChannel={store.activeChannel}
+    onSelect={(channelId) => {
+      store.forwardMessage(forwardTarget, channelId);
+      showForwardPicker = false;
+      forwardTarget = null;
+      addToast({ id: 'fwd-' + Date.now(), sender: { name: 'System', key: 'system', type: 'system' }, channel: store.activeChannel, text: `Message forwarded to #${channelId}` });
+    }}
+    onClose={() => { showForwardPicker = false; forwardTarget = null; }}
   />
 {/if}
 
