@@ -19,7 +19,12 @@ from typing import Any, Protocol
 from claude_comms.broker import MessageStore
 from claude_comms.mention import build_mention_prefix
 from claude_comms.message import Message, validate_conv_id
-from claude_comms.participant import Participant, validate_key, validate_name
+from claude_comms.participant import (
+    Participant,
+    ParticipantType,
+    validate_key,
+    validate_name,
+)
 
 
 class PublishFn(Protocol):
@@ -69,7 +74,7 @@ class ParticipantRegistry:
         name: str,
         conversation: str,
         *,
-        participant_type: str = "claude",
+        participant_type: ParticipantType = "claude",
         key: str | None = None,
     ) -> Participant:
         """Register or re-register a participant in a conversation.

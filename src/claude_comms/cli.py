@@ -443,6 +443,8 @@ def start(
             broker_cfg = config.get("broker", {})
             broker_host = broker_cfg.get("host", "127.0.0.1")
             broker_port = broker_cfg.get("port", 1883)
+            assert _mcp_mod._store is not None, "MCP store not initialised"
+            assert _mcp_mod._deduplicator is not None, "MCP deduplicator not initialised"
             mqtt_sub_task = asyncio.create_task(
                 _mqtt_subscriber(
                     broker_host,
@@ -475,6 +477,7 @@ def start(
 
             # 3) Web server
             web_task: asyncio.Task | None = None
+            web_uvi_server: uvicorn.Server | None = None
             if web_enabled:
                 from starlette.applications import Starlette
                 from starlette.routing import Mount
@@ -527,7 +530,7 @@ def start(
             mcp_uvi_server.should_exit = True
             mqtt_sub_task.cancel()
             await pub_client.__aexit__(None, None, None)
-            if web_task is not None:
+            if web_task is not None and web_uvi_server is not None:
                 web_uvi_server.should_exit = True
             # Wait for tasks to finish (broker_task unblocks via shutdown_event)
             for t in [mcp_task, mqtt_sub_task, web_task, broker_task]:

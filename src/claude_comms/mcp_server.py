@@ -298,6 +298,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Send a message to a conversation. Optionally target specific recipients by name or key."""
+        assert _publish_fn is not None, "Publish function not initialised"
         return await tool_comms_send(
             _get_registry(),
             _publish_fn,
@@ -419,6 +420,8 @@ def start_server(config: dict[str, Any] | None = None) -> None:
         global _publish_fn
 
         # Start MQTT subscriber background task
+        assert _store is not None, "Message store not initialised"
+        assert _deduplicator is not None, "Deduplicator not initialised"
         sub_task = asyncio.create_task(
             _mqtt_subscriber(broker_host, broker_port, _store, _deduplicator)
         )
