@@ -265,29 +265,35 @@ def _is_claude_comms_hook_entry(entry: dict[str, Any]) -> bool:
 def install_hook(
     participant_key: str | None = None,
     config_path: Path | None = None,
-) -> dict[str, Path]:
+) -> dict[str, Any]:
     """Install the Claude Comms notification hook.
 
-    1. Loads participant key from config if not provided
-    2. Generates platform-appropriate hook script
-    3. Installs script to ~/.claude/hooks/
-    4. Adds PostToolUse entry to ~/.claude/settings.json
-    5. Creates notification directory
+    1. Checks notifications.hook_enabled config — skips if False
+    2. Loads participant key from config if not provided
+    3. Generates platform-appropriate hook script
+    4. Installs script to ~/.claude/hooks/
+    5. Adds PostToolUse entry to ~/.claude/settings.json
+    6. Creates notification directory
 
     Args:
         participant_key: Override the participant key (default: from config).
         config_path: Override the config file path (for testing).
 
     Returns:
-        Dict with 'script_path' and 'settings_path' keys.
+        Dict with 'script_path' and 'settings_path' keys on success,
+        or {'skipped': True, 'reason': ...} when hook_enabled is False.
 
     Raises:
         ValueError: If no participant key is available.
         OSError: If file system operations fail.
     """
-    # Resolve participant key
+    # Resolve participant key and check hook_enabled config
+    config = load_config(config_path)
+
+    if not config.get("notifications", {}).get("hook_enabled", True):
+        return {"skipped": True, "reason": "hook_enabled is False in config"}
+
     if participant_key is None:
-        config = load_config(config_path)
         participant_key = config["identity"]["key"]
         if not participant_key:
             raise ValueError(

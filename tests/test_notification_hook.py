@@ -346,6 +346,32 @@ class TestInstallUninstall:
         # Should have exactly one hook entry, not two
         assert len(settings["hooks"]["PostToolUse"]) == 1
 
+    def test_install_skips_when_hook_disabled(self, mock_home):
+        """install_hook should return skipped result when hook_enabled is False."""
+        config_path = mock_home / ".claude-comms" / "config.yaml"
+        config_path.write_text(
+            f"identity:\n  key: {SAMPLE_KEY}\n  name: test\n  type: claude\n"
+            "notifications:\n  hook_enabled: false\n"
+        )
+
+        result = install_hook(participant_key=SAMPLE_KEY)
+        assert result.get("skipped") is True
+        assert "hook_enabled" in result.get("reason", "")
+        # No script should have been created
+        assert not _hook_script_path(SAMPLE_KEY).exists()
+
+    def test_install_proceeds_when_hook_enabled(self, mock_home):
+        """install_hook should install normally when hook_enabled is True."""
+        config_path = mock_home / ".claude-comms" / "config.yaml"
+        config_path.write_text(
+            f"identity:\n  key: {SAMPLE_KEY}\n  name: test\n  type: claude\n"
+            "notifications:\n  hook_enabled: true\n"
+        )
+
+        result = install_hook(participant_key=SAMPLE_KEY)
+        assert "skipped" not in result
+        assert result["script_path"].exists()
+
 
 # --- Hook script integration test (Unix only) ---
 

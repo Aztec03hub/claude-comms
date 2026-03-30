@@ -505,6 +505,9 @@ export class MqttChatStore {
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/presence/+', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/typing/+', { qos: 0 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/meta', { qos: 1 });
+    this.#client.subscribe(TOPIC_PREFIX + '/conv/+/reactions', { qos: 1 });
+    this.#client.subscribe(TOPIC_PREFIX + '/conv/+/pins', { qos: 1 });
+    this.#client.subscribe(TOPIC_PREFIX + '/conv/+/deletions', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/system/participants/+', { qos: 1 });
   }
 
@@ -520,6 +523,12 @@ export class MqttChatStore {
       this.#handleTyping(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'meta') {
       this.#handleMeta(topicParts[1], msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'reactions') {
+      this.#handleRemoteReaction(topicParts[1], msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'pins') {
+      this.#handleRemotePin(topicParts[1], msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'deletions') {
+      this.#handleRemoteDeletion(topicParts[1], msg);
     } else if (topicParts[0] === 'system' && topicParts[1] === 'participants') {
       this.#handleParticipantRegistry(msg);
     }
@@ -603,6 +612,66 @@ export class MqttChatStore {
         type: msg.type,
         status: msg.status || this.participants[msg.key]?.status || 'offline'
       };
+    }
+  }
+
+  #handleRemoteReaction(channel, msg) {
+    // Ignore our own broadcasts (we already applied locally)
+    if (msg.sender?.key === this.userProfile.key) return;
+
+    const target = this.messages.find(m => m.id === msg.message_id);
+    if (!target) return;
+
+    if (!target.reactions) target.reactions = [];
+
+    if (msg.action === 'add') {
+      const existing = target.reactions.find(r => r.emoji === msg.emoji);
+      if (existing) {
+        existing.count++;
+      } else {
+        target.reactions.push({ emoji: msg.emoji, count: 1, active: false });
+      }
+    } else if (msg.action === 'remove') {
+      const existing = target.reactions.find(r => r.emoji === msg.emoji);
+      if (existing) {
+        existing.count--;
+        if (existing.count <= 0) {
+          target.reactions = target.reactions.filter(r => r.emoji !== msg.emoji);
+        }
+      }
+    }
+
+    // Trigger reactivity
+    this.messages = [...this.messages];
+  }
+
+  #handleRemotePin(channel, msg) {
+    if (msg.sender?.key === this.userProfile.key) return;
+
+    if (msg.action === 'pin') {
+      // Only add if not already pinned
+      if (!this.pinnedMessages.find(m => m.id === msg.message_id)) {
+        const target = this.messages.find(m => m.id === msg.message_id);
+        if (target) {
+          this.pinnedMessages.push({ ...target, channel });
+        }
+      }
+    } else if (msg.action === 'unpin') {
+      const idx = this.pinnedMessages.findIndex(m => m.id === msg.message_id);
+      if (idx >= 0) {
+        this.pinnedMessages.splice(idx, 1);
+      }
+    }
+  }
+
+  #handleRemoteDeletion(channel, msg) {
+    if (msg.sender?.key === this.userProfile.key) return;
+
+    this.messages = this.messages.filter(m => m.id !== msg.message_id);
+    // Also remove from pinned if it was pinned
+    const pinIdx = this.pinnedMessages.findIndex(m => m.id === msg.message_id);
+    if (pinIdx >= 0) {
+      this.pinnedMessages.splice(pinIdx, 1);
     }
   }
 

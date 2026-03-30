@@ -50,6 +50,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     },
     "notifications": {
         "hook_enabled": True,
+        # sound_enabled is read by the web UI only (SettingsPanel toggle).
+        # The Python backend does not use this value.
         "sound_enabled": False,
     },
     "logging": {
