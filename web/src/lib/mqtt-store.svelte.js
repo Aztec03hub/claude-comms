@@ -140,8 +140,8 @@ export class MqttChatStore {
         const compositeKey = p.key + '-' + clientType;
         serverKeys.add(compositeKey);
 
-        // Don't overwrite our own web entry
-        if (p.key === this.userProfile.key && clientType === 'web') continue;
+        // Don't create duplicate entries for ourselves from API
+        if (p.key === this.userProfile.key) continue;
 
         // Merge: preserve existing status if already tracked, default online
         this.participants[compositeKey] = {
