@@ -13,6 +13,14 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-mqtt': ['mqtt'],
+          'vendor-ui': ['bits-ui', 'lucide-svelte'],
+        }
+      }
+    }
   }
 });
