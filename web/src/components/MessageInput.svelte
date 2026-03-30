@@ -348,7 +348,8 @@
   }
 
   .input-wrap:focus-within {
-    border-color: rgba(245,158,11,0.15);
+    border-color: rgba(245,158,11,0.25);
+    box-shadow: 0 0 0 3px var(--border-glow), 0 0 24px rgba(245,158,11,0.04), 0 2px 8px rgba(0,0,0,0.15);
   }
 
   .input-wrap textarea {
