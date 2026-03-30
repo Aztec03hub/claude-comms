@@ -90,10 +90,12 @@ export class MqttChatStore {
         newMessages.push({ ...msg, channel });
       }
       if (newMessages.length > 0) {
-        // Use spread assignment to trigger Svelte 5 reactivity
+        // Defer the state update to next microtask so Svelte 5's
+        // reactive system is fully initialized after connect()
+        await new Promise(r => setTimeout(r, 0));
+        // Immutable reassignment triggers $derived recalculation
         this.messages = [...this.messages, ...newMessages]
           .sort((a, b) => new Date(a.ts) - new Date(b.ts));
-        console.log(`[claude-comms] Loaded ${newMessages.length} historical messages for #${channel}`);
       }
     } catch {
       // History fetch failed — not critical, live messages still work

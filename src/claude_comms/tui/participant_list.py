@@ -50,12 +50,14 @@ class ParticipantItem(Widget):
         participant_key: str,
         name: str,
         participant_type: str = "claude",
+        client_type: str = "unknown",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.participant_key = participant_key
         self.participant_name = name
         self.participant_type = participant_type
+        self.client_type = client_type
         self._label = Label("")
 
     def compose(self) -> ComposeResult:
@@ -69,11 +71,12 @@ class ParticipantItem(Widget):
         self._refresh_display()
 
     def _refresh_display(self) -> None:
-        """Update the label with presence dot and name."""
+        """Update the label with presence dot, name, and client type."""
         state = self.presence
         type_icon = "\U0001f916" if self.participant_type == "claude" else "\U0001f464"
+        client_label = f" [dim]({self.client_type})[/]" if self.client_type and self.client_type != "unknown" else ""
         self._label.update(
-            f"[{state.color}]{state.dot}[/] {type_icon} {self.participant_name}"
+            f"[{state.color}]{state.dot}[/] {type_icon} {self.participant_name}{client_label}"
         )
 
 
@@ -103,12 +106,14 @@ class ParticipantList(Vertical):
         name: str,
         participant_type: str = "claude",
         presence: PresenceState = PresenceState.OFFLINE,
+        client_type: str = "unknown",
     ) -> None:
         """Add or update a participant in the list."""
         if key in self._items:
             item = self._items[key]
             item.participant_name = name
             item.participant_type = participant_type
+            item.client_type = client_type
             item.presence = presence
             item._refresh_display()
         else:
@@ -116,6 +121,7 @@ class ParticipantList(Vertical):
                 participant_key=key,
                 name=name,
                 participant_type=participant_type,
+                client_type=client_type,
             )
             item.presence = presence
             self._items[key] = item

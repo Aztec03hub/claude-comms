@@ -238,10 +238,11 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 "name": result["name"],
                 "type": result["type"],
                 "status": "online",
+                "client": "mcp",
                 "ts": _ts,
             }).encode()
             presence_topic = f"claude-comms/conv/{conversation}/presence/{result['key']}"
-            system_topic = f"claude-comms/system/participants/{result['key']}"
+            system_topic = f"claude-comms/system/participants/{result['key']}-mcp"
             try:
                 loop = _asyncio.get_event_loop()
                 loop.create_task(_publish_fn(presence_topic, presence_payload))
