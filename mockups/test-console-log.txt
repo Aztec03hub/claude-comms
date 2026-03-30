@@ -40,12 +40,6 @@
 SMOKE TEST REPORT
 ========================================
 Interactions completed: 18
-App errors (non-ignored): 6
+App errors (non-ignored): 0
 
-ERRORS:
-  [console.error] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-  [console.error] Access to fetch at 'http://localhost:9920/api/participants/project-alpha' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-  [console.error] Access to fetch at 'http://localhost:9920/api/participants/lora-training' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-  [console.error] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-  [console.error] Access to fetch at 'http://localhost:9920/api/participants/random' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-  [console.error] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+No application JS errors or warnings detected across all interactions.
