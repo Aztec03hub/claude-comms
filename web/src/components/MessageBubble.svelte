@@ -71,7 +71,11 @@
     </div>
 
     {#if message.reactions?.length}
-      <ReactionBar reactions={message.reactions} />
+      <ReactionBar
+        reactions={message.reactions}
+        onAddReaction={() => onReact?.(message)}
+        onToggleReaction={(emoji) => onReact?.(message, emoji)}
+      />
     {/if}
 
     {#if message.thread_count}

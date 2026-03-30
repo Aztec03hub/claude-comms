@@ -1,15 +1,19 @@
 <script>
-  let { reactions = [] } = $props();
+  let { reactions = [], onAddReaction, onToggleReaction } = $props();
 </script>
 
 <div class="reactions">
   {#each reactions as reaction}
-    <div class="reaction" class:active={reaction.active}>
+    <button
+      class="reaction"
+      class:active={reaction.active}
+      onclick={() => onToggleReaction?.(reaction.emoji)}
+    >
       <span class="emoji">{reaction.emoji}</span>
       <span class="count">{reaction.count}</span>
-    </div>
+    </button>
   {/each}
-  <div class="reaction-add">+</div>
+  <button class="reaction-add" onclick={() => onAddReaction?.()}>+</button>
 </div>
 
 <style>

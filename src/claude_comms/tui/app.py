@@ -62,7 +62,7 @@ class ClaudeCommsApp(App):
 
         # Build our participant identity
         self._key = identity.get("key", "00000000")
-        self._name = identity.get("name", "unnamed")
+        self._name = identity.get("name", "") or f"user-{self._key}"
         self._type = identity.get("type", "human")
 
         # MQTT connection info
@@ -238,7 +238,9 @@ class ClaudeCommsApp(App):
             return
 
         key = data.get("key", "")
-        name = data.get("name", "unknown")
+        if not key:
+            return
+        name = data.get("name", "") or f"user-{key}"
         ptype = data.get("type", "claude")
         status = data.get("status", "offline")
 
@@ -349,7 +351,10 @@ class ClaudeCommsApp(App):
         # Simple approach: cycle through conversations
         if len(self._conversations) <= 1:
             return
-        idx = self._conversations.index(self._active_conv)
+        try:
+            idx = self._conversations.index(self._active_conv)
+        except ValueError:
+            idx = -1
         next_idx = (idx + 1) % len(self._conversations)
         self._switch_to_conv(self._conversations[next_idx])
 

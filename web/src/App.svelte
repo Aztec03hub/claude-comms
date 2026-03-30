@@ -172,9 +172,15 @@
     showProfileCard = true;
   }
 
-  function handleReact(message) {
-    emojiPickerTarget = message;
-    showEmojiPicker = true;
+  function handleReact(message, emoji) {
+    if (emoji) {
+      // Toggle existing reaction directly (clicked a reaction pill)
+      store.addReaction(message.id, emoji);
+    } else {
+      // Open emoji picker to add new reaction (clicked + button)
+      emojiPickerTarget = message;
+      showEmojiPicker = true;
+    }
   }
 
   function handleEmojiSelect(emojiData) {

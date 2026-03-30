@@ -95,6 +95,8 @@ def init(
 
     if name:
         config["identity"]["name"] = name
+    # config already has a default name from get_default_config() (OS username)
+
     if identity_type in ("human", "claude"):
         config["identity"]["type"] = identity_type
     else:
@@ -110,8 +112,7 @@ def init(
     console.print(f"[green]Config created at {saved_path}[/green]")
     console.print(f"  Identity key: [bold]{config['identity']['key']}[/bold]")
     console.print(f"  Identity type: {config['identity']['type']}")
-    if name:
-        console.print(f"  Name: {config['identity']['name']}")
+    console.print(f"  Name: {config['identity']['name']}")
     console.print(
         "\n[dim]Next: set CLAUDE_COMMS_PASSWORD env var or edit "
         f"{saved_path} to configure broker auth.[/dim]"

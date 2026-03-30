@@ -179,10 +179,21 @@ def save_config(config: dict[str, Any], path: Path | None = None) -> Path:
     return path
 
 
+def _default_username() -> str:
+    """Return the current OS username for use as a default display name."""
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except Exception:
+        return "unnamed"
+
+
 def get_default_config() -> dict[str, Any]:
-    """Return a copy of the default config with a fresh identity key."""
+    """Return a copy of the default config with a fresh identity key and default name."""
     import copy
 
     config = copy.deepcopy(_DEFAULT_CONFIG)
     config["identity"]["key"] = generate_identity_key()
+    config["identity"]["name"] = _default_username()
     return config
