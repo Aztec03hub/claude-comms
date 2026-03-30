@@ -1,5 +1,29 @@
 <script>
+  import { RefreshCw } from 'lucide-svelte';
+
   let { connected = false, onlineCount = 0, error = null } = $props();
+  let retryCount = $state(0);
+  let retryTimer = $state(null);
+  let retrySeconds = $state(0);
+
+  // Track reconnection attempts when in error state
+  $effect(() => {
+    if (error && !connected) {
+      retryCount++;
+      retrySeconds = 5;
+      retryTimer = setInterval(() => {
+        retrySeconds--;
+        if (retrySeconds <= 0) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+        }
+      }, 1000);
+    } else if (connected) {
+      retryCount = 0;
+      retrySeconds = 0;
+      if (retryTimer) clearInterval(retryTimer);
+    }
+  });
 </script>
 
 {#if connected}
@@ -10,12 +34,26 @@
 {:else if error}
   <div class="connection-banner error" data-testid="connection-status" role="alert" aria-live="assertive">
     <div class="connection-dot error-dot" aria-hidden="true"></div>
-    {error}
+    <span class="error-text">{error}</span>
+    <span class="retry-info">
+      {#if retrySeconds > 0}
+        <RefreshCw size={10} strokeWidth={2} />
+        Retrying in {retrySeconds}s
+      {:else}
+        <RefreshCw size={10} strokeWidth={2} class="retry-spin" />
+        Reconnecting...
+      {/if}
+    </span>
   </div>
 {:else}
   <div class="connection-banner connecting" data-testid="connection-status" role="status" aria-live="polite">
     <div class="connection-dot connecting-dot" aria-hidden="true"></div>
-    Connecting...
+    <span class="connecting-text">Establishing secure connection</span>
+    <span class="connecting-dots" aria-hidden="true">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    </span>
   </div>
 {/if}
 
@@ -30,6 +68,7 @@
     font-weight: 500;
     position: relative;
     z-index: 2;
+    transition: all 0.3s ease;
   }
 
   .connection-banner.connected {
@@ -41,15 +80,17 @@
   }
 
   .connection-banner.error {
-    background: linear-gradient(90deg, rgba(239,68,68,0.12), rgba(239,68,68,0.08));
+    background: linear-gradient(90deg, rgba(239,68,68,0.12), rgba(239,68,68,0.06));
     border-bottom: 1px solid rgba(239,68,68,0.2);
     color: #f87171;
+    padding: 8px 16px;
   }
 
   .connection-banner.connecting {
     background: linear-gradient(90deg, rgba(245,158,11,0.12), rgba(245,158,11,0.08));
     border-bottom: 1px solid rgba(245,158,11,0.2);
     color: var(--ember-400);
+    animation: connBannerPulse 2s ease-in-out infinite;
   }
 
   .connection-dot {
@@ -59,15 +100,82 @@
     background: #34d399;
     box-shadow: 0 0 6px rgba(52,211,153,0.4);
     animation: connPulse 2s ease-in-out infinite;
+    flex-shrink: 0;
   }
 
   .connection-dot.error-dot {
     background: #f87171;
     box-shadow: 0 0 6px rgba(248,113,113,0.4);
+    animation: none;
   }
 
   .connection-dot.connecting-dot {
     background: var(--ember-400);
     box-shadow: 0 0 6px rgba(245,158,11,0.4);
+    animation: connDotPulse 1.5s ease-in-out infinite;
+  }
+
+  .error-text {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .retry-info {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    opacity: 0.7;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+
+  .retry-info :global(.retry-spin) {
+    animation: spin 1s linear infinite;
+  }
+
+  .connecting-text {
+    opacity: 0.9;
+  }
+
+  .connecting-dots {
+    display: inline-flex;
+    gap: 3px;
+    margin-left: 2px;
+  }
+
+  .connecting-dots .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--ember-400);
+    animation: connDotBounce 1.4s ease-in-out infinite;
+  }
+
+  .connecting-dots .dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .connecting-dots .dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
+  @keyframes connBannerPulse {
+    0%, 100% { background: linear-gradient(90deg, rgba(245,158,11,0.12), rgba(245,158,11,0.08)); }
+    50% { background: linear-gradient(90deg, rgba(245,158,11,0.16), rgba(245,158,11,0.1)); }
+  }
+
+  @keyframes connDotPulse {
+    0%, 100% { transform: scale(1); opacity: 0.7; box-shadow: 0 0 6px rgba(245,158,11,0.4); }
+    50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 12px rgba(245,158,11,0.6); }
+  }
+
+  @keyframes connDotBounce {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.6); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>
