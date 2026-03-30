@@ -89,25 +89,28 @@ test.describe('Round 9: Visual Consistency', () => {
       const sidebar = document.querySelector('[data-testid="sidebar"]');
       const chatView = document.querySelector('[data-testid="chat-view"]');
       const memberList = document.querySelector('[data-testid="member-list"]');
+      const sr = sidebar?.getBoundingClientRect();
+      const cr = chatView?.getBoundingClientRect();
+      const mr = memberList?.getBoundingClientRect();
       return {
-        sidebar: sidebar?.getBoundingClientRect(),
-        chatView: chatView?.getBoundingClientRect(),
-        memberList: memberList?.getBoundingClientRect(),
+        sidebarX: sr?.x, sidebarW: sr?.width,
+        chatX: cr?.x, chatW: cr?.width,
+        memberX: mr?.x, memberW: mr?.width,
         windowWidth: window.innerWidth,
         windowHeight: window.innerHeight
       };
     })()`);
 
     // Sidebar should be on the left
-    expect(layout.sidebar.x).toBe(0);
-    expect(layout.sidebar.width).toBeGreaterThan(200);
+    expect(layout.sidebarX).toBe(0);
+    expect(layout.sidebarW).toBeGreaterThan(200);
 
     // Chat view should be in the center
-    expect(layout.chatView.x).toBeGreaterThan(layout.sidebar.width - 10);
+    expect(layout.chatX).toBeGreaterThan(layout.sidebarW - 10);
 
     // Member list should be on the right
-    if (layout.memberList) {
-      expect(layout.memberList.x).toBeGreaterThan(layout.chatView.x);
+    if (layout.memberX !== undefined) {
+      expect(layout.memberX).toBeGreaterThan(layout.chatX);
     }
   });
 
@@ -142,27 +145,43 @@ test.describe('Round 9: Visual Consistency', () => {
     await sendMessage('Hover test message');
     await delay(300);
 
-    // Action bar should be hidden initially
-    const barHidden = await ce(`(() => {
+    // Action bar opacity should be 0 initially (it's always in DOM, just transparent)
+    const opacityBefore = await ce(`(() => {
       const bar = document.querySelector('[data-testid="message-actions"]');
-      if (!bar) return true;
-      const cs = getComputedStyle(bar);
-      return cs.opacity === '0' || cs.visibility === 'hidden' || cs.display === 'none';
+      if (!bar) return '-1';
+      return getComputedStyle(bar).opacity;
     })()`);
-    expect(barHidden).toBe(true);
+    expect(opacityBefore).toBe('0');
 
-    // Hover the message row
-    await page.locator('.msg-row').first().hover();
+    // Use CDP DOM.setInspectedNode + CSS.forcePseudoState to simulate :hover
+    // First get the node ID of the message row
+    const { root } = await cdp.send('DOM.getDocument');
+    const { nodeId } = await cdp.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: '.msg-row'
+    });
+
+    // Force :hover pseudo-state on the element
+    await cdp.send('CSS.enable');
+    await cdp.send('CSS.forcePseudoState', {
+      nodeId: nodeId,
+      forcedPseudoClasses: ['hover']
+    });
     await delay(300);
 
-    // Action bar should be visible
-    const barVisible = await ce(`(() => {
+    // Check opacity now
+    const opacityAfter = await ce(`(() => {
       const bar = document.querySelector('[data-testid="message-actions"]');
-      if (!bar) return false;
-      const cs = getComputedStyle(bar);
-      return cs.opacity !== '0' && cs.visibility !== 'hidden' && cs.display !== 'none';
+      if (!bar) return '0';
+      return getComputedStyle(bar).opacity;
     })()`);
-    expect(barVisible).toBe(true);
+    expect(opacityAfter).toBe('1');
+
+    // Clean up
+    await cdp.send('CSS.forcePseudoState', {
+      nodeId: nodeId,
+      forcedPseudoClasses: []
+    });
 
     await cdpScreenshot('overnight-r9-03-hover-action-bar');
   });

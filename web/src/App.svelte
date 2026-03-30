@@ -329,6 +329,22 @@
   <ProfileCard
     participant={profileCardTarget}
     onClose={() => showProfileCard = false}
+    onMessage={(p) => {
+      // Focus message input with @mention pre-filled
+      showProfileCard = false;
+      const input = document.querySelector('[data-testid="message-input"]');
+      if (input) {
+        input.value = `@${p.name} `;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+        input.selectionStart = input.selectionEnd = input.value.length;
+      }
+    }}
+    onViewProfile={(p) => {
+      // Open settings panel to show profile info
+      showProfileCard = false;
+      showSettingsPanel = true;
+    }}
   />
 {/if}
 

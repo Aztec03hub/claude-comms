@@ -81,8 +81,32 @@ export class MqttChatStore {
     Object.values(this.participants).filter(p => p.status === 'online').length
   );
 
+  /** Total number of messages across all channels. */
+  messageCount = $derived(this.messages.length);
+
   /**
-   * Connect to the MQTT broker.
+   * Look up a channel by its ID.
+   * @param {string} id - The channel identifier.
+   * @returns {object|undefined} The channel object, or undefined if not found.
+   */
+  getChannelById(id) {
+    return this.channels.find(c => c.id === id);
+  }
+
+  /**
+   * Look up a participant by their key.
+   * @param {string} key - The participant key (8 hex chars).
+   * @returns {object|undefined} The participant object, or undefined if not found.
+   */
+  getParticipantByKey(key) {
+    return this.participants[key];
+  }
+
+  /**
+   * Connect to the MQTT broker via WebSocket.
+   * Restores user identity from localStorage and sets up event handlers
+   * for connection, disconnection, reconnection, and incoming messages.
+   * @throws Will set connectionError state if the broker is unreachable.
    */
   connect() {
     // Persist user key in localStorage so sessions reuse the same identity.
@@ -136,15 +160,28 @@ export class MqttChatStore {
     });
 
     this.#client.on('error', (err) => {
-      this.connectionError = err.message;
+      if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+        this.connectionError = 'Broker unavailable — is amqtt running on ' + BROKER_URL + '?';
+      } else if (err.message?.includes('WebSocket')) {
+        this.connectionError = 'WebSocket connection failed — check broker WebSocket listener.';
+      } else {
+        this.connectionError = 'MQTT error: ' + (err.message || String(err));
+      }
     });
 
     this.#client.on('close', () => {
       this.connected = false;
     });
 
+    this.#client.on('offline', () => {
+      this.connected = false;
+      if (!this.connectionError) {
+        this.connectionError = 'Connection lost — waiting to reconnect...';
+      }
+    });
+
     this.#client.on('reconnect', () => {
-      this.connectionError = 'Reconnecting...';
+      this.connectionError = 'Reconnecting to broker...';
     });
 
     this.#client.on('message', (topic, payload) => {
@@ -158,7 +195,8 @@ export class MqttChatStore {
   }
 
   /**
-   * Disconnect from the broker.
+   * Disconnect from the MQTT broker and clean up.
+   * Publishes an offline presence message before closing the connection.
    */
   disconnect() {
     if (this.#client) {
@@ -171,8 +209,10 @@ export class MqttChatStore {
 
   /**
    * Send a chat message to the active channel.
-   * @param {string} body
-   * @param {string|null} replyTo
+   * The message is echoed locally before publishing to the broker,
+   * so it appears immediately even on slow connections.
+   * @param {string} body - The message text (whitespace-only bodies are ignored).
+   * @param {string|null} replyTo - Optional ID of the message being replied to.
    */
   sendMessage(body, replyTo = null) {
     if (!body.trim()) return;
@@ -205,8 +245,9 @@ export class MqttChatStore {
   }
 
   /**
-   * Switch to a different channel.
-   * @param {string} channelId
+   * Switch the active channel and clear its unread count.
+   * No-op if already viewing the target channel.
+   * @param {string} channelId - The channel to switch to.
    */
   switchChannel(channelId) {
     if (channelId === this.activeChannel) return;
@@ -224,9 +265,11 @@ export class MqttChatStore {
   }
 
   /**
-   * Create a new channel / conversation.
-   * @param {string} id
-   * @param {string} topic
+   * Create a new channel and switch to it.
+   * Publishes retained metadata to the broker so other clients discover it.
+   * No-op if a channel with the given ID already exists.
+   * @param {string} id - Unique channel identifier (lowercase, dashes).
+   * @param {string} topic - Short description shown in the channel header.
    */
   createChannel(id, topic = '') {
     if (this.channels.find(c => c.id === id)) return;
@@ -253,8 +296,8 @@ export class MqttChatStore {
   }
 
   /**
-   * Toggle starred status on a channel.
-   * @param {string} channelId
+   * Toggle whether a channel is starred (pinned at the top of the sidebar).
+   * @param {string} channelId - The channel to star/unstar.
    */
   toggleStar(channelId) {
     const ch = this.channels.find(c => c.id === channelId);
@@ -262,7 +305,9 @@ export class MqttChatStore {
   }
 
   /**
-   * Notify broker that user is typing.
+   * Publish a typing indicator to the active channel.
+   * Call this on keystrokes in the message input; the indicator
+   * auto-expires after 3 seconds of inactivity.
    */
   notifyTyping() {
     if (this.#myTypingTimer) clearTimeout(this.#myTypingTimer);
@@ -273,8 +318,8 @@ export class MqttChatStore {
   }
 
   /**
-   * Mark a channel as having unread messages from a specific message.
-   * @param {object} message
+   * Mark a channel as having unread messages starting from a specific message.
+   * @param {object} message - A message object; its channel/conv field is used to find the channel.
    */
   markUnread(message) {
     const ch = this.channels.find(c => c.id === (message.channel || message.conv || this.activeChannel));

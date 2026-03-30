@@ -2,7 +2,7 @@
   import { Star } from 'lucide-svelte';
   import { getParticipantColor, getInitials } from '../lib/utils.js';
 
-  let { participant, onClose } = $props();
+  let { participant, onClose, onMessage, onViewProfile } = $props();
 
   let color = $derived(getParticipantColor(participant.key));
 </script>
@@ -32,8 +32,8 @@
         {participant.type === 'human' ? 'Admin' : 'Agent'}
       </div>
       <div class="profile-card-actions">
-        <button class="profile-card-btn" onclick={onClose}>Message</button>
-        <button class="profile-card-btn primary" onclick={onClose}>View Profile</button>
+        <button class="profile-card-btn" onclick={() => { onMessage?.(participant); onClose(); }} data-testid="profile-msg-btn">Message</button>
+        <button class="profile-card-btn primary" onclick={() => { onViewProfile?.(participant); onClose(); }} data-testid="profile-view-btn">View Profile</button>
       </div>
     </div>
   </div>
