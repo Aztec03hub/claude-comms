@@ -1068,7 +1068,7 @@ class TestRound9EmptyChannelAndHelp:
 
             # Add a message to the empty channel
             msg = Message.create(
-                sender_key="someone",
+                sender_key="someone1",
                 sender_name="someone",
                 sender_type="human",
                 body="First message!",
