@@ -96,7 +96,13 @@ def get_channel_participants(channel: str) -> list[dict]:
         return []
     members = _registry.members(channel)
     return [
-        {"key": m.key, "name": m.name, "type": m.type}
+        {
+            "key": m.key,
+            "name": m.name,
+            "type": m.type,
+            "client": "mcp",
+            "status": "online",
+        }
         for m in members
     ]
 
