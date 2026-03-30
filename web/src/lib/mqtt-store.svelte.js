@@ -245,6 +245,20 @@ export class MqttChatStore {
       };
       // Fetch message history from the REST API so messages survive page refresh
       this.#fetchHistory(this.activeChannel);
+
+      // DEBUG: Add a test message to verify rendering works
+      const testMsg = {
+        id: 'debug-test-' + Date.now(),
+        ts: new Date().toISOString(),
+        sender: { key: this.userProfile.key, name: 'System', type: 'human' },
+        recipients: null,
+        body: 'DEBUG: Connection established, testing message rendering.',
+        reply_to: null,
+        conv: this.activeChannel,
+        channel: this.activeChannel
+      };
+      this.messages = [...this.messages, testMsg];
+      console.log('[claude-comms] DEBUG: added test message, messages.length =', this.messages.length, 'activeMessages.length =', this.activeMessages.length);
     });
 
     this.#client.on('error', (err) => {
