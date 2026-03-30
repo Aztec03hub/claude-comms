@@ -73,6 +73,18 @@ def _get_store() -> MessageStore:
     return _store
 
 
+def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
+    """Return recent messages for *channel* from the shared store.
+
+    This is the backing function for the ``/api/messages/{channel}`` REST
+    endpoint added in ``cli.py``.  Returns an empty list when the store
+    has not been initialised yet (daemon still starting).
+    """
+    if _store is None:
+        return []
+    return _store.get(channel, limit=count)
+
+
 # ---------------------------------------------------------------------------
 # MQTT subscriber background task
 # ---------------------------------------------------------------------------
@@ -211,9 +223,26 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Join a conversation. Returns your participant key. Call with name on first use; key on subsequent calls."""
-        return tool_comms_join(
+        result = tool_comms_join(
             _get_registry(), key=key, conversation=conversation, name=name
         )
+        # Publish presence so TUI/web clients see this participant
+        if not result.get("error") and _publish_fn:
+            import json as _json, asyncio as _asyncio
+            presence_topic = f"claude-comms/conv/{conversation}/presence/{result['key']}"
+            presence_payload = _json.dumps({
+                "key": result["key"],
+                "name": result["name"],
+                "type": result["type"],
+                "status": "online",
+            }).encode()
+            try:
+                _asyncio.get_event_loop().create_task(
+                    _publish_fn(presence_topic, presence_payload)
+                )
+            except Exception:
+                pass  # Non-critical — presence is best-effort
+        return result
 
     @mcp.tool()
     def comms_leave(

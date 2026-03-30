@@ -2,6 +2,7 @@ import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
 
 const BROKER_URL = 'ws://localhost:9001/mqtt';
+const MCP_API_URL = 'http://localhost:9920';
 const TOPIC_PREFIX = 'claude-comms';
 const TYPING_TTL_MS = 5000;
 const BASE_RECONNECT_MS = 3000;
@@ -68,6 +69,39 @@ export class MqttChatStore {
   #seenMessageIds = new Set();
   #failureCount = 0;
   #backoffActive = false;
+
+  /**
+   * Fetch message history from the REST API for a given channel.
+   * Messages are deduplicated against the seen-ID set so live MQTT
+   * messages that arrived before the history response don't appear twice.
+   * @param {string} channel - The channel to fetch history for.
+   */
+  async #fetchHistory(channel) {
+    try {
+      const res = await fetch(`${MCP_API_URL}/api/messages/${encodeURIComponent(channel)}?count=50`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data.messages)) return;
+
+      let added = 0;
+      for (const msg of data.messages) {
+        if (!msg.id || this.#seenIds.has(msg.id)) continue;
+        this.#seenIds.add(msg.id);
+        this.messages.push({
+          ...msg,
+          channel: channel,
+        });
+        added++;
+      }
+      if (added > 0) {
+        // Sort messages chronologically after loading history
+        this.messages.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+        console.log(`[claude-comms] Loaded ${added} historical messages for #${channel}`);
+      }
+    } catch {
+      // History fetch failed — not critical, live messages still work
+    }
+  }
 
   // ── Derived State ──
   activeMessages = $derived(
@@ -191,6 +225,8 @@ export class MqttChatStore {
         type: this.userProfile.type,
         status: 'online',
       };
+      // Fetch message history from the REST API so messages survive page refresh
+      this.#fetchHistory(this.activeChannel);
     });
 
     this.#client.on('error', (err) => {
@@ -308,6 +344,9 @@ export class MqttChatStore {
     if (this.#client && this.connected) {
       this.#subscribeAll();
     }
+
+    // Fetch history for the new channel
+    this.#fetchHistory(channelId);
   }
 
   /**
@@ -581,6 +620,8 @@ export class MqttChatStore {
   #handleMessage(topic, msg) {
     if (!topic.startsWith(TOPIC_PREFIX + '/')) return;
     const topicParts = topic.slice(TOPIC_PREFIX.length + 1).split('/');
+    // Debug: log all incoming MQTT messages (remove after verifying broker bridging)
+    console.debug('[claude-comms] MQTT ←', topic, msg?.id || '(no id)');
 
     if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
       this.#handleChatMessage(topicParts[1], msg);

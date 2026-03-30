@@ -274,6 +274,49 @@ def start(
             mcp = _create_mcp_server(config)
             starlette_app = mcp.streamable_http_app()
 
+            # ── REST API: message history for the web UI ──
+            from starlette.requests import Request
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
+            from claude_comms.mcp_server import get_channel_messages
+
+            async def _api_messages(request: Request) -> JSONResponse:
+                """GET /api/messages/{channel}?count=50 — return recent history."""
+                channel = request.path_params["channel"]
+                try:
+                    count = int(request.query_params.get("count", "50"))
+                except (ValueError, TypeError):
+                    count = 50
+                count = max(1, min(count, 500))
+                msgs = get_channel_messages(channel, count)
+                return JSONResponse(
+                    {"channel": channel, "count": len(msgs), "messages": msgs},
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_messages_options(request: Request) -> JSONResponse:
+                """OPTIONS preflight for CORS."""
+                return JSONResponse(
+                    {},
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            # Prepend API routes so they take priority over MCP catch-all
+            starlette_app.routes.insert(
+                0, Route("/api/messages/{channel}", _api_messages, methods=["GET"])
+            )
+            starlette_app.routes.insert(
+                1, Route("/api/messages/{channel}", _api_messages_options, methods=["OPTIONS"])
+            )
+
             import uvicorn
 
             mcp_uvi_config = uvicorn.Config(
