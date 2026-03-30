@@ -165,27 +165,29 @@ export class MqttChatStore {
   }
 
   // ── Derived State ──
-  activeMessages = $derived(
+  // Using $derived.by(() => ...) to ensure proper `this` binding when
+  // $state arrays are mutated from async MQTT callbacks (see Bug #4).
+  activeMessages = $derived.by(() =>
     this.messages.filter(m => m.channel === this.activeChannel)
   );
 
-  activeChannelMeta = $derived(
+  activeChannelMeta = $derived.by(() =>
     this.channels.find(c => c.id === this.activeChannel)
   );
 
-  starredChannels = $derived(
+  starredChannels = $derived.by(() =>
     this.channels.filter(c => c.starred)
   );
 
-  onlineParticipants = $derived(
+  onlineParticipants = $derived.by(() =>
     Object.values(this.participants).filter(p => p.status === 'online')
   );
 
-  offlineParticipants = $derived(
+  offlineParticipants = $derived.by(() =>
     Object.values(this.participants).filter(p => p.status !== 'online')
   );
 
-  activeTypingUsers = $derived(
+  activeTypingUsers = $derived.by(() =>
     Object.entries(this.typingUsers)
       .filter(([key, info]) => {
         return info.channel === this.activeChannel
@@ -199,16 +201,16 @@ export class MqttChatStore {
       }))
   );
 
-  activePinnedMessages = $derived(
+  activePinnedMessages = $derived.by(() =>
     this.pinnedMessages.filter(m => m.channel === this.activeChannel)
   );
 
-  onlineCount = $derived(
+  onlineCount = $derived.by(() =>
     Object.values(this.participants).filter(p => p.status === 'online').length
   );
 
   /** Total number of messages across all channels. */
-  messageCount = $derived(this.messages.length);
+  messageCount = $derived.by(() => this.messages.length);
 
   /**
    * Look up a channel by its ID.
