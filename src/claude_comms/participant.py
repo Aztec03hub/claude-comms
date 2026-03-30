@@ -72,6 +72,10 @@ class Participant(BaseModel):
         ...,
         description="Participant type: claude or human",
     )
+    client: str = Field(
+        default="unknown",
+        description="Client type: web, tui, mcp, or unknown",
+    )
 
     @field_validator("key")
     @classmethod

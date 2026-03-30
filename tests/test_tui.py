@@ -327,10 +327,10 @@ class TestRound3MessageSending:
             await pilot.press("enter")
             await pilot.pause()
 
-            # TextArea consumes Enter and inserts a newline instead of submitting
-            assert input_widget.text == "Test message\n"
-            # No message was submitted because TextArea stops the Enter event
-            assert len(sent_bodies) == 0
+            # Enter submits and clears the input
+            assert input_widget.text == ""
+            assert len(sent_bodies) == 1
+            assert sent_bodies[0] == "Test message"
 
     @pytest.mark.asyncio
     async def test_empty_input_does_not_send(self):
@@ -1197,9 +1197,9 @@ class TestRound10TypingIndicators:
             await pilot.press("enter")
             await pilot.pause()
 
-            # TextArea consumes Enter, so MessageSubmitted is never posted,
-            # and on_message_submitted never resets the timestamp
-            assert pilot.app._last_typing_publish == 999999.0
+            # Enter now submits via _SubmittableTextArea, which triggers
+            # on_message_submitted which resets _last_typing_publish to 0.0
+            assert pilot.app._last_typing_publish == 0.0
 
     @pytest.mark.asyncio
     async def test_on_input_changed_only_for_message_input(self):

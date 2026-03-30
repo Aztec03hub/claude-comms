@@ -29,6 +29,26 @@ class MessageSubmitted(TMessage):
 _MENTION_PARTIAL = re.compile(r"@([\w-]*)$")
 
 
+class _SubmittableTextArea(TextArea):
+    """TextArea that submits on Enter and allows newlines on Shift+Enter."""
+
+    _parent_input: "MessageInput | None" = None
+
+    async def _on_key(self, event: Key) -> None:
+        if event.key == "enter" and self._parent_input:
+            # Intercept Enter BEFORE TextArea processes it
+            event.prevent_default()
+            event.stop()
+            body = self.text.strip()
+            if body:
+                self._parent_input.post_message(MessageSubmitted(body))
+                self.clear()
+                self._parent_input._reset_completions()
+            return
+        # Shift+Enter falls through to TextArea default (inserts newline)
+        await super()._on_key(event)
+
+
 class MessageInput(Vertical):
     """Input area with @mention Tab completion.
 
@@ -55,13 +75,14 @@ class MessageInput(Vertical):
         self._completions: list[str] = []
         self._completion_index: int = 0
         self._last_partial: str = ""
-        self._input = TextArea(
+        self._input = _SubmittableTextArea(
             id="message-input",
             language=None,
             soft_wrap=True,
             show_line_numbers=False,
             tab_behavior="focus",
         )
+        self._input._parent_input = self  # back-reference for submit
 
     def compose(self) -> ComposeResult:
         yield self._input
@@ -80,22 +101,7 @@ class MessageInput(Vertical):
         self._input.insert(value)
 
     def on_key(self, event: Key) -> None:
-        """Handle Enter (submit), Shift+Enter (newline), and Tab (completion)."""
-        if event.key == "enter":
-            # Plain Enter submits the message
-            event.prevent_default()
-            event.stop()
-            body = self._get_text().strip()
-            if body:
-                self.post_message(MessageSubmitted(body))
-                self._input.clear()
-                self._reset_completions()
-            return
-
-        if event.key == "shift+enter":
-            # Shift+Enter inserts a newline (default TextArea behavior)
-            return
-
+        """Handle Tab (completion). Enter/Shift+Enter handled by _SubmittableTextArea."""
         if event.key == "tab":
             # Only handle Tab if focused on the input
             if not self._input.has_focus:
