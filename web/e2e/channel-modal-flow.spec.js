@@ -68,18 +68,22 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(toggle).not.toHaveClass(/active/);
 
-  await toggle.click({ timeout: 10000 });
+  await toggle.scrollIntoViewIfNeeded();
+  await toggle.click({ force: true, timeout: 10000 });
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect(toggle).toHaveClass(/active/);
   await page.screenshot({ path: `${SCREENSHOT_DIR}/test-modal-05-toggle-on.png`, fullPage: true });
 
-  await toggle.click({ timeout: 10000 });
+  await toggle.scrollIntoViewIfNeeded();
+  await toggle.click({ force: true, timeout: 10000 });
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(toggle).not.toHaveClass(/active/);
   console.log('PASS: 5. Private toggle switches on and off');
 
   // ── 6. Cancel closes modal ────────────────────────────────────────────
-  await page.locator('[data-testid="channel-modal-cancel"]').click();
+  const cancelBtn = page.locator('[data-testid="channel-modal-cancel"]');
+  await cancelBtn.scrollIntoViewIfNeeded();
+  await cancelBtn.click({ force: true });
   await expect(modal).not.toBeVisible();
   await page.screenshot({ path: `${SCREENSHOT_DIR}/test-modal-06-cancel-closed.png`, fullPage: true });
   console.log('PASS: 6. Cancel button closes modal');

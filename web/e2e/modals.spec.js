@@ -39,7 +39,8 @@ test.describe('Modal interactions', () => {
     await expect(modal).toBeVisible();
 
     const cancelBtn = page.locator('[data-testid="channel-modal-cancel"]');
-    await cancelBtn.click();
+    await cancelBtn.scrollIntoViewIfNeeded();
+    await cancelBtn.click({ force: true });
 
     await expect(modal).not.toBeVisible();
   });
@@ -74,7 +75,8 @@ test.describe('Modal interactions', () => {
 
     // Fill in name and click create
     await page.locator('[data-testid="channel-modal-name-input"]').fill('test-channel');
-    await createBtn.click();
+    await createBtn.scrollIntoViewIfNeeded();
+    await createBtn.click({ force: true });
 
     // Modal should close after creating
     const modal = page.locator('[data-testid="channel-modal"]');

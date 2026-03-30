@@ -16,7 +16,7 @@ test.describe('Message sending, display, and input behavior', () => {
     await input.fill(text);
     await input.press('Enter');
     await expect(input).toHaveValue('', { timeout: 5000 });
-    const bubble = page.locator('.bubble').filter({ hasText: text.slice(0, 30) });
+    const bubble = page.locator('.bubble').filter({ hasText: text.slice(0, 30) }).last();
     await expect(bubble).toBeVisible({ timeout: 10000 });
     return bubble;
   }
@@ -67,9 +67,9 @@ test.describe('Message sending, display, and input behavior', () => {
       await expect(input).toHaveValue('', { timeout: 5000 });
     }
 
-    await expect(page.locator('.bubble').filter({ hasText: 'First message' })).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('.bubble').filter({ hasText: 'Second message' })).toBeVisible();
-    await expect(page.locator('.bubble').filter({ hasText: 'Third message' })).toBeVisible();
+    await expect(page.locator('.bubble').filter({ hasText: 'First message' }).last()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.bubble').filter({ hasText: 'Second message' }).last()).toBeVisible();
+    await expect(page.locator('.bubble').filter({ hasText: 'Third message' }).last()).toBeVisible();
 
     // Consecutive messages in same-sender group should have class "consecutive"
     const consecutiveRows = page.locator('.msg-row.consecutive');
@@ -187,7 +187,7 @@ test.describe('Message sending, display, and input behavior', () => {
     });
     expect(isAtBottom).toBe(true);
 
-    const lastBubble = page.locator('.bubble').filter({ hasText: 'Scroll test message 8' });
+    const lastBubble = page.locator('.bubble').filter({ hasText: 'Scroll test message 8' }).last();
     await expect(lastBubble).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({ path: `${SCREENSHOT_DIR}/test-messages-10-autoscroll.png`, fullPage: true });

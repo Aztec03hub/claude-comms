@@ -48,7 +48,7 @@ test.describe('Chat area interactions', () => {
     await input.press('Enter');
 
     // Wait for the message to render
-    const bubble = page.locator('.bubble').filter({ hasText: 'Hello from the test' });
+    const bubble = page.locator('.bubble').filter({ hasText: 'Hello from the test' }).last();
     await expect(bubble).toBeVisible();
   });
 
@@ -70,7 +70,11 @@ test.describe('Chat area interactions', () => {
 
     // Hover to reveal
     await firstMsg.hover();
-    await expect(actions).toHaveCSS('opacity', '1');
+    // Opacity may be a fractional value due to CSS transitions; wait then check numerically
+    await actions.waitFor({ state: 'visible', timeout: 5000 });
+    await firstMsg.page().waitForTimeout(500);
+    const opacity = await actions.evaluate(el => parseFloat(getComputedStyle(el).opacity));
+    expect(opacity).toBeGreaterThan(0.9);
 
     // Should have Reply, React, More buttons
     const buttons = actions.locator('.msg-action-btn');

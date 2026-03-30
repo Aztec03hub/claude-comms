@@ -36,7 +36,7 @@ test.describe('Reactivity Fix Verification', () => {
 
     // Verify all 3 messages are visible as bubble elements
     for (const msg of messages) {
-      const bubble = page.locator('.bubble').filter({ hasText: msg });
+      const bubble = page.locator('.bubble').filter({ hasText: msg }).last();
       await expect(bubble).toBeVisible({ timeout: 5000 });
     }
 

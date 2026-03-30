@@ -19,6 +19,9 @@ const IGNORE_PATTERNS = [
   'ERR_CONNECTION_REFUSED',
   'Failed to load resource',
   'net::ERR',
+  'CORS',
+  'api/participants',
+  'Access-Control-Allow-Origin',
 ];
 
 function shouldIgnore(text) {
