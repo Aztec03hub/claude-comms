@@ -79,6 +79,9 @@
         emojiPickerTarget = null;
       } else if (showProfileCard) {
         showProfileCard = false;
+      } else if (showUserProfileView) {
+        showUserProfileView = false;
+        userProfileTarget = null;
       } else if (showPinnedPanel) {
         showPinnedPanel = false;
       } else if (showSettingsPanel) {
@@ -286,6 +289,24 @@
       />
     {/if}
 
+    {#if showUserProfileView && userProfileTarget}
+      <UserProfileView
+        participant={userProfileTarget}
+        onClose={() => { showUserProfileView = false; userProfileTarget = null; }}
+        onSendMessage={(p) => {
+          showUserProfileView = false;
+          userProfileTarget = null;
+          const input = document.querySelector('[data-testid="message-input"]');
+          if (input) {
+            input.value = `@${p.name} `;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.focus();
+            input.selectionStart = input.selectionEnd = input.value.length;
+          }
+        }}
+      />
+    {/if}
+
     <MessageInput
       {store}
       channelName={store.activeChannel}
@@ -344,9 +365,15 @@
       }
     }}
     onViewProfile={(p) => {
-      // Open settings panel to show profile info
       showProfileCard = false;
-      showSettingsPanel = true;
+      if (p.key === store.userProfile?.key) {
+        // Viewing own profile — open settings panel
+        showSettingsPanel = true;
+      } else {
+        // Viewing someone else — open user profile view
+        userProfileTarget = p;
+        showUserProfileView = true;
+      }
     }}
   />
 {/if}
