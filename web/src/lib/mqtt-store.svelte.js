@@ -683,8 +683,8 @@ export class MqttChatStore {
     // Determine action for broadcast
     const action = existing && !existing.active ? 'remove' : 'add';
 
-    // Trigger reactivity by reassigning
-    this.messages = [...this.messages];
+    // Trigger reactivity via self-assignment (avoids O(n) array copy)
+    this.messages = this.messages;
 
     // Broadcast reaction to other clients
     if (this.#client && this.connected) {
@@ -938,8 +938,8 @@ export class MqttChatStore {
       }
     }
 
-    // Trigger reactivity
-    this.messages = [...this.messages];
+    // Trigger reactivity via self-assignment (avoids O(n) array copy)
+    this.messages = this.messages;
   }
 
   #handleRemotePin(channel, msg) {
