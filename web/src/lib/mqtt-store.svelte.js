@@ -83,20 +83,17 @@ export class MqttChatStore {
       const data = await res.json();
       if (!Array.isArray(data.messages)) return;
 
-      let added = 0;
+      const newMessages = [];
       for (const msg of data.messages) {
         if (!msg.id || this.#seenIds.has(msg.id)) continue;
         this.#seenIds.add(msg.id);
-        this.messages.push({
-          ...msg,
-          channel: channel,
-        });
-        added++;
+        newMessages.push({ ...msg, channel });
       }
-      if (added > 0) {
-        // Sort messages chronologically after loading history
-        this.messages.sort((a, b) => new Date(a.ts) - new Date(b.ts));
-        console.log(`[claude-comms] Loaded ${added} historical messages for #${channel}`);
+      if (newMessages.length > 0) {
+        // Use spread assignment to trigger Svelte 5 reactivity
+        this.messages = [...this.messages, ...newMessages]
+          .sort((a, b) => new Date(a.ts) - new Date(b.ts));
+        console.log(`[claude-comms] Loaded ${newMessages.length} historical messages for #${channel}`);
       }
     } catch {
       // History fetch failed — not critical, live messages still work
@@ -173,10 +170,25 @@ export class MqttChatStore {
    * for connection, disconnection, reconnection, and incoming messages.
    * @throws Will set connectionError state if the broker is unreachable.
    */
-  connect() {
-    // Persist user key in localStorage so sessions reuse the same identity.
-    // Without this, every page load creates a new retained presence message
-    // on the broker, causing phantom participant accumulation.
+  async connect() {
+    // Fetch identity from the daemon config so web + TUI share the same key.
+    // Falls back to localStorage if the daemon is not running.
+    try {
+      const res = await fetch(MCP_API_URL + '/api/identity');
+      if (res.ok) {
+        const identity = await res.json();
+        this.userProfile.key = identity.key;
+        this.userProfile.name = identity.name;
+        this.userProfile.type = identity.type;
+        // Cache in localStorage for offline fallback
+        safeStorage.setItem('claude-comms-user-key', identity.key);
+        safeStorage.setItem('claude-comms-user-name', identity.name);
+      }
+    } catch {
+      // Daemon not running — fall back to localStorage identity
+    }
+
+    // localStorage fallback if daemon fetch didn't populate the key
     if (!this.userProfile.key) {
       const stored = safeStorage.getItem('claude-comms-user-key');
       if (stored) {
@@ -187,9 +199,11 @@ export class MqttChatStore {
       }
     }
 
-    // Also persist user name
-    const storedName = safeStorage.getItem('claude-comms-user-name');
-    if (storedName) this.userProfile.name = storedName;
+    // Also restore user name from localStorage if not set by daemon
+    if (!this.userProfile.name || this.userProfile.name === 'Phil') {
+      const storedName = safeStorage.getItem('claude-comms-user-name');
+      if (storedName) this.userProfile.name = storedName;
+    }
 
     const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + Math.random().toString(16).slice(2, 6);
 
@@ -199,12 +213,13 @@ export class MqttChatStore {
       keepalive: 30,
       reconnectPeriod: 3000,
       will: {
-        topic: TOPIC_PREFIX + '/system/participants/' + this.userProfile.key,
+        topic: TOPIC_PREFIX + '/system/participants/' + this.userProfile.key + '-web',
         payload: JSON.stringify({
           key: this.userProfile.key,
           name: this.userProfile.name,
           type: this.userProfile.type,
-          status: 'offline'
+          status: 'offline',
+          client: 'web',
         }),
         qos: 1,
         retain: true
@@ -359,12 +374,7 @@ export class MqttChatStore {
   createChannel(id, topic = '') {
     if (this.channels.find(c => c.id === id)) return;
 
-    this.channels.push({
-      id,
-      topic,
-      starred: false,
-      unread: 0
-    });
+    this.channels = [...this.channels, { id, topic, starred: false, unread: 0 }];
 
     // Publish meta
     if (this.#client) {
@@ -579,10 +589,10 @@ export class MqttChatStore {
     const channel = message.channel || message.conv || this.activeChannel;
     let action;
     if (idx >= 0) {
-      this.pinnedMessages.splice(idx, 1);
+      this.pinnedMessages = this.pinnedMessages.filter(m => m.id !== message.id);
       action = 'unpin';
     } else {
-      this.pinnedMessages.push({ ...message, channel });
+      this.pinnedMessages = [...this.pinnedMessages, { ...message, channel }];
       action = 'pin';
     }
 
@@ -624,7 +634,6 @@ export class MqttChatStore {
     console.debug('[claude-comms] MQTT ←', topic, msg?.id || '(no id)');
 
     if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
-      console.log('[claude-comms] ROUTING to handleChatMessage, channel:', topicParts[1], 'id:', msg.id, 'seenBefore:', this.#seenIds.has(msg.id));
       this.#handleChatMessage(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'presence') {
       this.#handlePresence(msg);
@@ -661,8 +670,10 @@ export class MqttChatStore {
       channel: channel || msg.conv
     };
 
-    this.messages.push(message);
-    console.log('[claude-comms] handleChatMessage: pushed to messages, total:', this.messages.length, 'channel:', channel, 'activeChannel:', this.activeChannel, 'activeMessages:', this.activeMessages.length);
+    // Use spread assignment instead of .push() to ensure Svelte 5 $derived
+    // re-evaluates. Class-level $state proxies may not trigger $derived
+    // recalculation on array mutations like .push().
+    this.messages = [...this.messages, message];
 
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
@@ -715,12 +726,7 @@ export class MqttChatStore {
   #handleMeta(channelId, msg) {
     const existing = this.channels.find(c => c.id === channelId);
     if (!existing) {
-      this.channels.push({
-        id: channelId,
-        topic: msg.topic || '',
-        starred: false,
-        unread: 0
-      });
+      this.channels = [...this.channels, { id: channelId, topic: msg.topic || '', starred: false, unread: 0 }];
     } else if (msg.topic) {
       existing.topic = msg.topic;
     }
@@ -776,14 +782,11 @@ export class MqttChatStore {
       if (!this.pinnedMessages.find(m => m.id === msg.message_id)) {
         const target = this.messages.find(m => m.id === msg.message_id);
         if (target) {
-          this.pinnedMessages.push({ ...target, channel });
+          this.pinnedMessages = [...this.pinnedMessages, { ...target, channel }];
         }
       }
     } else if (msg.action === 'unpin') {
-      const idx = this.pinnedMessages.findIndex(m => m.id === msg.message_id);
-      if (idx >= 0) {
-        this.pinnedMessages.splice(idx, 1);
-      }
+      this.pinnedMessages = this.pinnedMessages.filter(m => m.id !== msg.message_id);
     }
   }
 
@@ -792,10 +795,7 @@ export class MqttChatStore {
 
     this.messages = this.messages.filter(m => m.id !== msg.message_id);
     // Also remove from pinned if it was pinned
-    const pinIdx = this.pinnedMessages.findIndex(m => m.id === msg.message_id);
-    if (pinIdx >= 0) {
-      this.pinnedMessages.splice(pinIdx, 1);
-    }
+    this.pinnedMessages = this.pinnedMessages.filter(m => m.id !== msg.message_id);
   }
 
   /**

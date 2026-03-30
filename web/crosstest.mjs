@@ -1,8 +1,5 @@
 /**
  * Cross-platform integration test: MCP <-> Web UI via MQTT
- *
- * Opens the web UI, waits for connection, signals for MCP messages,
- * then verifies they appear. Also sends a message from the web UI.
  */
 import { chromium } from '@playwright/test';
 import { fileURLToPath } from 'url';
@@ -29,60 +26,58 @@ async function run() {
 
   console.log('[PW] Navigating to web UI...');
   await page.goto(BASE_URL, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(4000);
 
   // Signal ready for MCP sends
   writeFileSync(SIGNAL_FILE, 'ready');
   console.log('[PW] Signaled ready. Waiting for MCP messages...');
 
-  // Wait for all 3 MCP messages (up to 45s)
-  let attempts = 0;
+  // Wait for messages (up to 30s)
   let hasGreeting = false, hasMention = false, hasCode = false;
-  while (attempts < 45) {
+  for (let i = 0; i < 30; i++) {
     await page.waitForTimeout(1000);
-    const text = await page.textContent('body');
-    hasGreeting = text.includes('CROSSTEST-LIVE');
-    hasMention = text.includes('@phil-human');
-    hasCode = text.includes('verify_cross_platform');
-    if (hasGreeting && hasMention && hasCode) {
-      console.log('[PW] All 3 MCP messages detected!');
-      break;
-    }
-    attempts++;
-    if (attempts % 5 === 0) {
-      console.log(`[PW] Waiting... (${attempts}s) greeting=${hasGreeting} mention=${hasMention} code=${hasCode}`);
+    const msgCount = await page.locator('.msg-row').count();
+    if (msgCount > 0) {
+      const text = await page.textContent('body');
+      hasGreeting = text.includes('CROSSTEST-LIVE');
+      hasMention = text.includes('@phil-human');
+      hasCode = text.includes('verify_cross_platform');
+      if (hasGreeting && hasMention && hasCode) {
+        console.log(`[PW] All 3 MCP messages detected after ${i+1}s! (${msgCount} msg-rows)`);
+        break;
+      }
+      if (i % 5 === 0) console.log(`[PW] ${i+1}s: ${msgCount} msgs, greeting=${hasGreeting} mention=${hasMention} code=${hasCode}`);
+    } else if (i % 5 === 0) {
+      console.log(`[PW] ${i+1}s: 0 msg-rows...`);
     }
   }
 
-  // Extra wait for rendering
   await page.waitForTimeout(1000);
 
-  // Screenshot #1: MCP messages in the UI
+  // Screenshot 1: MCP messages
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-01-mcp-messages.png'), fullPage: false });
 
   // Check mention highlighting
   const mentionEls = await page.locator('.mention').all();
   const mentionHighlighted = mentionEls.length > 0;
 
-  // Check code block rendering
-  const codeBlockEls = await page.locator('.code-block, pre code, .code-content').all();
-  const codeBlockRendered = codeBlockEls.length > 0;
+  // Check code blocks
+  const codeEls = await page.locator('.code-block, pre code, .code-content').all();
+  const codeRendered = codeEls.length > 0;
 
   // Check sender names
-  const senderEls = await page.locator('.sender-name, .msg-sender').all();
-  const senderCount = senderEls.length;
+  const senderCount = await page.locator('.sender-name').count();
 
   // Check timestamps
-  const timeEls = await page.locator('.msg-time, time, .timestamp').all();
-  const timeCount = timeEls.length;
+  const timeCount = await page.locator('.msg-time').count();
 
-  // Screenshot #2: close-up of chat area
-  const chatArea = page.locator('.messages-scroll, .chat-messages, .messages-list').first();
-  if (await chatArea.isVisible().catch(() => false)) {
+  // Screenshot 2: chat area
+  const chatArea = page.locator('[data-testid="chat-view"]');
+  if (await chatArea.isVisible()) {
     await chatArea.screenshot({ path: join(MOCKUPS, 'crosstest-02-chat-area.png') });
   }
 
-  // If mention is highlighted, screenshot it
+  // Mention highlight screenshot
   if (mentionEls.length > 0) {
     try {
       await mentionEls[0].screenshot({ path: join(MOCKUPS, 'crosstest-04-mention-highlight.png') });
@@ -94,36 +89,36 @@ async function run() {
   const WEB_MSG = 'CROSSTEST-WEBMSG: Hello from browser at ' + new Date().toISOString();
 
   const input = page.locator('[data-testid="message-input"]');
-  await input.waitFor({ state: 'visible', timeout: 5000 });
   await input.click();
-  await input.fill(WEB_MSG);
-  await page.locator('[data-testid="send-button"]').click();
+  await input.pressSequentially(WEB_MSG, { delay: 10 });
+  await page.waitForTimeout(300);
+  await input.press('Enter');
   await page.waitForTimeout(2000);
 
-  // Screenshot #3: after web send
+  // Screenshot 3: after web send
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-03-after-web-send.png'), fullPage: false });
 
   const afterText = await page.textContent('body');
   const webMsgSent = afterText.includes('CROSSTEST-WEBMSG');
   writeFileSync(RESULT_FILE, WEB_MSG);
 
-  // Print errors
-  const errors = consoleLogs.filter(l => l.toLowerCase().includes('error'));
-  if (errors.length > 0) {
-    console.log('\nConsole errors:');
-    errors.forEach(l => console.log('  ' + l));
-  }
-
   const results = {
     mcpToWeb: { greeting: hasGreeting, mention: hasMention, codeBlock: hasCode },
     webToMcp: { sent: webMsgSent },
-    rendering: { mentionHighlighted, codeBlockRendered, senderNames: senderCount, timestamps: timeCount }
+    rendering: { mentionHighlighted, codeRendered, senderNames: senderCount, timestamps: timeCount }
   };
 
   console.log('\n=== CROSS-TEST RESULTS ===');
   console.log(JSON.stringify(results, null, 2));
   console.log('WEB_MSG:', WEB_MSG);
   console.log('==========================\n');
+
+  // Errors
+  const errors = consoleLogs.filter(l => l.includes('[error]') && !l.includes('CORS') && !l.includes('9920') && !l.includes('ConnectionStatus'));
+  if (errors.length > 0) {
+    console.log('Errors:');
+    errors.forEach(l => console.log('  ' + l));
+  }
 
   await browser.close();
   return results;

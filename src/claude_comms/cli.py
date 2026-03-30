@@ -309,12 +309,45 @@ def start(
                     },
                 )
 
+            async def _api_identity(request: Request) -> JSONResponse:
+                """GET /api/identity — return the daemon's configured identity."""
+                identity = config.get("identity", {})
+                return JSONResponse(
+                    {
+                        "key": identity.get("key", ""),
+                        "name": identity.get("name", ""),
+                        "type": identity.get("type", "human"),
+                    },
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_identity_options(request: Request) -> JSONResponse:
+                """OPTIONS preflight for CORS on /api/identity."""
+                return JSONResponse(
+                    {},
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
             # Prepend API routes so they take priority over MCP catch-all
             starlette_app.routes.insert(
                 0, Route("/api/messages/{channel}", _api_messages, methods=["GET"])
             )
             starlette_app.routes.insert(
                 1, Route("/api/messages/{channel}", _api_messages_options, methods=["OPTIONS"])
+            )
+            starlette_app.routes.insert(
+                2, Route("/api/identity", _api_identity, methods=["GET"])
+            )
+            starlette_app.routes.insert(
+                3, Route("/api/identity", _api_identity_options, methods=["OPTIONS"])
             )
 
             import uvicorn
