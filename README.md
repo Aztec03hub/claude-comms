@@ -722,7 +722,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **406 tests** -- 360 Python tests across 10 test files (~0.5s) plus 46 Playwright browser E2E tests:
+The test suite includes **360 Python tests** across 10 test files (~0.5s) plus **Playwright browser E2E tests** across 16 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -739,7 +739,7 @@ The test suite includes **406 tests** -- 360 Python tests across 10 test files (
 
 ### Playwright E2E Tests
 
-The web UI has 46 browser-level E2E tests across 8 suites, running against headless Chromium:
+The web UI has **16 browser-level E2E spec files** across functional testing areas, running against headless Chromium. These were authored by **10 parallel testing agents** deployed for comprehensive functional coverage:
 
 ```bash
 cd web
@@ -748,9 +748,32 @@ npx playwright test --ui     # Interactive UI mode
 npx playwright test --headed # Visible browser
 ```
 
-Tests cover app loading, sidebar interactions, chat messaging, panel open/close, modal behavior, member list, context menus, and JS console error monitoring. The MQTT broker does not need to be running -- tests focus on UI interaction via local echo.
+| Spec File | Tests | Covers |
+|-----------|-------|--------|
+| `messages.spec.js` | 10 | Type, send (Enter + click), grouping, wrapping, @mentions, empty guard, alignment, timestamps, auto-scroll |
+| `emoji-picker.spec.js` | 10 | Open/close, emoji selection, reactions on messages, category tabs, search, frequent emojis |
+| `channel-switching.spec.js` | 7 | Click channels, active state, collapse/expand starred + conversations, switch with panel open, sidebar search |
+| `smoke-test-all-interactions.spec.js` | 18 | Load, channel clicks, send messages, search, pinned, modals, context menu, emoji, profile card, keyboard shortcuts, resize |
+| `app-loads.spec.js` | 5 | Page load, 3-column layout, header, input placeholder, no console errors |
+| `sidebar.spec.js` | 8 | Channel list, active highlight, collapse/expand, new conversation, search, user profile |
+| `chat.spec.js` | 6 | Input, Enter send, button send, message container, bubble display, hover actions |
+| `panels.spec.js` | 6 | Search panel, pinned panel, toggle behavior, channel switching with panel |
+| `modals.spec.js` | 7 | Channel modal open, form fields, cancel, backdrop close, Escape close, create, toggle |
+| `member-list.spec.js` | 6 | Sidebar visible, header count, sections, profile card open, contents, close |
+| `test-members.spec.js` | 11 | Avatars, presence dots, profile card positioning, Escape close, role badges, mobile hiding |
+| `context-menu.spec.js` | 5 | Right-click menu, menu items, click closes, outside click, Escape closes |
+| `console-errors.spec.js` | 3 | Navigate all interactions without JS errors, rapid send, rapid switch |
+| `channel-modal-flow.spec.js` | -- | Channel creation flow |
+| `keyboard.spec.js` | -- | Keyboard shortcut interactions |
+| `theme-responsive.spec.js` | -- | Theme and responsive layout testing |
 
-**For contributors:** All interactive Svelte components use `data-testid` attributes for reliable test selectors. When adding new components, follow the existing convention (e.g., `data-testid="my-component"`, `data-testid="my-button"`) so Playwright tests remain stable across CSS refactors.
+**Zero JS runtime errors** confirmed across all 18 interaction types during the console smoke test.
+
+Tests cover app loading, sidebar interactions, chat messaging, emoji picker and reactions, channel switching, panel open/close, modal behavior, member list and profile cards, context menus, keyboard shortcuts, responsive layout, and JS console error monitoring. The MQTT broker does not need to be running -- tests use local echo and WebSocket mocks.
+
+**mqtt.js Playwright workaround:** The mqtt.js library blocks the browser event loop during WebSocket reconnection cycles (~3s interval), causing Playwright's standard `page.click()` and `page.fill()` to hang indefinitely. Tests use two workarounds: (1) WebSocket mock via `addInitScript` to prevent MQTT from connecting, and (2) CDP `Runtime.evaluate` to bypass Playwright's actionability wait system. This is documented in the emoji and channel switching test work logs.
+
+**For contributors:** All interactive Svelte components use `data-testid` attributes (60+ across 18 components) for reliable test selectors. When adding new components, follow the existing convention (e.g., `data-testid="my-component"`, `data-testid="my-button"`) so Playwright tests remain stable across CSS refactors.
 
 ### Build the Web UI
 
@@ -791,7 +814,7 @@ claude-comms/
 |   |   +-- styles.tcss              # Carbon Ember theme
 +-- web/                              # Svelte 5 web UI
 |   +-- src/
-|   +-- e2e/                         # Playwright E2E tests (46 tests)
+|   +-- e2e/                         # Playwright E2E tests (16 spec files)
 |   +-- playwright.config.js
 |   +-- index.html
 |   +-- vite.config.js
@@ -799,8 +822,8 @@ claude-comms/
 +-- tests/                            # pytest test suite (360 tests)
 |   +-- conftest.py                   # Shared fixtures
 |   +-- test_*.py                     # 10 test modules (unit, integration, E2E)
-+-- mockups/                          # 30+ HTML design mockups
-+-- .worklogs/                        # Agent work logs
++-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
++-- .worklogs/                        # Agent work logs (22 logs from parallel agents)
 ```
 
 ---

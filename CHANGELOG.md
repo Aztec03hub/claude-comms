@@ -9,12 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Playwright Browser E2E Tests
+#### Comprehensive Functional Browser Testing (10 Parallel Agents)
 
-- **Playwright test suite** (`web/e2e/`) -- 46 browser E2E tests across 8 test files covering: app loading (5), sidebar interactions (8), chat area (6), panel open/close (6), modal interactions (7), member list (6), context menu (5), and JS console error monitoring (3). Runs against Chromium headless with auto-started Vite dev server.
-- **`playwright.config.js`** -- Headless Chromium, screenshots on failure, video on failure, 1 retry, 30s timeout, built-in web server config
+- **10 parallel testing agents** deployed for functional browser testing across the entire web UI
+- **16 Playwright E2E spec files** (`web/e2e/`) covering: messages (10 tests), emoji picker (10), channel switching (7), console smoke test (18 interactions), app loading (5), sidebar (8), chat (6), panels (6), modals (7), member list (6+11), context menu (5), console errors (3), channel modal flow, keyboard shortcuts, theme/responsive
+- **120+ test screenshots** captured across all testing areas (`mockups/test-*.png`, `mockups/screenshot-*.png`)
+- **Zero JS runtime errors** confirmed across all 18 interaction types during comprehensive smoke testing
+- **`playwright.config.js`** -- Headless Chromium, screenshots on failure, video on failure, 1 retry, 30s timeout, built-in web server config, CDP workaround for mqtt.js event loop blocking
 - **npm test scripts** -- `test` (headless), `test:ui` (Playwright UI mode), `test:headed` (visible browser)
-- **`data-testid` attributes** -- 60+ attributes added across all 18 interactive Svelte components for reliable Playwright test selectors (replaces fragile CSS class selectors). All 8 E2E test files updated to use `[data-testid="..."]` selectors.
+- **`data-testid` attributes** -- 60+ attributes added across all 18 interactive Svelte components for reliable Playwright test selectors (replaces fragile CSS class selectors). All E2E test files use `[data-testid="..."]` selectors.
+
+#### Reaction System
+
+- **`addReaction()` method** in `mqtt-store.svelte.js` -- creates/toggles reactions on messages with proper count tracking and active state
+- **`onReact` prop threading** through `MessageBubble` -> `MessageGroup` -> `ChatView` -> `App.svelte` for full reaction callback chain
+- **React button wired** in `MessageActions.svelte` -- previously had no `onclick` handler
+- **`handleEmojiSelect`** in `App.svelte` now calls `store.addReaction()` instead of being a TODO
 
 #### Defensive Programming (Python Backend)
 
@@ -22,12 +32,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-#### Bugs Found by Playwright E2E Tests
+#### Bugs Found by Parallel Testing Agents
 
+- **`addReaction` method missing** -- Store had no method to add/toggle reactions on messages; emoji picker selection was a TODO that never persisted reactions
+- **React button had no onclick handler** -- `MessageActions.svelte` "React" button did nothing when clicked
+- **Duplicate channels in sidebar** -- Starred channels appeared in both "Starred" and "Conversations" sections because conversations list rendered all channels instead of filtering out starred ones. Added `$derived` `unstarredChannels` filter.
 - **Search panel covers header buttons** -- Chat header had `z-index: 2` while search panel had `z-index: 50`, making header buttons unclickable when search was open. Raised header to `z-index: 101`.
 - **Escape key doesn't close channel creation modal** -- ChannelModal only handled Escape on the name input's `onkeydown`, not globally. Added `<svelte:window onkeydown>` handler.
 - **Messages don't appear without MQTT broker** -- `sendMessage()` only published to MQTT with no local echo. Added immediate local store update via `#handleChatMessage()` with deduplication, and removed the broker-required guard so the UI works offline.
 - **Toast notifications never auto-dismiss** -- `addToast`/`dismissToast` used in-place array mutations (`push`/`splice`) on `$state` arrays inside `setTimeout` closures, which didn't reliably trigger Svelte 5 reactivity. Switched to immutable updates (`[...arr]`/`filter()`).
+
+#### Visual Polish and Mockup Fidelity
+
+- **Unicode rendering** -- Fixed 4 Svelte template escape sequences rendering as literal `\uXXXX` text: `\u2318K` -> `⌘K`, `\u2605` -> `★`, `\u25BE` -> `▾` (2 instances). Replaced 25 surrogate pair unicode escapes in EmojiPicker with actual emoji characters.
+- **Message bubble shadows** -- Adjusted to match R10 mockup (simplified shadow, tweaked human inset glow)
+- **Consecutive bubble corners** -- Added rounded corner treatment for grouped messages
+- **Chat header** -- Fixed letter-spacing, added border-bottom from spec, matched background gradient
+- **Input area** -- Changed to gradient background with proper border-top per mockup
+- **Scanline overlay removed** -- `.center::after` repeating-linear-gradient not in design spec
+- **Mask fade reduced** -- Messages container mask-image fade from 20px to 8px to avoid obscuring content
+- **Connection status banner** -- Reduced prominence when connected (lower opacity, smaller padding/font)
+- **Empty state** -- Added "No messages yet" placeholder for channels with no messages
+- **Mobile responsive** -- Member list hidden on narrow viewports; sidebar overlays content below 480px
+
+#### Infrastructure Discovery: mqtt.js Event Loop Blocking
+
+- **mqtt.js blocks browser event loop** during WebSocket reconnection cycles (~3s interval), causing Playwright's `page.click()`, `page.fill()`, and `page.evaluate()` to hang indefinitely
+- **Workaround documented**: (1) WebSocket mock via `addInitScript` prevents MQTT from connecting, (2) CDP `Runtime.evaluate` bypasses Playwright's actionability wait system
+- **Browser crashes under memory pressure** -- Chromium renderer processes killed after ~3s in WSL2 with low RAM when MQTT reconnection + Svelte rendering + CSS animations combine; all existing tests complete within the window
 
 #### Batch 4: Docker, CI, and Integration Tests
 
@@ -190,7 +222,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - 17 refinement rounds on Concept J (Phantom Ember -> Obsidian Forge)
 - Final interactive mockup: `concept-j-phantom-ember-v2-r10-interactive.html`
 
-#### Test Suite (360 tests, ~0.5s)
+#### Python Test Suite (360 tests, ~0.5s)
 - **`tests/conftest.py`** -- shared fixtures (registry, store, publish_spy, tmp_config)
 - **`tests/test_config.py`** (21 tests) -- config path, identity key, save/load, permissions, deep merge, password resolution
 - **`tests/test_message.py`** (33 tests) -- creation, JSON round-trip, validation, routing
@@ -202,6 +234,21 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 - **`tests/test_notification_hook.py`** (45 tests) -- script generation, settings manipulation, install/uninstall
 - **`tests/test_integration.py`** (45 tests) -- cross-module integration: config flow, message roundtrip, mention pipeline, log exporter, dedup, registry, hook installer, MCP tools pipeline
 - **`tests/test_e2e.py`** (22 tests) -- end-to-end flows with MockBroker: two-participant chat, targeted messaging, conversation lifecycle, presence, name changes, JSONL replay, notifications
+
+#### Playwright Browser E2E Tests (16 spec files, 120+ screenshots)
+- **`web/e2e/messages.spec.js`** (10 tests) -- type, send, grouping, wrapping, @mentions, empty guard, alignment, timestamps, auto-scroll
+- **`web/e2e/emoji-picker.spec.js`** (10 tests) -- open/close, emoji selection, reactions, category tabs, search, frequent emojis
+- **`web/e2e/smoke-test-all-interactions.spec.js`** (18 interactions) -- comprehensive console error monitoring across all UI interactions
+- **`web/e2e/test-members.spec.js`** (11 tests) -- avatars, presence dots, profile card positioning/closing, role badges, mobile hiding
+- **`web/e2e/sidebar.spec.js`** (8 tests) -- channel list, active highlight, collapse/expand, new conversation, search, user profile
+- **`web/e2e/modals.spec.js`** (7 tests) -- channel modal lifecycle, form fields, cancel, backdrop/Escape close, toggle
+- **`web/e2e/chat.spec.js`** (6 tests) -- input, Enter/button send, message container, bubble display, hover actions
+- **`web/e2e/panels.spec.js`** (6 tests) -- search/pinned panel open/close, toggle behavior, channel switching with panel
+- **`web/e2e/member-list.spec.js`** (6 tests) -- sidebar visible, header count, sections, profile card open/contents/close
+- **`web/e2e/app-loads.spec.js`** (5 tests) -- page load, 3-column layout, header, input, no console errors
+- **`web/e2e/context-menu.spec.js`** (5 tests) -- right-click menu, items, close behaviors
+- **`web/e2e/console-errors.spec.js`** (3 tests) -- navigate all interactions without JS errors, rapid operations
+- Plus: `channel-modal-flow.spec.js`, `keyboard.spec.js`, `theme-responsive.spec.js`, `context-debug.spec.js`
 
 ### Architecture Decisions
 
@@ -225,14 +272,19 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 ### Project Stats
 
 - **64 source files** across Python, Svelte, JS, CSS, and shell scripts
-- **406 tests** -- 360 Python (10 test modules) + 46 Playwright browser E2E (8 suites)
-- **27 Svelte components** (26 in `components/` + `App.svelte`)
+- **360 Python tests** (10 test modules, ~0.5s) + **16 Playwright browser E2E spec files** with **120+ test screenshots**
+- **10 parallel testing agents** deployed for comprehensive functional browser testing
+- **Zero JS runtime errors** confirmed across all interaction types
+- **27 Svelte components** (26 in `components/` + `App.svelte`) with **60+ `data-testid` attributes**
 - **18 Python source files** (14 modules + TUI subpackage)
+- **22 agent work logs** documenting all development and testing activity
 - **4 deployment targets**: pip install, Docker, docker-compose, VPS
 
 ### Known Issues
 
 - WSL2 with Windows-mounted filesystems may not support `chmod 600` on config files (falls back to warning)
 - Architecture plan example key `phil0e8a` contains non-hex characters -- all real keys use `[0-9a-f]{8}` only
+- **mqtt.js event loop blocking** -- The mqtt.js library blocks the browser event loop during WebSocket reconnection, which affects Playwright testing (workaround: WebSocket mock + CDP `Runtime.evaluate`). Does not affect normal user interaction.
+- **Retained presence accumulation** -- Each browser session generates a new unique key and publishes a retained presence message that is never cleaned up. Over time this grows the participant list indefinitely. Recommended fix: deterministic keys via localStorage + TTL-based cleanup.
 
 [0.1.0]: https://github.com/Aztec03Hub/claude-comms/releases/tag/v0.1.0
