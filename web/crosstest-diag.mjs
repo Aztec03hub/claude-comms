@@ -1,5 +1,5 @@
 /**
- * Diagnostic: trace message routing and deduplication
+ * Test with production build on port 4173
  */
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'fs';
@@ -16,28 +16,35 @@ async function run() {
   const consoleLogs = [];
   page.on('console', msg => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
 
-  await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
+  console.log('Loading production build...');
+  await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
   await page.waitForTimeout(5000);
 
-  // Signal ready
+  // Signal
   writeFileSync(join(__dirname, '..', '.crosstest-ready'), 'ready');
-  console.log('Signaled ready. Waiting for MCP message...');
+  console.log('Signaled ready, waiting 20s for messages...');
 
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(1000);
+    const msgCount = await page.locator('.msg-row').count();
+    if (i % 5 === 0) {
+      console.log(`[${i+1}s] msg-rows: ${msgCount}`);
+    }
+    if (msgCount > 0) {
+      console.log(`Messages appeared at ${i+1}s! Count: ${msgCount}`);
+      break;
+    }
   }
 
-  // Collect ALL relevant logs
-  console.log('\n=== ALL LOGS ===');
-  consoleLogs.forEach(l => {
-    if (l.includes('claude-comms') || l.includes('ROUTING') || l.includes('handleChat') || l.includes('Loaded') || l.includes('[error]')) {
-      console.log('  ' + l);
-    }
-  });
-
-  console.log('\nmsg-row count:', await page.locator('.msg-row').count());
-
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
+
+  // Check relevant logs
+  const relevant = consoleLogs.filter(l =>
+    l.includes('claude-comms') || l.includes('[error]')
+  );
+  console.log('\nRelevant logs:');
+  relevant.slice(0, 30).forEach(l => console.log('  ' + l));
+
   await browser.close();
 }
 

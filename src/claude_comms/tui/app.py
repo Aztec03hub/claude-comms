@@ -113,10 +113,11 @@ class ClaudeCommsApp(App):
 
         # Add ourselves to the participant list
         participant_list.set_participant(
-            key=self._key,
+            key=f"{self._key}-tui",
             name=self._name,
             participant_type=self._type,
             presence=PresenceState.ONLINE,
+            client_type="tui",
         )
 
         # Initialize status bar
@@ -227,6 +228,7 @@ class ClaudeCommsApp(App):
             "name": self._name,
             "type": self._type,
             "status": status,
+            "client": "tui",
             "ts": now_iso(),
         })
         topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
@@ -234,7 +236,7 @@ class ClaudeCommsApp(App):
 
         # Also publish to system/participants so Web UI sees us in the
         # global participant registry (mirrors Web UI's own behaviour).
-        system_topic = f"claude-comms/system/participants/{self._key}"
+        system_topic = f"claude-comms/system/participants/{self._key}-tui"
         await client.publish(system_topic, payload, qos=1, retain=True)
 
     async def _handle_message(self, topic: str, payload: bytes) -> None:
@@ -276,6 +278,11 @@ class ClaudeCommsApp(App):
         name = data.get("name", "") or f"user-{key}"
         ptype = data.get("type", "claude")
         status = data.get("status", "offline")
+        client_type = data.get("client", "unknown")
+
+        # Use key-client as the participant map key so the same person
+        # on different clients shows as separate entries.
+        participant_key = f"{key}-{client_type}"
 
         state_map = {
             "online": PresenceState.ONLINE,
@@ -286,10 +293,11 @@ class ClaudeCommsApp(App):
 
         participant_list = self.query_one("#participant-sidebar", ParticipantList)
         participant_list.set_participant(
-            key=key,
+            key=participant_key,
             name=name,
             participant_type=ptype,
             presence=state,
+            client_type=client_type,
         )
 
         # Update participant count in status bar

@@ -38,7 +38,7 @@
   {#if filteredOnline.length > 0}
     <div class="members-section" data-testid="members-online-section">Online ({filteredOnline.length})</div>
     <div class="members-list">
-      {#each filteredOnline as member (member.key)}
+      {#each filteredOnline as member (member.key + '-' + (member.client || 'unknown'))}
         {@const color = getParticipantColor(member.key)}
         {@const isTyping = typingUsers[member.key]?.typing}
         <div
@@ -54,7 +54,10 @@
             <div class="member-dot online"></div>
           </div>
           <div class="member-info">
-            <div class="member-name" style="color: {color.textColor}">{member.name}</div>
+            <div class="member-name" style="color: {color.textColor}">
+              {member.name}
+              <span class="member-client">{member.client || 'unknown'}</span>
+            </div>
             {#if isTyping}
               <div class="member-typing">
                 <div class="member-typing-dots"><span></span><span></span><span></span></div>
@@ -74,7 +77,7 @@
   {#if filteredOffline.length > 0}
     <div class="members-section" style="margin-top: 8px" data-testid="members-offline-section">Offline ({filteredOffline.length})</div>
     <div class="members-list">
-      {#each filteredOffline as member (member.key)}
+      {#each filteredOffline as member (member.key + '-' + (member.client || 'unknown'))}
         <div
           class="member"
           onclick={() => onShowProfile(member)}
@@ -88,7 +91,10 @@
             <div class="member-dot offline"></div>
           </div>
           <div class="member-info">
-            <div class="member-name" style="color: var(--text-muted)">{member.name}</div>
+            <div class="member-name" style="color: var(--text-muted)">
+              {member.name}
+              <span class="member-client">{member.client || 'unknown'}</span>
+            </div>
             <span class="member-badge member-tag">Member</span>
           </div>
         </div>
@@ -250,7 +256,15 @@
   .member-dot.offline { background: var(--text-faint); }
 
   .member-info { display: flex; flex-direction: column; }
-  .member-name { font-size: 13px; font-weight: 500; }
+  .member-name { font-size: 13px; font-weight: 500; display: flex; align-items: baseline; gap: 4px; }
+
+  .member-client {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-faint);
+    opacity: 0.7;
+    text-transform: lowercase;
+  }
 
   .member-badge {
     font-size: 9px;
