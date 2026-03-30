@@ -1,5 +1,5 @@
 /**
- * Quick diagnostic: verify send from UI works after fix
+ * Diagnostic: check if Svelte event handling works
  */
 import { chromium } from '@playwright/test';
 import { join, dirname } from 'path';
@@ -18,35 +18,41 @@ async function run() {
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
   await page.waitForTimeout(4000);
 
-  // Try sending from UI
+  // Check if the input exists and works
   const input = page.locator('[data-testid="message-input"]');
-  await input.click();
-  await input.pressSequentially('DIAG-FIX: Testing after fix', { delay: 20 });
-  await input.press('Enter');
+  console.log('Input visible:', await input.isVisible());
+  console.log('Input placeholder:', await input.getAttribute('placeholder'));
+
+  // Try dispatching events manually via evaluate
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-testid="message-input"]');
+    if (!input) { console.log('INPUT NOT FOUND'); return; }
+
+    // Set value and dispatch input event
+    const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    nativeSet.call(input, 'EVAL-TEST: sent via evaluate');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    console.log('Dispatched input event, value:', input.value);
+
+    // Now dispatch Enter keydown
+    setTimeout(() => {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true });
+      input.dispatchEvent(event);
+      console.log('Dispatched Enter keydown');
+    }, 200);
+  });
+
   await page.waitForTimeout(2000);
 
   const msgCount = await page.locator('.msg-row').count();
-  console.log('msg-row count after send:', msgCount);
+  console.log('msg-row count:', msgCount);
 
   const inputVal = await input.inputValue();
-  console.log('Input cleared:', inputVal === '');
-
-  const bodyText = await page.textContent('body');
-  console.log('Has DIAG-FIX:', bodyText.includes('DIAG-FIX'));
+  console.log('Input value after send:', JSON.stringify(inputVal));
 
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
 
-  // Check for debug MQTT logs
-  const mqttLogs = consoleLogs.filter(l => l.includes('claude-comms'));
-  console.log('\nMQTT debug logs (first 10):');
-  mqttLogs.slice(0, 10).forEach(l => console.log('  ' + l));
-
-  // Errors
-  const errors = consoleLogs.filter(l => l.includes('[error]'));
-  if (errors.length > 0) {
-    console.log('\nErrors:');
-    errors.forEach(l => console.log('  ' + l));
-  }
+  consoleLogs.forEach(l => console.log('  LOG:', l));
 
   await browser.close();
 }
