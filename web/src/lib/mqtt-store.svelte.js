@@ -20,6 +20,15 @@ const MAX_MESSAGE_LENGTH = 10000;
 const MAX_CHANNEL_NAME_LENGTH = 50;
 const MAX_DISPLAY_NAME_LENGTH = 50;
 
+/** Allowed connection client types. Unknown types are rejected. */
+const CONNECTION_TYPES = ['web', 'tui', 'mcp', 'cli', 'api'];
+
+/** How long a connection can go without a heartbeat before TTL cleanup removes it (ms). */
+const CONNECTION_TTL_MS = 120_000;
+
+/** How long an offline user entry is kept for display before removal (ms). */
+const OFFLINE_DISPLAY_MS = 5 * 60 * 1000;
+
 /**
  * Safe localStorage wrapper that falls back gracefully
  * when storage is unavailable (private browsing, quota exceeded, etc.).
@@ -79,6 +88,12 @@ export class MqttChatStore {
   #backoffActive = false;
   #backoffTimer = null;
   #participantPollTimer = null;
+  /** Unique instance ID for this browser tab/session (4 hex chars). */
+  #instanceId = Math.random().toString(16).slice(2, 6);
+  /** Timer for periodic heartbeat presence re-publish (60s). */
+  #heartbeatTimer = null;
+  /** Timer for TTL cleanup of stale connections (30s). */
+  #ttlCleanupTimer = null;
 
   /**
    * Fetch message history from the REST API for a given channel.
@@ -117,17 +132,11 @@ export class MqttChatStore {
     }
   }
 
-  /** Stale participant TTL in milliseconds (60 seconds). */
-  static PARTICIPANT_TTL_MS = 60000;
-
   /**
    * Fetch the participant list from the REST API for a given channel.
-   * Merges server-side participants (TUI, MCP clients) into the local
-   * participants map so they appear in the member sidebar even when
-   * MQTT presence bridging between TCP and WebSocket transports fails.
-   *
-   * Also expires stale non-self participants that haven't been seen
-   * by the server in the last TTL window (60 seconds).
+   * Merges server-side participants into the local user-keyed participants
+   * map. For self, only merges non-web connections to avoid overwriting
+   * locally-managed web instance state.
    * @param {string} channel - The channel to fetch participants for.
    */
   async #fetchParticipants(channel) {
@@ -137,44 +146,39 @@ export class MqttChatStore {
       const data = await res.json();
       if (!Array.isArray(data.participants)) return;
 
-      const now = Date.now();
-      // Track which composite keys the server reports as active
-      const serverKeys = new Set();
-
       for (const p of data.participants) {
-        // Server-side registry doesn't track client type — default to 'mcp'
-        const clientType = p.client || 'mcp';
-        const compositeKey = p.key + '-' + clientType;
-        serverKeys.add(compositeKey);
-
-        // Skip our own web/unknown entries from API (self-add handles web).
-        // Allow same key with 'tui' or 'mcp' so other clients of the same user show.
-        if (p.key === this.userProfile.key && (clientType === 'web' || clientType === 'unknown')) continue;
-        if (p.name === this.userProfile.name && p.type === this.userProfile.type && clientType === 'unknown') continue;
-
-        // Merge: preserve existing status if already tracked, default online
-        this.participants[compositeKey] = {
-          ...this.participants[compositeKey],
-          key: p.key,
-          name: p.name,
-          type: p.type,
-          client: clientType,
-          status: this.participants[compositeKey]?.status || 'online',
-          lastSeen: now,
-        };
-      }
-
-      // Expire stale participants not reported by the server and not "self"
-      const selfWebKey = this.userProfile.key + '-web';
-      for (const [compositeKey, p] of Object.entries(this.participants)) {
-        if (compositeKey === selfWebKey) continue;
-        if (serverKeys.has(compositeKey)) continue;
-
-        // If participant was not in the server response and their lastSeen
-        // has exceeded the TTL, mark them offline or remove them
-        const lastSeen = p.lastSeen || 0;
-        if (now - lastSeen > MqttChatStore.PARTICIPANT_TTL_MS) {
-          delete this.participants[compositeKey];
+        if (p.key === this.userProfile.key) {
+          // For self: merge connections from API but don't overwrite any connection
+          // we're currently managing locally (our own web instance(s))
+          const existing = this.participants[p.key];
+          if (existing) {
+            for (const [connKey, info] of Object.entries(p.connections || {})) {
+              // Skip any connection key we already track locally (our own instances)
+              if (existing.connections[connKey]) continue;
+              existing.connections[connKey] = info;
+            }
+          }
+          continue;
+        }
+        // For others: merge connections (don't overwrite MQTT-delivered state)
+        const existing = this.participants[p.key];
+        if (existing) {
+          // Merge connections from API into existing entry
+          for (const [connKey, info] of Object.entries(p.connections || {})) {
+            if (!existing.connections[connKey]) {
+              existing.connections[connKey] = info;
+            }
+          }
+          existing.name = p.name;
+          existing.type = p.type;
+        } else {
+          this.participants[p.key] = {
+            key: p.key,
+            name: p.name,
+            type: p.type,
+            connections: p.connections || {},
+            lastOffline: null,
+          };
         }
       }
     } catch {
@@ -229,12 +233,13 @@ export class MqttChatStore {
 
   onlineParticipants = $derived.by(() => {
     const _p = this.participants;
-    return Object.values(_p).filter(p => p.status === 'online');
+    return Object.values(_p).filter(p => Object.keys(p.connections).length > 0);
   });
 
+  // Offline = entry exists but connections is empty (kept briefly for display)
   offlineParticipants = $derived.by(() => {
     const _p = this.participants;
-    return Object.values(_p).filter(p => p.status !== 'online');
+    return Object.values(_p).filter(p => Object.keys(p.connections).length === 0);
   });
 
   activeTypingUsers = $derived.by(() => {
@@ -261,8 +266,7 @@ export class MqttChatStore {
   });
 
   onlineCount = $derived.by(() => {
-    const _p = this.participants;
-    return Object.values(_p).filter(p => p.status === 'online').length;
+    return this.onlineParticipants.length;
   });
 
   /** Total number of messages across all channels. */
@@ -326,7 +330,9 @@ export class MqttChatStore {
       if (storedName) this.userProfile.name = storedName;
     }
 
-    const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + Math.random().toString(16).slice(2, 6);
+    const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + this.#instanceId;
+    const connKey = 'web-' + this.#instanceId;
+    const presenceTopic = TOPIC_PREFIX + '/presence/' + this.userProfile.key + '/' + connKey;
 
     this.#client = mqtt.connect(BROKER_URL, {
       clientId,
@@ -334,13 +340,15 @@ export class MqttChatStore {
       keepalive: 30,
       reconnectPeriod: 3000,
       will: {
-        topic: TOPIC_PREFIX + '/system/participants/' + this.userProfile.key + '-web',
+        topic: presenceTopic,
         payload: JSON.stringify({
           key: this.userProfile.key,
           name: this.userProfile.name,
           type: this.userProfile.type,
           status: 'offline',
           client: 'web',
+          instanceId: this.#instanceId,
+          ts: new Date().toISOString(),
         }),
         qos: 1,
         retain: true
@@ -354,19 +362,45 @@ export class MqttChatStore {
       this.#backoffActive = false;
       this.#subscribeAll();
       this.#publishPresence('online');
-      // Add ourselves to the participant list so we appear in the member sidebar
-      this.participants[this.userProfile.key + '-web'] = {
-        key: this.userProfile.key,
-        name: this.userProfile.name,
-        type: this.userProfile.type,
-        status: 'online',
-        client: 'web',
+
+      // Self-add: create user entry with our web connection
+      const now = new Date().toISOString();
+      if (!this.participants[this.userProfile.key]) {
+        this.participants[this.userProfile.key] = {
+          key: this.userProfile.key,
+          name: this.userProfile.name,
+          type: this.userProfile.type,
+          connections: {},
+          lastOffline: null,
+        };
+      }
+      this.participants[this.userProfile.key].connections[connKey] = {
+        client: 'web', instanceId: this.#instanceId, since: now, lastSeen: now
       };
+      this.participants[this.userProfile.key].lastOffline = null;
+
       // Fetch message history from the REST API so messages survive page refresh
       this.#fetchHistory(this.activeChannel);
       // Start polling participant list from the server to discover
       // TUI/MCP clients whose presence may not bridge across transports
       this.#startParticipantPolling();
+
+      // Start heartbeat: re-publish presence every 60s to update lastSeen
+      this.#stopHeartbeat();
+      this.#heartbeatTimer = setInterval(() => {
+        this.#publishPresence('online');
+        // Also update our own local lastSeen
+        const self = this.participants[this.userProfile.key];
+        if (self && self.connections[connKey]) {
+          self.connections[connKey].lastSeen = new Date().toISOString();
+        }
+      }, 60_000);
+
+      // Start TTL cleanup: check all connections every 30s
+      this.#stopTtlCleanup();
+      this.#ttlCleanupTimer = setInterval(() => {
+        this.#runTtlCleanup();
+      }, 30_000);
     });
 
     this.#client.on('error', (err) => {
@@ -422,6 +456,8 @@ export class MqttChatStore {
    */
   disconnect() {
     this.#stopParticipantPolling();
+    this.#stopHeartbeat();
+    this.#stopTtlCleanup();
 
     // Clear our own typing timer
     if (this.#myTypingTimer) {
@@ -443,7 +479,11 @@ export class MqttChatStore {
     }
 
     if (this.#client) {
+      // Graceful disconnect: publish offline, then empty retained to clean broker
       this.#publishPresence('offline');
+      const connKey = 'web-' + this.#instanceId;
+      const presenceTopic = TOPIC_PREFIX + '/presence/' + this.userProfile.key + '/' + connKey;
+      this.#client.publish(presenceTopic, '', { retain: true });
       this.#client.end();
       this.#client = null;
       this.connected = false;
@@ -804,12 +844,16 @@ export class MqttChatStore {
 
     // Subscribe to all conversations
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/messages', { qos: 1 });
-    this.#client.subscribe(TOPIC_PREFIX + '/conv/+/presence/+', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/typing/+', { qos: 0 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/meta', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/reactions', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/pins', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/deletions', { qos: 1 });
+
+    // New global presence topic
+    this.#client.subscribe(TOPIC_PREFIX + '/presence/+/+', { qos: 1 });
+    // Old topics for migration compatibility (dual subscription)
+    this.#client.subscribe(TOPIC_PREFIX + '/conv/+/presence/+', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/system/participants/+', { qos: 1 });
   }
 
@@ -819,7 +863,11 @@ export class MqttChatStore {
 
     if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
       this.#handleChatMessage(topicParts[1], msg);
+    } else if (topicParts[0] === 'presence') {
+      // New global presence: presence/{key}/{client}-{instanceId}
+      this.#handlePresence(msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'presence') {
+      // Old per-conversation presence (migration compat)
       this.#handlePresence(msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'typing') {
       this.#handleTyping(topicParts[1], msg);
@@ -832,6 +880,7 @@ export class MqttChatStore {
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'deletions') {
       this.#handleRemoteDeletion(topicParts[1], msg);
     } else if (topicParts[0] === 'system' && topicParts[1] === 'participants') {
+      // Old system/participants topic (migration compat)
       this.#handleParticipantRegistry(msg);
     }
   }
@@ -873,33 +922,45 @@ export class MqttChatStore {
   }
 
   #handlePresence(msg) {
-    const clientType = msg.client || 'unknown';
-    const participantKey = msg.key + '-' + clientType;
+    const { key, name, type, status, client, instanceId, ts } = msg;
 
-    // Skip our own web presence messages — we manage our own status locally.
-    // Skip our own web presence — we manage it via self-add.
-    // Allow same key with different client type (e.g., Phil on TUI).
-    // Also skip 'unknown' client from our key (stale retained messages).
-    if (msg.key === this.userProfile.key && (clientType === 'web' || clientType === 'unknown')) return;
+    // Extract base client type and validate
+    const baseClient = client;
+    if (!baseClient || !CONNECTION_TYPES.includes(baseClient)) return;
 
-    // Skip stale offline presence (retained LWT from old sessions)
-    // Only add offline participants if they were seen recently (5 min)
-    if (msg.status === 'offline' && msg.ts) {
-      const age = Date.now() - new Date(msg.ts).getTime();
-      if (age > 5 * 60 * 1000) return; // Older than 5 min, skip
+    // Build connection key: "web-3f2a" (or bare "web" for legacy messages without instanceId)
+    const connKey = instanceId ? baseClient + '-' + instanceId : baseClient;
+
+    // Skip our own web presence instances (self-add handles them)
+    if (key === this.userProfile.key && baseClient === 'web'
+        && instanceId === this.#instanceId) return;
+
+    if (status === 'online') {
+      // Create user if not exists
+      if (!this.participants[key]) {
+        this.participants[key] = { key, name, type, connections: {}, lastOffline: null };
+      }
+      // Add/update connection
+      this.participants[key].connections[connKey] = {
+        client: baseClient,
+        instanceId: instanceId || null,
+        since: this.participants[key].connections[connKey]?.since || ts,
+        lastSeen: ts || new Date().toISOString()
+      };
+      // Clear offline timestamp since user is now online
+      this.participants[key].lastOffline = null;
+      // Update name/type in case they changed
+      this.participants[key].name = name;
+      this.participants[key].type = type;
+    } else if (status === 'offline') {
+      if (this.participants[key]) {
+        delete this.participants[key].connections[connKey];
+        // If no connections left, mark as offline (keep for display)
+        if (Object.keys(this.participants[key].connections).length === 0) {
+          this.participants[key].lastOffline = new Date().toISOString();
+        }
+      }
     }
-
-    // Skip if key looks like a random old session key and status is offline
-    if (msg.status === 'offline') return; // Don't track offline strangers at all
-
-    this.participants[participantKey] = {
-      key: msg.key,
-      name: msg.name,
-      type: msg.type,
-      status: msg.status,
-      client: clientType,
-      ts: msg.ts || new Date().toISOString()
-    };
   }
 
   #handleTyping(channel, msg) {
@@ -929,21 +990,49 @@ export class MqttChatStore {
     }
   }
 
+  /**
+   * Handle old-style system/participants messages (migration compat).
+   * Converts composite key messages into the new connection-aware model.
+   */
   #handleParticipantRegistry(msg) {
-    if (msg.key) {
-      const clientType = msg.client || 'unknown';
-      // Skip own web/unknown entries — managed by self-add
-      if (msg.key === this.userProfile.key && (clientType === 'web' || clientType === 'unknown')) return;
-      const participantKey = msg.key + '-' + clientType;
-      this.participants[participantKey] = {
-        ...this.participants[participantKey],
+    if (!msg.key) return;
+    const baseClient = msg.client || 'unknown';
+    if (!CONNECTION_TYPES.includes(baseClient)) return;
+
+    // Skip own web entries — managed by self-add
+    if (msg.key === this.userProfile.key && baseClient === 'web') return;
+
+    const connKey = msg.instanceId ? baseClient + '-' + msg.instanceId : baseClient;
+
+    if (!this.participants[msg.key]) {
+      this.participants[msg.key] = {
         key: msg.key,
         name: msg.name,
         type: msg.type,
-        client: clientType,
-        status: msg.status || this.participants[participantKey]?.status || 'offline'
+        connections: {},
+        lastOffline: null,
       };
     }
+
+    if (msg.status === 'offline') {
+      delete this.participants[msg.key].connections[connKey];
+      if (Object.keys(this.participants[msg.key].connections).length === 0) {
+        this.participants[msg.key].lastOffline = new Date().toISOString();
+      }
+    } else {
+      const now = new Date().toISOString();
+      this.participants[msg.key].connections[connKey] = {
+        client: baseClient,
+        instanceId: msg.instanceId || null,
+        since: this.participants[msg.key].connections[connKey]?.since || now,
+        lastSeen: now
+      };
+      this.participants[msg.key].lastOffline = null;
+    }
+
+    // Update name/type
+    this.participants[msg.key].name = msg.name;
+    this.participants[msg.key].type = msg.type;
   }
 
   #handleRemoteReaction(channel, msg) {
@@ -1035,15 +1124,76 @@ export class MqttChatStore {
 
   #publishPresence(status) {
     if (!this.#client) return;
-    const topic = TOPIC_PREFIX + '/conv/' + this.activeChannel + '/presence/' + this.userProfile.key;
+    const connKey = 'web-' + this.#instanceId;
+    const topic = TOPIC_PREFIX + '/presence/' + this.userProfile.key + '/' + connKey;
     this.#client.publish(topic, JSON.stringify({
       key: this.userProfile.key,
       name: this.userProfile.name,
       type: this.userProfile.type,
       status,
       client: 'web',
+      instanceId: this.#instanceId,
       ts: new Date().toISOString()
     }), { qos: 1, retain: true });
+  }
+
+  /** Stop the heartbeat timer. */
+  #stopHeartbeat() {
+    if (this.#heartbeatTimer) {
+      clearInterval(this.#heartbeatTimer);
+      this.#heartbeatTimer = null;
+    }
+  }
+
+  /** Stop the TTL cleanup timer. */
+  #stopTtlCleanup() {
+    if (this.#ttlCleanupTimer) {
+      clearInterval(this.#ttlCleanupTimer);
+      this.#ttlCleanupTimer = null;
+    }
+  }
+
+  /**
+   * TTL cleanup: remove stale connections (>120s lastSeen) and
+   * offline users (>5 min). Publishes empty retained to clean broker
+   * for stale connections (handles crash scenarios).
+   */
+  #runTtlCleanup() {
+    const now = Date.now();
+    const connKey = 'web-' + this.#instanceId;
+
+    for (const [userKey, participant] of Object.entries(this.participants)) {
+      // Check each connection for staleness
+      for (const [ck, conn] of Object.entries(participant.connections)) {
+        // Don't expire our own connection
+        if (userKey === this.userProfile.key && ck === connKey) continue;
+
+        const lastSeen = conn.lastSeen ? new Date(conn.lastSeen).getTime() : 0;
+        if (now - lastSeen > CONNECTION_TTL_MS) {
+          delete participant.connections[ck];
+          // Publish empty retained to clean broker (stale retained cleanup)
+          if (this.#client) {
+            const staleTopic = TOPIC_PREFIX + '/presence/' + userKey + '/' + ck;
+            this.#client.publish(staleTopic, '', { retain: true });
+          }
+        }
+      }
+
+      // If no connections remain, set lastOffline if not already set
+      if (Object.keys(participant.connections).length === 0) {
+        if (!participant.lastOffline) {
+          participant.lastOffline = new Date().toISOString();
+        }
+        // Remove offline users after 5 minutes
+        const offlineSince = new Date(participant.lastOffline).getTime();
+        if (now - offlineSince > OFFLINE_DISPLAY_MS) {
+          // Don't remove ourselves
+          if (userKey !== this.userProfile.key) {
+            delete this.participants[userKey];
+          }
+        }
+      }
+    }
   }
 
   #publishTyping(typing) {
