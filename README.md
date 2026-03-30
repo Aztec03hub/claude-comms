@@ -40,7 +40,9 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 - **Log rotation** -- Configurable size-based rotation with numbered suffixes
 - **Conversation management** -- Create, list, and delete conversations via CLI or MCP tools
 - **Message history REST API** -- Persistent message history accessible via REST endpoints, web UI reloads messages on refresh
-- **Broker crash resilience** -- Daemon survives amqtt broker crashes on WebSocket disconnect without going down
+- **Unified identity endpoint** (`/api/identity`) -- Single REST endpoint for consistent identity across all clients
+- **Client type display** -- Participants show their client type: "Phil (web)", "Phil (tui)", "claude-orchestrator (mcp)"
+- **Broker crash resilience** -- Daemon survives amqtt broker crashes on WebSocket disconnect with retry loop
 
 ---
 
@@ -741,7 +743,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **714+ total tests**: **647 Python tests** across 12 test files (~14.6s) plus **43 TUI tests** (Textual `run_test()`) plus **121+ Playwright browser E2E tests** across 24 spec files with 120+ test screenshots:
+The test suite includes **~949 total tests**: **714 Python tests** across 12 test files plus **43 TUI tests** (Textual `run_test()`) plus **235 Playwright browser E2E tests** across 25 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -758,11 +760,11 @@ The test suite includes **714+ total tests**: **647 Python tests** across 12 tes
 | `test_cli.py` | 19 | CLI init, status, config env vars, force overwrite, key generation, stale PID |
 | `test_tui.py` | 43 | TUI app rendering, channel switching, message sending, keyboard shortcuts, edge cases, @mention tab completion, unread badges, presence |
 
-**Note:** Python test count grew from 504 to 647 via expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules (36 new tests in the overnight 2026-03-30 session).
+**Note:** Python test count grew from 504 to 714 via expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules (67 new tests in the overnight 2026-03-30 session). Playwright E2E tests expanded to 235 across 25 spec files including 12 user story E2E tests across 2 rounds.
 
 ### Playwright E2E Tests
 
-The web UI has **121+ browser-level E2E tests** across **24 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
+The web UI has **235 browser-level E2E tests** across **25 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
 
 ```bash
 cd web
@@ -792,7 +794,7 @@ npx playwright test --headed # Visible browser
 | `overnight-comprehensive.spec.js` | 60 | 9-round comprehensive sweep: sidebar, header, input, messages, panels, modals, member list, theme/responsive, keyboard |
 | `overnight-members-theme.spec.js` | 19 | Member list, profile card (7 tests), theme toggle (3), responsive at 5 viewports (5) |
 | `a11y-keyboard.spec.js` | 10 | Tab focus, focus-visible rings, Enter activation, Escape handling, ARIA roles, sr-only class |
-| `user-stories.spec.js` | 7 | E2E user stories: first experience, team discussion, channel management, reactions/interactions, search/navigation, customization/settings, mobile user |
+| `user-stories.spec.js` | 12 | E2E user stories (2 rounds): first experience, team discussion, channel management, reactions/interactions, search/navigation, customization/settings, mobile user, identity display, history persistence, presence lifecycle |
 | `visual-regression.spec.js` | -- | Visual regression tests |
 | `round6-modals.spec.js` | -- | Round 6 modal tests |
 | `round7-keyboard.spec.js` | -- | Round 7 keyboard tests |
@@ -846,12 +848,12 @@ claude-comms/
 |   |   +-- styles.tcss              # Carbon Ember theme
 +-- web/                              # Svelte 5 web UI
 |   +-- src/
-|   +-- e2e/                         # Playwright E2E tests (20 spec files)
+|   +-- e2e/                         # Playwright E2E tests (25 spec files)
 |   +-- playwright.config.js
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
-+-- tests/                            # pytest test suite (647 tests)
++-- tests/                            # pytest test suite (714 tests)
 |   +-- conftest.py                   # Shared fixtures
 |   +-- test_*.py                     # 12 test modules (unit, integration, E2E)
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
