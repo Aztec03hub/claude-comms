@@ -1,3 +1,9 @@
+<!--
+  @component ThemeToggle
+  @description A small icon button that toggles between dark and light themes. Shows a sun icon in dark mode and a moon icon in light mode.
+  @prop {string} mode - Current theme mode: 'dark' or 'light' (default: 'dark').
+  @prop {Function} onToggle - Callback invoked when the button is clicked to switch themes.
+-->
 <script>
   import { Sun, Moon } from 'lucide-svelte';
   let { mode = 'dark', onToggle } = $props();

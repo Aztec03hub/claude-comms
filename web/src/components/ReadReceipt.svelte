@@ -1,3 +1,9 @@
+<!--
+  @component ReadReceipt
+  @description Displays animated double-check marks and a "Read by N" label below sent messages. Shows a hover tooltip listing reader names when available.
+  @prop {number} count - Number of people who have read the message (default: 0).
+  @prop {Array<string>} readers - Optional array of reader display names for the tooltip.
+-->
 <script>
   let { count = 0, readers = [] } = $props();
 

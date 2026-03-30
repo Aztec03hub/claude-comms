@@ -1,3 +1,9 @@
+<!--
+  @component SearchPanel
+  @description Slide-in panel for searching messages across channels. Provides a text input, type filters (All, Messages, Files, Code, Links), result highlighting, and empty state graphics. Auto-focuses the search input on mount.
+  @prop {object} store - The ChatStore instance used to call searchMessages().
+  @prop {Function} onClose - Callback invoked to close the search panel.
+-->
 <script>
   import { onMount } from 'svelte';
   import { X, SearchX, Search as SearchIcon } from 'lucide-svelte';

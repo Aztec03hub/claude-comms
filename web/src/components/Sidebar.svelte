@@ -1,3 +1,12 @@
+<!--
+  @component Sidebar
+  @description Left sidebar navigation showing the app brand, a channel search input, collapsible Starred and Conversations channel lists with unread badges and mute controls, a "New Conversation" button, and the current user's profile/status footer with a settings gear button.
+  @prop {object} store - The ChatStore instance for channel data, active channel, starring, and user profile.
+  @prop {Function} onCreateChannel - Callback invoked to open the channel creation modal.
+  @prop {Function} onShowProfile - Callback invoked with a participant object to show their profile card.
+  @prop {Function} onMuteChannel - Callback invoked with a channel ID to toggle its mute state.
+  @prop {Function} onOpenSettings - Callback invoked to open the settings panel.
+-->
 <script>
   import { Hash, VolumeX, Plus, Settings } from 'lucide-svelte';
 

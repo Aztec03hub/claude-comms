@@ -1,3 +1,10 @@
+<!--
+  @component UserProfileView
+  @description Full-width slide-in panel showing detailed user profile information: large avatar, display name, handle, role badge, participant type (Human/Claude), participant key, online status, and action buttons for sending messages and muting notifications.
+  @prop {object} participant - Participant object with name, key, type, role, and online fields.
+  @prop {Function} onClose - Callback invoked to close the profile panel.
+  @prop {Function} onSendMessage - Optional callback invoked with the participant to start a direct message.
+-->
 <script>
   import { X, MessageSquare, BellOff } from 'lucide-svelte';
   import { getParticipantColor, getInitials } from '../lib/utils.js';

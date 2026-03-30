@@ -1,3 +1,9 @@
+<!--
+  @component ScrollToBottom
+  @description Floating circular button that appears when the user scrolls up in the chat view. Shows a chevron-down icon and an optional unread message count badge. Clicking it smooth-scrolls to the bottom of the message list.
+  @prop {number} count - Number of unread messages below the current scroll position (default: 0).
+  @prop {Function} onClick - Callback invoked when the button is clicked to scroll down.
+-->
 <script>
   import { ChevronDown } from 'lucide-svelte';
 

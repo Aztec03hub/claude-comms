@@ -1,3 +1,11 @@
+<!--
+  @component SettingsPanel
+  @description Slide-in settings panel with sections for Profile (display name editing), Notifications (desktop and in-app toast toggles), Appearance (dark mode toggle), and Connection (broker URL and status display).
+  @prop {object} store - The ChatStore instance for reading/writing user profile and notification preferences.
+  @prop {string} theme - Current theme: 'dark' or 'light' (default: 'dark').
+  @prop {Function} onClose - Callback invoked to close the settings panel.
+  @prop {Function} onToggleTheme - Callback invoked to toggle between dark and light themes.
+-->
 <script>
   import { X, User, Bell, Palette, Wifi } from 'lucide-svelte';
 

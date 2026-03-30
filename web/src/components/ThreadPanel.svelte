@@ -1,3 +1,13 @@
+<!--
+  @component ThreadPanel
+  @description Slide-in panel for viewing and replying to a message thread. Shows the parent message, a scrollable list of threaded replies with avatars and timestamps, and a reply input with send button.
+  @prop {object} parentMessage - The root message that started the thread.
+  @prop {Array} messages - Array of reply message objects in the thread.
+  @prop {object} participants - Map of participant keys to participant objects.
+  @prop {object} currentUser - The current user's profile.
+  @prop {Function} onClose - Callback invoked to close the thread panel.
+  @prop {Function} onSendReply - Callback invoked with the reply text string.
+-->
 <script>
   import Avatar from './Avatar.svelte';
   import { MessageSquare, Send, X } from 'lucide-svelte';
