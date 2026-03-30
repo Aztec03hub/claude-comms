@@ -1,4 +1,5 @@
 <script>
+  import { Combobox } from 'bits-ui';
   import { getInitials, getParticipantColor } from '../lib/utils.js';
 
   let { query = '', participants = [], onSelect, onClose } = $props();
@@ -9,48 +10,96 @@
     ).slice(0, 8)
   );
 
-  let selectedIndex = $state(0);
+  let comboValue = $state('');
+  let hiddenInputRef = $state(null);
 
-  function handleKeydown(e) {
-    if (e.key === 'ArrowDown') {
-      selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1);
-      e.preventDefault();
-    } else if (e.key === 'ArrowUp') {
-      selectedIndex = Math.max(selectedIndex - 1, 0);
-      e.preventDefault();
-    } else if (e.key === 'Enter' && filtered.length > 0) {
-      onSelect(filtered[selectedIndex].name);
-      e.preventDefault();
-    } else if (e.key === 'Escape') {
+  // Auto-focus the hidden combobox input so bits-ui handles
+  // ArrowUp/Down, Enter, and Escape keyboard navigation natively.
+  // The external message input passes the query as a prop for filtering.
+  $effect(() => {
+    if (hiddenInputRef && filtered.length > 0) {
+      hiddenInputRef.focus();
+    }
+  });
+
+  function handleValueChange(value) {
+    if (value) {
+      const participant = filtered.find(p => p.key === value);
+      if (participant) {
+        onSelect(participant.name);
+      }
+    }
+  }
+
+  function handleOpenChange(open) {
+    if (!open) {
       onClose();
     }
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 {#if filtered.length > 0}
-  <div class="mention-dropdown">
-    {#each filtered as p, i (p.key)}
-      {@const color = getParticipantColor(p.key)}
-      <button
-        class="mention-item"
-        class:selected={i === selectedIndex}
-        onclick={() => onSelect(p.name)}
-      >
-        <div class="mention-avatar" style="background: {color.gradient}">
-          {getInitials(p.name)}
+  <Combobox.Root
+    type="single"
+    bind:value={comboValue}
+    open={true}
+    onOpenChange={handleOpenChange}
+    onValueChange={handleValueChange}
+    loop={true}
+  >
+    <Combobox.Input
+      bind:ref={hiddenInputRef}
+      value={query}
+      aria-label="Search participants"
+      class="mention-hidden-input"
+      data-testid="mention-combobox-input"
+    />
+
+    <Combobox.ContentStatic
+      data-testid="mention-dropdown"
+      trapFocus={false}
+      preventScroll={false}
+    >
+      {#snippet child({ props })}
+        {@const { style: _floatingStyle, class: _cls, ...ariaProps } = props}
+        <div {...ariaProps} class="mention-dropdown">
+          {#each filtered as p (p.key)}
+            {@const color = getParticipantColor(p.key)}
+            <Combobox.Item value={p.key} label={p.name} data-testid="mention-item-{p.key}">
+              {#snippet children({ selected, highlighted })}
+                <div class="mention-item" class:selected={highlighted}>
+                  <div class="mention-avatar" style="background: {color.gradient}">
+                    {getInitials(p.name)}
+                  </div>
+                  <div class="mention-info">
+                    <span class="mention-name" style="color: {color.textColor}">{p.name}</span>
+                    <span class="mention-type">{p.type}</span>
+                  </div>
+                </div>
+              {/snippet}
+            </Combobox.Item>
+          {/each}
         </div>
-        <div class="mention-info">
-          <span class="mention-name" style="color: {color.textColor}">{p.name}</span>
-          <span class="mention-type">{p.type}</span>
-        </div>
-      </button>
-    {/each}
-  </div>
+      {/snippet}
+    </Combobox.ContentStatic>
+  </Combobox.Root>
 {/if}
 
 <style>
+  :global(.mention-hidden-input) {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
   .mention-dropdown {
     position: absolute;
     bottom: 100%;

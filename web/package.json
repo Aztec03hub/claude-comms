@@ -12,6 +12,8 @@
     "test:headed": "playwright test --headed"
   },
   "dependencies": {
+    "bits-ui": "^2.16.4",
+    "lucide-svelte": "^1.0.1",
     "mqtt": "^5.10.0"
   },
   "devDependencies": {

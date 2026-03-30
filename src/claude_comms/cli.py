@@ -509,9 +509,9 @@ def tui() -> None:
         raise typer.Exit(1)
 
     try:
-        from claude_comms.tui.app import ChatApp  # type: ignore[import-not-found]
+        from claude_comms.tui.app import ClaudeCommsApp  # type: ignore[import-not-found]
 
-        app_instance = ChatApp()
+        app_instance = ClaudeCommsApp()
         app_instance.run()
     except ImportError:
         console.print(

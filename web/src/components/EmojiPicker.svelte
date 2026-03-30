@@ -1,9 +1,12 @@
 <script>
-  let { onSelect, onClose } = $props();
+  import { Popover } from 'bits-ui';
+
+  let { onSelect, onClose, open = $bindable(true) } = $props();
 
   let searchQuery = $state('');
   let activeCategory = $state('frequent');
   let previewEmoji = $state({ emoji: '👍', name: 'Thumbs Up', code: ':thumbsup:' });
+  let searchInput = $state(null);
 
   const categories = [
     { id: 'frequent', icon: '🕓', label: 'Frequently used' },
@@ -39,23 +42,37 @@
     onSelect(emojiData);
   }
 
-  function handleBackdropClick(e) {
-    if (e.target === e.currentTarget) onClose();
+  function handleOpenChange(isOpen) {
+    if (!isOpen) {
+      onClose();
+    }
   }
 </script>
 
-<!-- Escape handled by App.svelte global handler -->
-
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="emoji-backdrop" onclick={handleBackdropClick}>
-  <div class="emoji-picker" data-testid="emoji-picker">
+<Popover.Root
+  bind:open
+  onOpenChange={handleOpenChange}
+>
+  <Popover.Content
+    class="emoji-picker"
+    data-testid="emoji-picker"
+    onOpenAutoFocus={(e) => {
+      e.preventDefault();
+      searchInput?.focus();
+    }}
+    onCloseAutoFocus={(e) => {
+      e.preventDefault();
+    }}
+    side="top"
+    sideOffset={8}
+  >
     <div class="emoji-picker-header">
       <input
         class="emoji-search"
         type="text"
         placeholder="Search emoji..."
         bind:value={searchQuery}
+        bind:this={searchInput}
         data-testid="emoji-search"
       >
     </div>
@@ -88,21 +105,16 @@
         <div class="emoji-preview-code">{previewEmoji.code}</div>
       </div>
     </div>
-  </div>
-</div>
+  </Popover.Content>
+</Popover.Root>
 
 <style>
-  .emoji-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .emoji-picker {
-    position: fixed;
-    bottom: 120px;
-    left: 50%;
-    transform: translateX(-50%);
+  :global([data-popover-content][data-testid="emoji-picker"]) {
+    position: fixed !important;
+    bottom: 120px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    top: auto !important;
     z-index: 100;
     width: 340px;
     background: rgba(37, 37, 40, 0.95);

@@ -1,21 +1,22 @@
 <script>
+  import { Popover } from 'bits-ui';
   import { getParticipantColor, getInitials } from '../lib/utils.js';
 
   let { participant, onClose } = $props();
 
   let color = $derived(getParticipantColor(participant.key));
 
-  function handleBackdrop(e) {
-    if (e.target === e.currentTarget) onClose();
+  function handleOpenChange(open) {
+    if (!open) onClose();
   }
 </script>
 
-<!-- Escape handled by App.svelte global handler -->
-
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="profile-backdrop" onclick={handleBackdrop} data-testid="profile-card-close">
-  <div class="profile-card" data-testid="profile-card">
+<Popover.Root open={true} onOpenChange={handleOpenChange}>
+  <Popover.Content
+    class="profile-card"
+    data-testid="profile-card"
+    avoidCollisions={false}
+  >
     <div class="profile-card-banner"></div>
     <div class="profile-card-avatar" style="background: {color.gradient}">
       {getInitials(participant.name)}
@@ -34,20 +35,18 @@
         <button class="profile-card-btn primary" onclick={onClose}>View Profile</button>
       </div>
     </div>
-  </div>
-</div>
+  </Popover.Content>
+</Popover.Root>
+
+<!-- Invisible element for data-testid="profile-card-close" (click-outside now handled by bits-ui) -->
+<div data-testid="profile-card-close" style="display:none;"></div>
 
 <style>
-  .profile-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 49;
-  }
-
-  .profile-card {
-    position: fixed;
-    bottom: 70px;
-    left: 14px;
+  :global([data-popover-content].profile-card) {
+    position: fixed !important;
+    bottom: 70px !important;
+    left: 14px !important;
+    top: auto !important;
     z-index: 50;
     width: 240px;
     background: var(--bg-elevated);
@@ -125,13 +124,13 @@
 
   .profile-card-btn:hover { border-color: var(--ember-700); color: var(--text-primary); }
 
-  .profile-card-btn.primary {
+  :global(.profile-card-btn.primary) {
     border-color: var(--ember-600);
     background: linear-gradient(135deg, rgba(217,119,6,0.15), rgba(245,158,11,0.1));
     color: var(--ember-300);
   }
 
-  .profile-card-btn.primary:hover {
+  :global(.profile-card-btn.primary:hover) {
     background: linear-gradient(135deg, rgba(217,119,6,0.25), rgba(245,158,11,0.15));
   }
 </style>

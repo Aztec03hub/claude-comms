@@ -1,4 +1,6 @@
 <script>
+  import { Dialog } from "bits-ui";
+
   let { onClose, onCreate } = $props();
 
   let channelName = $state('');
@@ -15,67 +17,70 @@
   function handleKeydown(e) {
     if (e.key === 'Enter') handleCreate();
   }
+
+  function handleOpenChange(open) {
+    if (!open) onClose();
+  }
 </script>
 
-<!-- Escape handled by App.svelte global handler -->
-
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }} data-testid="channel-modal">
-  <div class="modal">
-    <div class="modal-header">
-      <span class="modal-title">Create Conversation</span>
-      <button class="modal-close" onclick={onClose} data-testid="channel-modal-close">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div class="modal-field">
-        <label class="modal-label" for="channel-name-input">Channel Name</label>
-        <input
-          id="channel-name-input"
-          class="modal-input"
-          type="text"
-          placeholder="e.g. project-phoenix"
-          bind:value={channelName}
-          onkeydown={handleKeydown}
-          data-testid="channel-modal-name-input"
-        >
-        <div class="modal-hint">Names must be lowercase, no spaces. Use dashes instead.</div>
+<Dialog.Root open={true} onOpenChange={handleOpenChange}>
+  <Dialog.Portal>
+    <Dialog.Overlay class="modal-overlay" data-testid="channel-modal" />
+    <Dialog.Content class="modal" data-testid="channel-modal-content">
+      <div class="modal-header">
+        <Dialog.Title class="modal-title">Create Conversation</Dialog.Title>
+        <Dialog.Close class="modal-close" data-testid="channel-modal-close">&times;</Dialog.Close>
       </div>
-      <div class="modal-field">
-        <label class="modal-label" for="channel-desc-input">Description</label>
-        <textarea
-          id="channel-desc-input"
-          class="modal-textarea"
-          placeholder="What is this channel about?"
-          bind:value={description}
-          data-testid="channel-modal-description"
-        ></textarea>
-      </div>
-      <div class="modal-toggle">
-        <div>
-          <div class="modal-toggle-label">Private Channel</div>
-          <div class="modal-toggle-desc">Only invited members can see this channel</div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label class="modal-label" for="channel-name-input">Channel Name</label>
+          <input
+            id="channel-name-input"
+            class="modal-input"
+            type="text"
+            placeholder="e.g. project-phoenix"
+            bind:value={channelName}
+            onkeydown={handleKeydown}
+            data-testid="channel-modal-name-input"
+          >
+          <div class="modal-hint">Names must be lowercase, no spaces. Use dashes instead.</div>
         </div>
-        <div
-          class="toggle-switch"
-          class:active={isPrivate}
-          onclick={() => isPrivate = !isPrivate}
-          role="switch"
-          aria-checked={isPrivate}
-          tabindex="0"
-          data-testid="channel-modal-private-toggle"
-        ></div>
+        <div class="modal-field">
+          <label class="modal-label" for="channel-desc-input">Description</label>
+          <textarea
+            id="channel-desc-input"
+            class="modal-textarea"
+            placeholder="What is this channel about?"
+            bind:value={description}
+            data-testid="channel-modal-description"
+          ></textarea>
+        </div>
+        <div class="modal-toggle">
+          <div>
+            <div class="modal-toggle-label">Private Channel</div>
+            <div class="modal-toggle-desc">Only invited members can see this channel</div>
+          </div>
+          <div
+            class="toggle-switch"
+            class:active={isPrivate}
+            onclick={() => isPrivate = !isPrivate}
+            role="switch"
+            aria-checked={isPrivate}
+            tabindex="0"
+            data-testid="channel-modal-private-toggle"
+          ></div>
+        </div>
       </div>
-    </div>
-    <div class="modal-footer">
-      <button class="modal-btn secondary" onclick={onClose} data-testid="channel-modal-cancel">Cancel</button>
-      <button class="modal-btn primary" onclick={handleCreate} data-testid="channel-modal-create">Create Channel</button>
-    </div>
-  </div>
-</div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" onclick={onClose} data-testid="channel-modal-cancel">Cancel</button>
+        <button class="modal-btn primary" onclick={handleCreate} data-testid="channel-modal-create">Create Channel</button>
+      </div>
+    </Dialog.Content>
+  </Dialog.Portal>
+</Dialog.Root>
 
 <style>
-  .modal-overlay {
+  :global([data-dialog-overlay].modal-overlay) {
     position: fixed;
     inset: 0;
     z-index: 200;
@@ -87,7 +92,12 @@
     animation: overlayIn 0.2s ease both;
   }
 
-  .modal {
+  :global([data-dialog-content].modal) {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 201;
     width: 440px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
@@ -105,13 +115,13 @@
     justify-content: space-between;
   }
 
-  .modal-title {
+  :global(.modal-title) {
     font-size: 17px;
     font-weight: 700;
     letter-spacing: -0.3px;
   }
 
-  .modal-close {
+  :global([data-dialog-close].modal-close) {
     width: 28px;
     height: 28px;
     border-radius: 8px;
@@ -126,7 +136,7 @@
     font-size: 18px;
   }
 
-  .modal-close:hover { background: var(--bg-surface); color: var(--text-primary); }
+  :global([data-dialog-close].modal-close:hover) { background: var(--bg-surface); color: var(--text-primary); }
 
   .modal-body { padding: 20px 24px; }
   .modal-field { margin-bottom: 18px; }
