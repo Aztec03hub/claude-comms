@@ -201,6 +201,9 @@ class ClaudeCommsApp(App):
                 except Exception:
                     pass
 
+                # Fetch message history from the REST API
+                await self._fetch_history(self._active_conv)
+
                 # Message receive loop
                 async for mqtt_msg in client.messages:
                     topic = str(mqtt_msg.topic)
@@ -236,6 +239,42 @@ class ClaudeCommsApp(App):
         """Unsubscribe from conversation-specific topics."""
         await client.unsubscribe(f"claude-comms/conv/{conv_id}/presence/+")
         await client.unsubscribe(f"claude-comms/conv/{conv_id}/typing/+")
+
+    async def _fetch_history(self, conv_id: str) -> None:
+        """Fetch message history from the REST API and display it."""
+        import httpx
+
+        mcp_cfg = self._config.get("mcp", {})
+        mcp_host = mcp_cfg.get("host", "127.0.0.1")
+        mcp_port = mcp_cfg.get("port", 9920)
+        url = f"http://{mcp_host}:{mcp_port}/api/messages/{conv_id}?count=50"
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    return
+                data = resp.json()
+                messages = data.get("messages", [])
+                if not messages:
+                    return
+
+                chat_view = self.query_one("#chat-view", ChatView)
+                from claude_comms.message import Message
+
+                for msg_data in messages:
+                    try:
+                        msg = Message(**msg_data)
+                        chat_view.add_message(msg)
+                    except Exception:
+                        pass  # Skip malformed messages
+
+                self._show_system(
+                    f"Loaded {len(messages)} message(s) from history"
+                )
+        except Exception:
+            # History fetch failed — not critical, live messages still work
+            pass
 
     async def _publish_presence(self, client, status: str) -> None:
         """Publish our presence status for the active conversation.
