@@ -144,24 +144,18 @@ export class MqttChatStore {
     // Without this, every page load creates a new retained presence message
     // on the broker, causing phantom participant accumulation.
     if (!this.userProfile.key) {
-      const stored = typeof localStorage !== 'undefined'
-        ? localStorage.getItem('claude-comms-user-key')
-        : null;
+      const stored = safeStorage.getItem('claude-comms-user-key');
       if (stored) {
         this.userProfile.key = stored;
       } else {
         this.userProfile.key = generateKey();
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('claude-comms-user-key', this.userProfile.key);
-        }
+        safeStorage.setItem('claude-comms-user-key', this.userProfile.key);
       }
     }
 
     // Also persist user name
-    if (typeof localStorage !== 'undefined') {
-      const storedName = localStorage.getItem('claude-comms-user-name');
-      if (storedName) this.userProfile.name = storedName;
-    }
+    const storedName = safeStorage.getItem('claude-comms-user-name');
+    if (storedName) this.userProfile.name = storedName;
 
     const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + Math.random().toString(16).slice(2, 6);
 
@@ -746,6 +740,38 @@ export class MqttChatStore {
     if (pinIdx >= 0) {
       this.pinnedMessages.splice(pinIdx, 1);
     }
+  }
+
+  /**
+   * Activate exponential backoff after repeated connection failures.
+   * Disconnects the mqtt.js auto-reconnect loop, then schedules a single
+   * manual reconnect attempt with increasing delay (up to MAX_RECONNECT_MS).
+   * The app remains functional in local-only mode while waiting.
+   */
+  #activateBackoff() {
+    this.#backoffActive = true;
+
+    // Stop mqtt.js's built-in reconnect loop to avoid hammering the broker
+    if (this.#client) {
+      this.#client.options.reconnectPeriod = 0;
+    }
+
+    const attempt = this.#failureCount - BACKOFF_AFTER_ATTEMPTS;
+    const delayMs = Math.min(BASE_RECONNECT_MS * Math.pow(2, attempt), MAX_RECONNECT_MS);
+    const delaySec = Math.round(delayMs / 1000);
+
+    this.connectionError = 'Broker unreachable after ' + this.#failureCount +
+      ' attempts — retrying in ' + delaySec + 's. App works in local-only mode.';
+
+    setTimeout(() => {
+      this.#backoffActive = false;
+      if (this.#client) {
+        // Re-enable reconnect and trigger one attempt
+        this.#client.options.reconnectPeriod = BASE_RECONNECT_MS;
+        this.connectionError = 'Reconnecting to broker...';
+        this.#client.reconnect();
+      }
+    }, delayMs);
   }
 
   #publishPresence(status) {

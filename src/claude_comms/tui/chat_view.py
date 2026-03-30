@@ -195,6 +195,26 @@ class SystemMessage(Static):
         super().__init__(text, **kwargs)
 
 
+class EmptyChannelMessage(Static):
+    """Placeholder shown when a channel has no messages yet."""
+
+    DEFAULT_CSS = """
+    EmptyChannelMessage {
+        text-align: center;
+        color: #6a6a6a;
+        margin: 4 4;
+        padding: 1 2;
+    }
+    """
+
+    def __init__(self, conv_id: str, **kwargs) -> None:
+        text = (
+            f"This is the beginning of # {conv_id}\n"
+            "No messages yet. Say hello!"
+        )
+        super().__init__(text, **kwargs)
+
+
 class ChatView(VerticalScroll):
     """Scrollable container for chat messages.
 
@@ -236,6 +256,8 @@ class ChatView(VerticalScroll):
 
         # Only render if it's the active conversation
         if conv == self.current_conv:
+            # Remove empty channel placeholder if present
+            self.query(EmptyChannelMessage).remove()
             self._render_message(message)
 
     def add_system_message(self, text: str, conv: str | None = None) -> None:
@@ -259,8 +281,11 @@ class ChatView(VerticalScroll):
         """Clear and re-render all messages for the current conversation."""
         self.query("MessageBubble, SystemMessage").remove()
         messages = self._messages.get(self.current_conv, [])
-        for msg in messages:
-            self.mount(MessageBubble(msg))
+        if messages:
+            for msg in messages:
+                self.mount(MessageBubble(msg))
+        else:
+            self.mount(EmptyChannelMessage(self.current_conv))
         self._auto_scroll()
 
     def _auto_scroll(self) -> None:

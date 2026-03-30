@@ -3,17 +3,38 @@
 
   let { store, theme = 'dark', onClose } = $props();
 
+  const MAX_NAME_LENGTH = 50;
+
   let displayName = $state(store?.userProfile?.name || 'Anonymous');
+  let nameError = $derived.by(() => {
+    if (!displayName.trim()) return 'Name cannot be empty.';
+    if (displayName.length > MAX_NAME_LENGTH) return 'Name must be ' + MAX_NAME_LENGTH + ' characters or fewer.';
+    return '';
+  });
   let desktopNotifications = $state(Notification?.permission === 'granted');
   let inAppToasts = $state(store?.inAppToasts ?? true);
 
   function handleNameChange(e) {
-    displayName = e.target.value;
-    if (store?.userProfile) {
-      store.userProfile.name = displayName;
+    const val = e.target.value;
+    // Enforce max length at input level
+    if (val.length > MAX_NAME_LENGTH) {
+      displayName = val.slice(0, MAX_NAME_LENGTH);
+      e.target.value = displayName;
+    } else {
+      displayName = val;
     }
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('claude-comms-user-name', displayName);
+    // Only persist valid names
+    if (displayName.trim()) {
+      if (store?.userProfile) {
+        store.userProfile.name = displayName;
+      }
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('claude-comms-user-name', displayName);
+        }
+      } catch {
+        // localStorage unavailable -- silently ignore
+      }
     }
   }
 
@@ -53,10 +74,17 @@
         <input
           id="settings-display-name"
           class="setting-input"
+          class:input-error={!!nameError}
           type="text"
           value={displayName}
+          maxlength={MAX_NAME_LENGTH}
           oninput={handleNameChange}
         />
+        {#if nameError}
+          <span class="field-error">{nameError}</span>
+        {:else}
+          <span class="field-hint">{displayName.length}/{MAX_NAME_LENGTH}</span>
+        {/if}
       </div>
       <div class="setting-row">
         <label class="setting-label" for="settings-participant-key">Participant Key</label>
@@ -247,6 +275,27 @@
   .setting-input:focus {
     border-color: var(--ember-700);
     box-shadow: 0 0 0 3px var(--border-glow, rgba(245,158,11,0.06));
+  }
+
+  .setting-input.input-error {
+    border-color: #ef4444;
+  }
+
+  .setting-input.input-error:focus {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+  }
+
+  .field-error {
+    font-size: 11px;
+    color: #ef4444;
+    margin-top: 2px;
+  }
+
+  .field-hint {
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-top: 2px;
+    text-align: right;
   }
 
   .setting-readonly {

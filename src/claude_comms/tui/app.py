@@ -195,7 +195,11 @@ class ClaudeCommsApp(App):
                         logger.debug("Error handling MQTT message: %s", exc)
 
         except Exception as exc:
-            self._show_system(f"MQTT connection failed: {exc}")
+            self._show_system(
+                f"MQTT connection failed: {exc}\n"
+                f"  Broker: {self._mqtt_host}:{self._mqtt_port}\n"
+                f"  Ensure the broker is running: claude-comms broker start"
+            )
             logger.exception("MQTT worker error")
 
     async def _subscribe_conv_topics(self, client, conv_id: str) -> None:
@@ -490,3 +494,54 @@ class NewConversationScreen(ModalScreen):
         if name:
             self._callback(name)
         self.dismiss()
+
+
+class HelpScreen(ModalScreen):
+    """Modal overlay showing keybinding help."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("f1", "dismiss", "Close"),
+    ]
+
+    DEFAULT_CSS = """
+    HelpScreen {
+        align: center middle;
+    }
+    #help-dialog {
+        width: 60;
+        height: 20;
+        background: #1c1c1e;
+        border: round #d97706;
+        padding: 1 2;
+    }
+    #help-dialog .help-title {
+        text-align: center;
+        text-style: bold;
+        color: #d97706;
+        margin-bottom: 1;
+    }
+    #help-dialog .help-line {
+        height: 1;
+        color: #e8e4df;
+    }
+    #help-dialog .help-footer {
+        text-align: center;
+        color: #6a6a6a;
+        margin-top: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="help-dialog"):
+            yield Label("Keybindings", classes="help-title")
+            yield Label("  Ctrl+Q      Quit", classes="help-line")
+            yield Label("  Ctrl+N      New conversation", classes="help-line")
+            yield Label("  Ctrl+K      Cycle conversations", classes="help-line")
+            yield Label("  F1          This help screen", classes="help-line")
+            yield Label("  Enter       Send message", classes="help-line")
+            yield Label("  Tab         @mention autocomplete", classes="help-line")
+            yield Label("  Shift+Tab   Navigate focus", classes="help-line")
+            yield Label("  @name       Mention a participant", classes="help-line")
+            yield Label("  ```lang     Code block (with syntax)", classes="help-line")
+            yield Label("Press Escape or F1 to close", classes="help-footer")

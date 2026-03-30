@@ -29,7 +29,7 @@
 {#if connected}
   <div class="connection-banner connected" data-testid="connection-status" role="status" aria-live="polite">
     <div class="connection-dot" aria-hidden="true"></div>
-    Connected &mdash; {onlineCount} agent{onlineCount !== 1 ? 's' : ''} online
+    Connected &mdash; {onlineCount} participant{onlineCount !== 1 ? 's' : ''} online
   </div>
 {:else if error}
   <div class="connection-banner error" data-testid="connection-status" role="alert" aria-live="assertive">

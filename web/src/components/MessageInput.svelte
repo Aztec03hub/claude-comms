@@ -4,6 +4,9 @@
 
   let { store, channelName, typingUsers = [], onOpenEmoji } = $props();
 
+  const MAX_MESSAGE_LENGTH = 10000;
+  const CHAR_WARN_THRESHOLD = 9000;
+
   let inputValue = $state('');
   let showMentionDropdown = $state(false);
   let showFormatHelp = $state(false);
@@ -11,6 +14,10 @@
   let mentionQuery = $state('');
   let inputEl = $state(null);
   let fileInputEl = $state(null);
+
+  let charCount = $derived(inputValue.length);
+  let showCharCounter = $derived(charCount >= CHAR_WARN_THRESHOLD);
+  let overLimit = $derived(charCount > MAX_MESSAGE_LENGTH);
 
   function handleInput(e) {
     inputValue = e.target.value;
@@ -38,6 +45,7 @@
 
   function sendMessage() {
     if (!inputValue.trim()) return;
+    if (inputValue.length > MAX_MESSAGE_LENGTH) return;
     store.sendMessage(inputValue);
     inputValue = '';
     showMentionDropdown = false;
@@ -156,6 +164,15 @@
     </button>
   </div>
 
+  {#if showCharCounter}
+    <div class="char-counter" class:over-limit={overLimit} data-testid="char-counter">
+      {charCount.toLocaleString()}/{MAX_MESSAGE_LENGTH.toLocaleString()}
+      {#if overLimit}
+        <span class="limit-warning">— message too long</span>
+      {/if}
+    </div>
+  {/if}
+
   {#if attachNotice}
     <div class="attach-notice" data-testid="attach-notice">{attachNotice}</div>
   {/if}
@@ -272,6 +289,23 @@
 
   .hidden-file-input {
     display: none;
+  }
+
+  .char-counter {
+    font-size: 11px;
+    color: var(--text-faint);
+    text-align: right;
+    padding: 3px 6px 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .char-counter.over-limit {
+    color: #ef4444;
+    font-weight: 600;
+  }
+
+  .limit-warning {
+    font-weight: 400;
   }
 
   .attach-notice {

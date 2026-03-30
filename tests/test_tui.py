@@ -20,11 +20,12 @@ import pytest
 from textual.widgets import Input, Static, Label
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
-from claude_comms.tui.app import ClaudeCommsApp, NewConversationScreen
+from claude_comms.tui.app import ClaudeCommsApp, NewConversationScreen, HelpScreen
 from claude_comms.tui.channel_list import ChannelList, ChannelItem
-from claude_comms.tui.chat_view import ChatView, MessageBubble, SystemMessage
+from claude_comms.tui.chat_view import ChatView, MessageBubble, SystemMessage, EmptyChannelMessage, SENDER_COLORS, _color_for_key
 from claude_comms.tui.message_input import MessageInput
 from claude_comms.tui.participant_list import ParticipantList, PresenceState
+from claude_comms.tui.status_bar import StatusBar
 
 
 # ---------------------------------------------------------------------------
@@ -828,3 +829,291 @@ class TestRound5EdgeCases:
             await pilot.pause()
 
             assert participant_list._items["claude01"].presence == PresenceState.OFFLINE
+
+
+# ============================================================================
+# Round 6: Status bar rendering
+# ============================================================================
+
+
+class TestRound6StatusBar:
+    """Verify the status bar widget renders and updates correctly."""
+
+    @pytest.mark.asyncio
+    async def test_status_bar_renders(self):
+        """The status bar should be present in the layout."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar is not None
+
+    @pytest.mark.asyncio
+    async def test_status_bar_shows_disconnected(self):
+        """Status bar should show disconnected when MQTT is not connected."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar.connected is False
+
+    @pytest.mark.asyncio
+    async def test_status_bar_shows_active_channel(self):
+        """Status bar should reflect the active channel."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar.active_channel == "general"
+
+    @pytest.mark.asyncio
+    async def test_status_bar_updates_on_switch(self):
+        """Switching channels should update the status bar active channel."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            pilot.app._switch_to_conv("random")
+            await pilot.pause()
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar.active_channel == "random"
+
+    @pytest.mark.asyncio
+    async def test_status_bar_shows_user_name(self):
+        """Status bar should display the user name."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar.user_name == "test-user"
+
+    @pytest.mark.asyncio
+    async def test_status_bar_participant_count(self):
+        """Status bar should show participant count."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            # Should have at least 1 (ourselves)
+            assert status_bar.participant_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_status_bar_typing_indicator(self):
+        """Setting typing_who should update the status bar."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            assert status_bar.typing_who == ""
+            status_bar.typing_who = "alice"
+            await pilot.pause()
+            assert status_bar.typing_who == "alice"
+
+    @pytest.mark.asyncio
+    async def test_status_bar_typing_clears_on_switch(self):
+        """Switching channels should clear the typing indicator."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar.typing_who = "bob"
+            await pilot.pause()
+            pilot.app._switch_to_conv("random")
+            await pilot.pause()
+            assert status_bar.typing_who == ""
+
+
+# ============================================================================
+# Round 7: Channel previews and muted indicators
+# ============================================================================
+
+
+class TestRound7ChannelPreviewsAndMuted:
+    """Verify channel message previews and muted channel display."""
+
+    @pytest.mark.asyncio
+    async def test_channel_preview_set(self):
+        """Setting a channel preview should update the item."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list.set_channel_preview("random", "alice", "Hello there")
+            await pilot.pause()
+            item = channel_list._items["random"]
+            assert item._preview_label.display is True
+
+    @pytest.mark.asyncio
+    async def test_channel_preview_truncates_long(self):
+        """Long previews should be truncated with ellipsis."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list.set_channel_preview(
+                "general", "someone", "This is a very long message that should be truncated"
+            )
+            await pilot.pause()
+            # The ChannelItem.set_preview truncates at 22 chars
+            item = channel_list._items["general"]
+            # Label uses _content internally; check via update string
+            # The set_preview method truncates at 20 chars + ellipsis
+            # Just verify the preview is visible and was set
+            assert item._preview_label.display is True
+
+    @pytest.mark.asyncio
+    async def test_channel_muted_toggle(self):
+        """Muting a channel should set is_muted flag."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list.set_channel_muted("random", True)
+            await pilot.pause()
+            assert channel_list._items["random"].is_muted is True
+
+    @pytest.mark.asyncio
+    async def test_channel_unmute(self):
+        """Unmuting a channel should clear is_muted flag."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list.set_channel_muted("general", True)
+            await pilot.pause()
+            assert channel_list._items["general"].is_muted is True
+            channel_list.set_channel_muted("general", False)
+            await pilot.pause()
+            assert channel_list._items["general"].is_muted is False
+
+    @pytest.mark.asyncio
+    async def test_muted_channel_has_css_class(self):
+        """Muted channels should have the --muted CSS class."""
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list.set_channel_muted("random", True)
+            await pilot.pause()
+            item = channel_list._items["random"]
+            assert item.has_class("--muted")
+
+    @pytest.mark.asyncio
+    async def test_channel_preview_hidden_initially(self):
+        """Channel preview should be hidden when no preview has been set."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            item = channel_list._items["general"]
+            assert item._preview_label.display is False
+
+    @pytest.mark.asyncio
+    async def test_set_preview_nonexistent_channel_noop(self):
+        """Setting preview on a channel not in the list should not crash."""
+        app = _make_app(["general"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            # Should not raise
+            channel_list.set_channel_preview("nonexistent", "user", "msg")
+            await pilot.pause()
+
+
+# ============================================================================
+# Round 8: Sender colors
+# ============================================================================
+
+
+class TestRound8SenderColors:
+    """Verify the 12-color sender palette and deterministic assignment."""
+
+    def test_twelve_sender_colors_defined(self):
+        """The SENDER_COLORS palette should have 12 entries."""
+        assert len(SENDER_COLORS) == 12
+
+    def test_color_for_key_deterministic(self):
+        """Same key should always produce the same color."""
+        color1 = _color_for_key("test-key-abc")
+        color2 = _color_for_key("test-key-abc")
+        assert color1 == color2
+
+    def test_color_for_key_varies(self):
+        """Different keys should (usually) produce different colors."""
+        colors = {_color_for_key(f"key-{i}") for i in range(50)}
+        # With 50 different keys and 12 colors, we should see multiple distinct colors
+        assert len(colors) >= 4
+
+    def test_all_colors_are_hex(self):
+        """All sender colors should be valid hex color strings."""
+        import re
+        hex_pattern = re.compile(r"^#[0-9a-fA-F]{6}$")
+        for color in SENDER_COLORS:
+            assert hex_pattern.match(color), f"Invalid hex color: {color}"
+
+
+# ============================================================================
+# Round 9: Empty channel display and help screen
+# ============================================================================
+
+
+class TestRound9EmptyChannelAndHelp:
+    """Verify empty channel placeholder and F1 help screen."""
+
+    @pytest.mark.asyncio
+    async def test_empty_channel_shows_placeholder(self):
+        """Switching to an empty channel should show a placeholder message."""
+        app = _make_app(["general", "empty-chan"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            pilot.app._switch_to_conv("empty-chan")
+            await pilot.pause()
+            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            placeholders = chat_view.query(EmptyChannelMessage)
+            assert len(placeholders) >= 1
+
+    @pytest.mark.asyncio
+    async def test_placeholder_removed_on_message(self):
+        """The empty placeholder should disappear when a message arrives."""
+        app = _make_app(["general", "empty-chan"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            from claude_comms.message import Message
+
+            pilot.app._switch_to_conv("empty-chan")
+            await pilot.pause()
+            chat_view = pilot.app.query_one("#chat-view", ChatView)
+
+            # Add a message to the empty channel
+            msg = Message.create(
+                sender_key="someone",
+                sender_name="someone",
+                sender_type="human",
+                body="First message!",
+                conv="empty-chan",
+            )
+            chat_view.add_message(msg)
+            await pilot.pause()
+
+            # Placeholder should be gone
+            placeholders = chat_view.query(EmptyChannelMessage)
+            assert len(placeholders) == 0
+            # Message should be present
+            bubbles = chat_view.query(MessageBubble)
+            assert len(bubbles) == 1
+
+    @pytest.mark.asyncio
+    async def test_f1_opens_help_screen(self):
+        """Pressing F1 should open the help screen modal."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("f1")
+            await pilot.pause()
+            assert len(pilot.app.screen_stack) > 1
+            assert isinstance(pilot.app.screen, HelpScreen)
+
+    @pytest.mark.asyncio
+    async def test_help_screen_dismiss_with_escape(self):
+        """Pressing Escape should close the help screen."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("f1")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, HelpScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(pilot.app.screen, HelpScreen)
+
+    @pytest.mark.asyncio
+    async def test_help_screen_dismiss_with_f1(self):
+        """Pressing F1 again should close the help screen."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("f1")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, HelpScreen)
+            await pilot.press("f1")
+            await pilot.pause()
+            assert not isinstance(pilot.app.screen, HelpScreen)

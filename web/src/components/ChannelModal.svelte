@@ -7,11 +7,28 @@
   let description = $state('');
   let isPrivate = $state(false);
 
+  const MAX_CHANNEL_NAME = 63;
+
+  let sanitizedName = $derived(
+    channelName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  );
+
+  let nameError = $derived.by(() => {
+    if (!channelName.trim()) return '';
+    if (sanitizedName.length === 0) return 'Name must contain at least one letter or number.';
+    if (sanitizedName.length > MAX_CHANNEL_NAME) return 'Name must be ' + MAX_CHANNEL_NAME + ' characters or fewer.';
+    if (/[A-Z]/.test(channelName) || /\s/.test(channelName))
+      return 'Will be saved as: ' + sanitizedName;
+    return '';
+  });
+
+  let nameIsValid = $derived(
+    sanitizedName.length > 0 && sanitizedName.length <= MAX_CHANNEL_NAME
+  );
+
   function handleCreate() {
-    if (!channelName.trim()) return;
-    const sanitized = channelName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-    if (!sanitized) return;
-    onCreate(sanitized, description);
+    if (!nameIsValid) return;
+    onCreate(sanitizedName, description);
   }
 
   function handleKeydown(e) {
@@ -43,7 +60,16 @@
             onkeydown={handleKeydown}
             data-testid="channel-modal-name-input"
           >
-          <div class="modal-hint">Names must be lowercase, no spaces. Use dashes instead.</div>
+          <div class="modal-hint">
+            {#if nameError}
+              <span class="name-feedback" class:is-warning={nameError.startsWith('Will')} class:is-error={!nameError.startsWith('Will')}>{nameError}</span>
+            {:else}
+              Names must be lowercase, no spaces, 1-{MAX_CHANNEL_NAME} chars. Use dashes instead.
+            {/if}
+            {#if channelName.trim()}
+              <span class="char-count" class:over={sanitizedName.length > MAX_CHANNEL_NAME}>{sanitizedName.length}/{MAX_CHANNEL_NAME}</span>
+            {/if}
+          </div>
         </div>
         <div class="modal-field">
           <label class="modal-label" for="channel-desc-input">Description</label>
@@ -75,7 +101,7 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn secondary" onclick={onClose} data-testid="channel-modal-cancel">Cancel</button>
-        <button class="modal-btn primary" onclick={handleCreate} data-testid="channel-modal-create">Create Channel</button>
+        <button class="modal-btn primary" onclick={handleCreate} disabled={!nameIsValid} data-testid="channel-modal-create">Create Channel</button>
       </div>
     </Dialog.Content>
   </Dialog.Portal>
@@ -169,7 +195,32 @@
   .modal-input:focus { border-color: var(--ember-700); box-shadow: 0 0 0 3px var(--border-glow); }
   .modal-input::placeholder { color: var(--text-faint); }
 
-  .modal-hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+  .modal-hint {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .name-feedback.is-warning { color: var(--ember-400); }
+  .name-feedback.is-error { color: #ef4444; }
+
+  .char-count {
+    font-size: 10px;
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  .char-count.over { color: #ef4444; font-weight: 600; }
+
+  .modal-btn.primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    filter: none;
+  }
 
   .modal-textarea {
     width: 100%;
