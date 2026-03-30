@@ -253,6 +253,9 @@ export class MqttChatStore {
    * @throws Will set connectionError state if the broker is unreachable.
    */
   async connect() {
+    // Restore unread markers before anything else so the sidebar shows them
+    this.#restoreUnreadMarkers();
+
     // Fetch identity from the daemon config so web + TUI share the same key.
     // Falls back to localStorage if the daemon is not running.
     try {
@@ -438,7 +441,11 @@ export class MqttChatStore {
 
     // Clear unread for old active
     const ch = this.channels.find(c => c.id === channelId);
-    if (ch) ch.unread = 0;
+    if (ch) {
+      ch.unread = 0;
+      ch.unreadFrom = null;
+      this.#saveUnreadMarkers();
+    }
 
     this.activeChannel = channelId;
 
@@ -509,6 +516,8 @@ export class MqttChatStore {
     if (ch) {
       ch.unreadFrom = message.id;
       ch.unread = Math.max(ch.unread, 1);
+      // Persist to localStorage so unread markers survive page refresh
+      this.#saveUnreadMarkers();
     }
   }
 
@@ -700,6 +709,39 @@ export class MqttChatStore {
   }
 
   // ── Private Methods ──
+
+  /**
+   * Persist unread markers (unreadFrom + unread count) to localStorage
+   * so they survive page refresh.
+   */
+  #saveUnreadMarkers() {
+    const markers = {};
+    for (const ch of this.channels) {
+      if (ch.unreadFrom || ch.unread > 0) {
+        markers[ch.id] = { unreadFrom: ch.unreadFrom || null, unread: ch.unread || 0 };
+      }
+    }
+    safeStorage.setItem('claude-comms-unread-markers', JSON.stringify(markers));
+  }
+
+  /**
+   * Restore unread markers from localStorage on startup.
+   */
+  #restoreUnreadMarkers() {
+    const raw = safeStorage.getItem('claude-comms-unread-markers');
+    if (!raw) return;
+    try {
+      const markers = JSON.parse(raw);
+      for (const ch of this.channels) {
+        if (markers[ch.id]) {
+          ch.unreadFrom = markers[ch.id].unreadFrom || null;
+          ch.unread = markers[ch.id].unread || 0;
+        }
+      }
+    } catch {
+      // Corrupt data — ignore
+    }
+  }
 
   #subscribeAll() {
     if (!this.#client) return;

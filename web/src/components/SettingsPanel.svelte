@@ -1,7 +1,7 @@
 <script>
   import { X, User, Bell, Palette, Wifi } from 'lucide-svelte';
 
-  let { store, theme = 'dark', onClose } = $props();
+  let { store, theme = 'dark', onClose, onToggleTheme } = $props();
 
   const MAX_NAME_LENGTH = 50;
 
@@ -132,9 +132,18 @@
         <Palette size={14} strokeWidth={2} />
         <span>Appearance</span>
       </div>
-      <div class="setting-row">
-        <span class="setting-label">Current Theme</span>
-        <span class="setting-value theme-badge">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+      <div class="setting-row toggle-row">
+        <span class="setting-label">Dark Mode</span>
+        <button
+          class="toggle-switch"
+          class:active={theme === 'dark'}
+          onclick={onToggleTheme}
+          role="switch"
+          aria-checked={theme === 'dark'}
+          aria-label="Toggle dark mode"
+        >
+          <span class="toggle-knob"></span>
+        </button>
       </div>
     </div>
 
@@ -320,16 +329,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-
-  .theme-badge {
-    padding: 3px 10px;
-    border-radius: 12px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
   }
 
   .conn-dot {

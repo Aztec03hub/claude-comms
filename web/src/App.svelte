@@ -306,6 +306,7 @@
         {store}
         {theme}
         onClose={() => showSettingsPanel = false}
+        onToggleTheme={toggleTheme}
       />
     {/if}
 
