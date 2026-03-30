@@ -131,21 +131,21 @@
   }
 
   .thread-close {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     border-radius: 7px;
-    border: none;
-    background: none;
-    color: var(--text-faint);
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: var(--transition-fast);
-    font-size: 16px;
+    flex-shrink: 0;
   }
 
-  .thread-close:hover { background: var(--bg-surface); color: var(--text-primary); }
+  .thread-close:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--ember-700); }
 
   .thread-parent {
     padding: 14px 18px;
