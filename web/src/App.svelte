@@ -19,7 +19,7 @@
   import UserProfileView from './components/UserProfileView.svelte';
   import ForwardPicker from './components/ForwardPicker.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
-  import { Users, Search, Pin, Settings } from 'lucide-svelte';
+  import { Users, Search, Pin, Settings, Menu } from 'lucide-svelte';
 
   const store = new MqttChatStore();
 
@@ -49,6 +49,7 @@
   let userProfileTarget = $state(null);
   let showForwardPicker = $state(false);
   let forwardTarget = $state(null);
+  let showMobileSidebar = $state(false);
 
   // Connect on mount
   $effect(() => {
@@ -73,7 +74,9 @@
       e.preventDefault();
       e.stopImmediatePropagation();
 
-      if (showChannelModal) {
+      if (showMobileSidebar) {
+        showMobileSidebar = false;
+      } else if (showChannelModal) {
         showChannelModal = false;
       } else if (contextMenu.show) {
         handleCloseContextMenu();
@@ -218,18 +221,28 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="app-layout">
-  <Sidebar
-    {store}
-    onCreateChannel={() => showChannelModal = true}
-    onShowProfile={handleShowProfile}
-    onMuteChannel={(channelId) => store.muteChannel(channelId)}
-    onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
-  />
+  <div class="sidebar-mobile-wrapper" class:open={showMobileSidebar}>
+    {#if showMobileSidebar}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="sidebar-mobile-backdrop" onclick={() => showMobileSidebar = false}></div>
+    {/if}
+    <Sidebar
+      {store}
+      onCreateChannel={() => showChannelModal = true}
+      onShowProfile={handleShowProfile}
+      onMuteChannel={(channelId) => store.muteChannel(channelId)}
+      onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
+    />
+  </div>
 
   <main class="center">
     <ConnectionStatus connected={store.connected} onlineCount={store.onlineCount} error={store.connectionError} />
 
     <header class="chat-header" data-testid="chat-header">
+      <button class="mobile-menu-btn" type="button" data-testid="mobile-menu-btn" onclick={() => showMobileSidebar = !showMobileSidebar} aria-label="Open sidebar menu">
+        <Menu size={20} strokeWidth={2} />
+      </button>
       <div class="header-icon">#</div>
       <span class="header-name" data-testid="header-channel-name">{store.activeChannel}</span>
       <span class="header-sep"></span>
@@ -554,6 +567,36 @@
     color: var(--text-primary);
   }
 
+  /* ── Mobile menu button ── */
+  .mobile-menu-btn {
+    display: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .mobile-menu-btn:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+  }
+
+  /* ── Mobile sidebar wrapper ── */
+  .sidebar-mobile-wrapper {
+    display: contents;
+  }
+
+  .sidebar-mobile-backdrop {
+    display: none;
+  }
+
   @media (max-width: 480px) {
     .chat-header {
       padding: 10px 12px;
@@ -569,6 +612,54 @@
     .header-btn {
       width: 28px;
       height: 28px;
+    }
+
+    .mobile-menu-btn {
+      display: flex;
+    }
+
+    .sidebar-mobile-wrapper {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 100%;
+      z-index: 200;
+      pointer-events: none;
+    }
+
+    .sidebar-mobile-wrapper.open {
+      width: 100%;
+      pointer-events: auto;
+    }
+
+    .sidebar-mobile-wrapper :global(.sidebar-left) {
+      display: flex !important;
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 268px;
+      min-width: 268px;
+      z-index: 202;
+      transform: translateX(-100%);
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: none;
+    }
+
+    .sidebar-mobile-wrapper.open :global(.sidebar-left) {
+      transform: translateX(0);
+      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    }
+
+    .sidebar-mobile-backdrop {
+      display: block;
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 201;
+      animation: overlayIn 0.2s ease;
     }
   }
 </style>

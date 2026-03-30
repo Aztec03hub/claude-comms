@@ -1,10 +1,36 @@
 <script>
-  import { RefreshCw } from 'lucide-svelte';
+  import { RefreshCw, X } from 'lucide-svelte';
 
   let { connected = false, onlineCount = 0, error = null } = $props();
   let retryCount = $state(0);
   let retryTimer = $state(null);
   let retrySeconds = $state(0);
+  let dismissed = $state(false);
+  let autoHide = $state(false);
+  let autoHideTimer = $state(null);
+  let prevConnected = $state(undefined);
+
+  // Reset dismissed state when connection status changes; auto-hide connected banner
+  $effect(() => {
+    const currentConnected = connected;
+    const currentError = error;
+
+    if (prevConnected !== undefined && currentConnected !== prevConnected) {
+      dismissed = false;
+      autoHide = false;
+    }
+    prevConnected = currentConnected;
+
+    // Auto-hide connected banner after 3 seconds
+    if (currentConnected && !currentError) {
+      if (autoHideTimer) clearTimeout(autoHideTimer);
+      autoHide = false;
+      autoHideTimer = setTimeout(() => {
+        autoHide = true;
+        autoHideTimer = null;
+      }, 3000);
+    }
+  });
 
   // Track reconnection attempts when in error state
   $effect(() => {
@@ -24,14 +50,24 @@
       if (retryTimer) clearInterval(retryTimer);
     }
   });
+
+  function dismiss() {
+    dismissed = true;
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  }
 </script>
 
-{#if connected}
+{#if dismissed}
+  <!-- Banner dismissed, show nothing -->
+{:else if connected && !autoHide}
   <div class="connection-banner connected" data-testid="connection-status" role="status" aria-live="polite">
     <div class="connection-dot" aria-hidden="true"></div>
     Connected &mdash; {onlineCount} participant{onlineCount !== 1 ? 's' : ''} online
   </div>
-{:else if error}
+{:else if !connected && error}
   <div class="connection-banner error" data-testid="connection-status" role="alert" aria-live="assertive">
     <div class="connection-dot error-dot" aria-hidden="true"></div>
     <span class="error-text">{error}</span>
@@ -44,8 +80,11 @@
         Reconnecting...
       {/if}
     </span>
+    <button class="dismiss-btn" onclick={dismiss} aria-label="Dismiss">
+      <X size={12} strokeWidth={2} />
+    </button>
   </div>
-{:else}
+{:else if !connected && !error}
   <div class="connection-banner connecting" data-testid="connection-status" role="status" aria-live="polite">
     <div class="connection-dot connecting-dot" aria-hidden="true"></div>
     <span class="connecting-text">Establishing secure connection</span>
@@ -54,6 +93,9 @@
       <span class="dot"></span>
       <span class="dot"></span>
     </span>
+    <button class="dismiss-btn" onclick={dismiss} aria-label="Dismiss">
+      <X size={12} strokeWidth={2} />
+    </button>
   </div>
 {/if}
 
