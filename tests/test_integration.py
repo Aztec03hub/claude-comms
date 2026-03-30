@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from claude_comms.broker import MessageDeduplicator, MessageStore
+from claude_comms.broker import EmbeddedBroker, MessageDeduplicator, MessageStore, replay_jsonl_logs
 from claude_comms.config import (
     get_default_config,
     load_config,
@@ -726,3 +726,350 @@ class TestMCPToolsPipeline:
             jsonl_content = (Path(tmpdir) / "general.jsonl").read_text().strip()
             jsonl_data = json.loads(jsonl_content)
             assert jsonl_data["body"] == "Logged message"
+
+
+# ===================================================================
+# Round 1: Broker lifecycle — EmbeddedBroker, Deduplicator, Store, Replay
+# ===================================================================
+
+
+class TestEmbeddedBrokerFromConfig:
+    """Test EmbeddedBroker.from_config() with various configurations."""
+
+    def test_from_empty_config(self) -> None:
+        broker = EmbeddedBroker.from_config({})
+        assert broker.host == "127.0.0.1"
+        assert broker.port == 1883
+        assert broker.ws_host == "127.0.0.1"
+        assert broker.ws_port == 9001
+        assert broker.auth_enabled is False
+        assert broker.auth_username is None
+        assert broker.auth_password is None
+        assert broker.max_replay == 1000
+
+    def test_from_full_config(self) -> None:
+        config = {
+            "broker": {
+                "host": "0.0.0.0",
+                "port": 8883,
+                "ws_host": "192.168.1.1",
+                "ws_port": 8001,
+                "auth": {
+                    "enabled": True,
+                    "username": "myuser",
+                    "password": "mypass",
+                },
+            },
+            "logging": {
+                "dir": "/tmp/test-broker-logs",
+                "max_messages_replay": 500,
+            },
+        }
+        broker = EmbeddedBroker.from_config(config)
+        assert broker.host == "0.0.0.0"
+        assert broker.port == 8883
+        assert broker.ws_host == "192.168.1.1"
+        assert broker.ws_port == 8001
+        assert broker.auth_enabled is True
+        assert broker.auth_username == "myuser"
+        assert broker.auth_password == "mypass"
+        assert broker.max_replay == 500
+        assert str(broker.log_dir) == "/tmp/test-broker-logs"
+
+    def test_from_config_partial_broker(self) -> None:
+        """Partial broker config should use defaults for missing keys."""
+        config = {"broker": {"port": 9999}}
+        broker = EmbeddedBroker.from_config(config)
+        assert broker.port == 9999
+        assert broker.host == "127.0.0.1"  # default
+        assert broker.ws_port == 9001  # default
+
+    def test_from_config_creates_deduplicator_and_store(self) -> None:
+        broker = EmbeddedBroker.from_config({})
+        assert isinstance(broker.deduplicator, MessageDeduplicator)
+        assert isinstance(broker.message_store, MessageStore)
+
+    def test_from_config_auth_without_credentials(self) -> None:
+        """Auth enabled but no credentials — should still create broker."""
+        config = {"broker": {"auth": {"enabled": True}}}
+        broker = EmbeddedBroker.from_config(config)
+        assert broker.auth_enabled is True
+        assert broker.auth_username is None
+
+
+class TestMessageDeduplicatorEdgeCases:
+    """Edge cases for MessageDeduplicator: overflow, LRU, concurrent access."""
+
+    def test_max_size_one_alternating(self) -> None:
+        """With max_size=1, each new ID evicts the previous."""
+        dedup = MessageDeduplicator(max_size=1)
+        assert dedup.is_duplicate("a") is False
+        assert dedup.is_duplicate("b") is False  # evicts "a"
+        assert dedup.is_duplicate("a") is False  # "a" was evicted, re-added
+        assert dedup.size == 1
+
+    def test_overflow_preserves_most_recent(self) -> None:
+        """Adding beyond max_size keeps the N most recent entries."""
+        dedup = MessageDeduplicator(max_size=5)
+        for i in range(20):
+            dedup.is_duplicate(f"msg-{i}")
+        assert dedup.size == 5
+        # Most recent 5 should still be tracked
+        for i in range(15, 20):
+            assert dedup.is_duplicate(f"msg-{i}") is True
+        # Oldest should be evicted
+        for i in range(10):
+            assert dedup.is_duplicate(f"msg-{i}") is False
+
+    def test_lru_refresh_prevents_eviction(self) -> None:
+        """Accessing an existing entry refreshes it, preventing eviction."""
+        dedup = MessageDeduplicator(max_size=3)
+        dedup.is_duplicate("a")
+        dedup.is_duplicate("b")
+        dedup.is_duplicate("c")
+        # Refresh "a" so it moves to end
+        dedup.is_duplicate("a")  # returns True (duplicate), moves to end
+        # Add "d" — should evict "b" (oldest after refresh), not "a"
+        dedup.is_duplicate("d")
+        assert dedup.is_duplicate("a") is True  # still present
+        assert dedup.is_duplicate("c") is True
+        assert dedup.is_duplicate("d") is True
+
+    def test_concurrent_access_thread_safe(self) -> None:
+        """Concurrent writes from multiple threads should not corrupt state."""
+        import threading
+
+        dedup = MessageDeduplicator(max_size=1000)
+        errors: list[Exception] = []
+
+        def writer(start: int) -> None:
+            try:
+                for i in range(100):
+                    dedup.is_duplicate(f"thread-{start}-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(t,)) for t in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        assert dedup.size == 1000  # 10 threads * 100 unique IDs
+
+    def test_negative_max_size_raises(self) -> None:
+        with pytest.raises(ValueError):
+            MessageDeduplicator(max_size=-1)
+
+    def test_clear_then_reuse(self) -> None:
+        dedup = MessageDeduplicator(max_size=5)
+        for i in range(5):
+            dedup.is_duplicate(f"msg-{i}")
+        dedup.clear()
+        assert dedup.size == 0
+        # All IDs should now be "new" again
+        for i in range(5):
+            assert dedup.is_duplicate(f"msg-{i}") is False
+        assert dedup.size == 5
+
+
+class TestMessageStoreMultiConversation:
+    """MessageStore with multiple conversations and cap enforcement."""
+
+    def test_separate_conversations_independent(self) -> None:
+        store = MessageStore(max_per_conv=5)
+        for i in range(10):
+            store.add("alpha", {"id": f"a-{i}", "body": f"alpha-{i}"})
+            store.add("beta", {"id": f"b-{i}", "body": f"beta-{i}"})
+        # Each conversation capped independently
+        assert len(store.get("alpha")) == 5
+        assert len(store.get("beta")) == 5
+        assert store.get("alpha")[-1]["body"] == "alpha-9"
+        assert store.get("beta")[-1]["body"] == "beta-9"
+
+    def test_cap_enforcement_fifo(self) -> None:
+        """Oldest messages are evicted first when cap is exceeded."""
+        store = MessageStore(max_per_conv=3)
+        for i in range(6):
+            store.add("conv", {"id": str(i), "body": f"msg-{i}"})
+        msgs = store.get("conv")
+        assert [m["body"] for m in msgs] == ["msg-3", "msg-4", "msg-5"]
+
+    def test_get_with_limit_zero(self) -> None:
+        store = MessageStore()
+        store.add("c", {"id": "1"})
+        store.add("c", {"id": "2"})
+        # limit=0 should return all (not treated as zero)
+        result = store.get("c", limit=0)
+        assert len(result) == 2
+
+    def test_get_with_limit_exceeding_count(self) -> None:
+        store = MessageStore()
+        store.add("c", {"id": "1"})
+        result = store.get("c", limit=100)
+        assert len(result) == 1
+
+    def test_conversations_returns_all_keys(self) -> None:
+        store = MessageStore()
+        for name in ["general", "dev", "ops", "random"]:
+            store.add(name, {"id": f"in-{name}"})
+        convs = set(store.conversations())
+        assert convs == {"general", "dev", "ops", "random"}
+
+    def test_thread_safety(self) -> None:
+        """Concurrent adds from multiple threads should not corrupt."""
+        import threading
+
+        store = MessageStore(max_per_conv=1000)
+        errors: list[Exception] = []
+
+        def writer(conv: str) -> None:
+            try:
+                for i in range(100):
+                    store.add(conv, {"id": f"{conv}-{i}"})
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=writer, args=(f"conv-{t}",))
+            for t in range(5)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        for t in range(5):
+            assert len(store.get(f"conv-{t}")) == 100
+
+
+class TestReplayJSONLEdgeCases:
+    """replay_jsonl_logs with edge cases: empty files, no directory, etc."""
+
+    def test_replay_empty_jsonl_file(self, tmp_path: Path) -> None:
+        """Empty JSONL file should produce empty store."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "general.jsonl").write_text("")
+        store = replay_jsonl_logs(log_dir)
+        assert store.get("general") == []
+
+    def test_replay_only_blank_lines(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "general.jsonl").write_text("\n\n\n\n")
+        store = replay_jsonl_logs(log_dir)
+        assert store.get("general") == []
+
+    def test_replay_mixed_valid_and_invalid(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        lines = [
+            json.dumps({"id": "good-1", "conv": "general", "body": "ok"}),
+            "NOT JSON",
+            json.dumps({"id": "good-2", "conv": "general", "body": "also ok"}),
+            json.dumps({"missing_id": True, "conv": "general"}),
+            json.dumps({"id": "no-conv"}),
+            "",
+            json.dumps({"id": "good-3", "conv": "general", "body": "third"}),
+        ]
+        (log_dir / "general.jsonl").write_text("\n".join(lines) + "\n")
+        store = replay_jsonl_logs(log_dir)
+        assert len(store.get("general")) == 3
+
+    def test_replay_nonexistent_dir_returns_empty_store(self) -> None:
+        store = replay_jsonl_logs(Path("/nonexistent/path/to/logs"))
+        assert store.conversations() == []
+
+    def test_replay_with_existing_store(self, tmp_path: Path) -> None:
+        """Replay should append to an existing store."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "general.jsonl").write_text(
+            json.dumps({"id": "from-log", "conv": "general", "body": "logged"}) + "\n"
+        )
+        store = MessageStore()
+        store.add("general", {"id": "pre-existing", "body": "already here"})
+        replay_jsonl_logs(log_dir, store=store)
+        msgs = store.get("general")
+        assert len(msgs) == 2
+        assert msgs[0]["body"] == "already here"
+        assert msgs[1]["body"] == "logged"
+
+    def test_replay_populates_deduplicator(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "general.jsonl").write_text(
+            json.dumps({"id": "replay-id-99", "conv": "general", "body": "x"}) + "\n"
+        )
+        dedup = MessageDeduplicator()
+        replay_jsonl_logs(log_dir, deduplicator=dedup)
+        assert dedup.is_duplicate("replay-id-99") is True
+        assert dedup.is_duplicate("new-id") is False
+
+    def test_replay_multiple_jsonl_files(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        for conv in ["alpha", "beta", "gamma"]:
+            msgs = [json.dumps({"id": f"{conv}-{i}", "conv": conv, "body": f"msg {i}"})
+                    for i in range(3)]
+            (log_dir / f"{conv}.jsonl").write_text("\n".join(msgs) + "\n")
+        store = replay_jsonl_logs(log_dir)
+        assert set(store.conversations()) == {"alpha", "beta", "gamma"}
+        for conv in ["alpha", "beta", "gamma"]:
+            assert len(store.get(conv)) == 3
+
+    def test_replay_max_per_conv_caps(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        msgs = [json.dumps({"id": f"cap-{i}", "conv": "general", "body": f"m{i}"})
+                for i in range(50)]
+        (log_dir / "general.jsonl").write_text("\n".join(msgs) + "\n")
+        store = replay_jsonl_logs(log_dir, max_per_conv=10)
+        result = store.get("general")
+        assert len(result) == 10
+        assert result[-1]["id"] == "cap-49"  # most recent kept
+
+
+class TestGenerateClientIdIntegration:
+    """Test generate_client_id uniqueness and validation."""
+
+    def test_format_components(self) -> None:
+        from claude_comms.broker import generate_client_id
+        cid = generate_client_id("mcp", "a3f7b2c1")
+        parts = cid.split("-")
+        assert parts[0] == "claude"
+        assert parts[1] == "comms"
+        assert parts[2] == "mcp"
+        assert parts[3] == "a3f7b2c1"
+        # last part is random hex
+        assert len(parts[4]) == 8
+
+    def test_uniqueness_across_calls(self) -> None:
+        from claude_comms.broker import generate_client_id
+        ids = set()
+        for _ in range(500):
+            ids.add(generate_client_id("test", "abcdef01"))
+        assert len(ids) == 500
+
+    def test_empty_component_raises(self) -> None:
+        from claude_comms.broker import generate_client_id
+        with pytest.raises(ValueError, match="component"):
+            generate_client_id("", "abcdef01")
+
+    def test_empty_key_raises(self) -> None:
+        from claude_comms.broker import generate_client_id
+        with pytest.raises(ValueError, match="participant_key"):
+            generate_client_id("mcp", "")
+
+    def test_none_component_raises(self) -> None:
+        from claude_comms.broker import generate_client_id
+        with pytest.raises(ValueError):
+            generate_client_id(None, "abcdef01")
+
+    def test_none_key_raises(self) -> None:
+        from claude_comms.broker import generate_client_id
+        with pytest.raises(ValueError):
+            generate_client_id("mcp", None)
