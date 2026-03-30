@@ -21,6 +21,17 @@ test.describe('User Stories — Round 2', () => {
     await page.route('**/fonts.googleapis.com/**', route => route.abort());
     await page.route('**/fonts.gstatic.com/**', route => route.abort());
 
+    // Mock API endpoints so tests start with clean state (no history)
+    await page.route('**/api/messages/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: [] }) })
+    );
+    await page.route('**/api/participants/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participants: [] }) })
+    );
+    await page.route('**/api/identity', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ key: 'test-user', name: 'Test User', type: 'human' }) })
+    );
+
     // Mock MQTT WebSocket to prevent event loop blocking
     await page.addInitScript(() => {
       const OrigWS = window.WebSocket;
