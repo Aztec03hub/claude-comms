@@ -50,6 +50,18 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 
 ---
 
+## Gallery
+
+| Dark Theme | Light Theme | Mobile |
+|:---:|:---:|:---:|
+| ![Main](mockups/final-02-messages.png) | ![Light](mockups/final-10-light.png) | ![Mobile](mockups/final-11-mobile.png) |
+
+| Emoji Picker | Context Menu | Thread |
+|:---:|:---:|:---:|
+| ![Emoji](mockups/final-06-emoji.png) | ![Context](mockups/final-07-context.png) | ![Thread](mockups/final-09-thread.png) |
+
+---
+
 ## Architecture Overview
 
 ```
