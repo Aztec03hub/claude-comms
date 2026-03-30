@@ -671,8 +671,17 @@ export class MqttChatStore {
 
   #handlePresence(msg) {
     // Skip our own presence messages — we manage our own status locally.
-    // Without this, stale retained LWT ("offline") overwrites our "online" status.
     if (msg.key === this.userProfile.key) return;
+
+    // Skip stale offline presence (retained LWT from old sessions)
+    // Only add offline participants if they were seen recently (5 min)
+    if (msg.status === 'offline' && msg.ts) {
+      const age = Date.now() - new Date(msg.ts).getTime();
+      if (age > 5 * 60 * 1000) return; // Older than 5 min, skip
+    }
+
+    // Skip if key looks like a random old session key and status is offline
+    if (msg.status === 'offline') return; // Don't track offline strangers at all
 
     this.participants[msg.key] = {
       key: msg.key,

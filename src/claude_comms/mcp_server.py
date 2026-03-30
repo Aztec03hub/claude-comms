@@ -226,20 +226,26 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         result = tool_comms_join(
             _get_registry(), key=key, conversation=conversation, name=name
         )
-        # Publish presence so TUI/web clients see this participant
+        # Publish presence so TUI/web clients see this participant.
+        # Publishes to both conv-scoped and system-scoped topics to
+        # match the Web UI's dual-presence pattern.
         if not result.get("error") and _publish_fn:
             import json as _json, asyncio as _asyncio
-            presence_topic = f"claude-comms/conv/{conversation}/presence/{result['key']}"
+            from claude_comms.message import now_iso as _now_iso
+            _ts = _now_iso()
             presence_payload = _json.dumps({
                 "key": result["key"],
                 "name": result["name"],
                 "type": result["type"],
                 "status": "online",
+                "ts": _ts,
             }).encode()
+            presence_topic = f"claude-comms/conv/{conversation}/presence/{result['key']}"
+            system_topic = f"claude-comms/system/participants/{result['key']}"
             try:
-                _asyncio.get_event_loop().create_task(
-                    _publish_fn(presence_topic, presence_payload)
-                )
+                loop = _asyncio.get_event_loop()
+                loop.create_task(_publish_fn(presence_topic, presence_payload))
+                loop.create_task(_publish_fn(system_topic, presence_payload))
             except Exception:
                 pass  # Non-critical — presence is best-effort
         return result

@@ -214,15 +214,28 @@ class ClaudeCommsApp(App):
         await client.unsubscribe(f"claude-comms/conv/{conv_id}/typing/+")
 
     async def _publish_presence(self, client, status: str) -> None:
-        """Publish our presence status for the active conversation."""
+        """Publish our presence status for the active conversation.
+
+        Also publishes to the global system/participants topic so the
+        Web UI's participant registry picks us up (Web subscribes to
+        both conv/+/presence/+ and system/participants/+).
+        """
+        from claude_comms.message import now_iso
+
         payload = json.dumps({
             "key": self._key,
             "name": self._name,
             "type": self._type,
             "status": status,
+            "ts": now_iso(),
         })
         topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
-        await client.publish(topic, payload, qos=0, retain=True)
+        await client.publish(topic, payload, qos=1, retain=True)
+
+        # Also publish to system/participants so Web UI sees us in the
+        # global participant registry (mirrors Web UI's own behaviour).
+        system_topic = f"claude-comms/system/participants/{self._key}"
+        await client.publish(system_topic, payload, qos=1, retain=True)
 
     async def _handle_message(self, topic: str, payload: bytes) -> None:
         """Process an incoming chat message from MQTT."""

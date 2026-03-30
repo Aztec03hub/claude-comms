@@ -1,7 +1,8 @@
 /**
- * Diagnostic: check if Svelte event handling works
+ * Diagnostic: use page.evaluate to dispatch a properly-constructed event
  */
 import { chromium } from '@playwright/test';
+import { writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -18,41 +19,76 @@ async function run() {
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
   await page.waitForTimeout(4000);
 
-  // Check if the input exists and works
-  const input = page.locator('[data-testid="message-input"]');
-  console.log('Input visible:', await input.isVisible());
-  console.log('Input placeholder:', await input.getAttribute('placeholder'));
-
-  // Try dispatching events manually via evaluate
+  // Type text using native setter + input event (works with Svelte 5 bindings)
   await page.evaluate(() => {
     const input = document.querySelector('[data-testid="message-input"]');
-    if (!input) { console.log('INPUT NOT FOUND'); return; }
-
-    // Set value and dispatch input event
-    const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    nativeSet.call(input, 'EVAL-TEST: sent via evaluate');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    console.log('Dispatched input event, value:', input.value);
-
-    // Now dispatch Enter keydown
-    setTimeout(() => {
-      const event = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true });
-      input.dispatchEvent(event);
-      console.log('Dispatched Enter keydown');
-    }, 200);
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    nativeSetter.call(input, 'EVALTEST: Hello from evaluate');
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
   });
+  await page.waitForTimeout(200);
 
-  await page.waitForTimeout(2000);
+  // Check if Svelte 5 picked up the value
+  const val1 = await page.locator('[data-testid="message-input"]').inputValue();
+  console.log('After input event, value:', val1);
+
+  // Now simulate Enter with a proper KeyboardEvent
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-testid="message-input"]');
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    });
+    input.dispatchEvent(event);
+  });
+  await page.waitForTimeout(1000);
+
+  const val2 = await page.locator('[data-testid="message-input"]').inputValue();
+  console.log('After Enter, value:', val2);
+  console.log('Input cleared:', val2 === '');
 
   const msgCount = await page.locator('.msg-row').count();
   console.log('msg-row count:', msgCount);
 
-  const inputVal = await input.inputValue();
-  console.log('Input value after send:', JSON.stringify(inputVal));
+  // If still no message, try clicking send button with a real click
+  if (msgCount === 0) {
+    console.log('\nTrying send button click via evaluate...');
+
+    // Re-set the value since it was cleared
+    await page.evaluate(() => {
+      const input = document.querySelector('[data-testid="message-input"]');
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(input, 'EVALTEST2: Click send');
+      input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(200);
+
+    // Click send button
+    await page.evaluate(() => {
+      const btn = document.querySelector('[data-testid="send-button"]');
+      btn.click();
+    });
+    await page.waitForTimeout(1000);
+
+    const val3 = await page.locator('[data-testid="message-input"]').inputValue();
+    console.log('After button click, value:', val3);
+    console.log('msg-row count:', await page.locator('.msg-row').count());
+  }
 
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
 
-  consoleLogs.forEach(l => console.log('  LOG:', l));
+  // Check for MQTT message publish
+  const published = consoleLogs.filter(l => l.includes('conv/general/messages'));
+  console.log('\nMQTT messages published:', published.length);
+  published.forEach(l => console.log('  ' + l));
+
+  // Check errors
+  consoleLogs.filter(l => l.includes('[error]') && !l.includes('CORS') && !l.includes('9920')).forEach(l => console.log('ERR:', l));
 
   await browser.close();
 }
