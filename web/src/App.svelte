@@ -51,11 +51,30 @@
   let forwardTarget = $state(null);
   let showMobileSidebar = $state(false);
 
+  // Reactive bridges — poll store state to work around Svelte 5
+  // class-based $state not flushing DOM updates from async callbacks.
+  let onlineMembers = $state([]);
+  let offlineMembers = $state([]);
+
   // Connect on mount
   $effect(() => {
     store.connect();
     requestPermission();
-    return () => store.disconnect();
+
+    // Poll participants every 500ms for MemberList reactivity
+    const memberPoll = setInterval(() => {
+      const newOnline = store.onlineParticipants;
+      const newOffline = store.offlineParticipants;
+      if (newOnline.length !== onlineMembers.length || newOffline.length !== offlineMembers.length) {
+        onlineMembers = newOnline;
+        offlineMembers = newOffline;
+      }
+    }, 500);
+
+    return () => {
+      clearInterval(memberPoll);
+      store.disconnect();
+    };
   });
 
   // Global keyboard shortcuts
@@ -338,8 +357,8 @@
 
   {#if showMemberList}
     <MemberList
-      online={store.onlineParticipants}
-      offline={store.offlineParticipants}
+      online={onlineMembers}
+      offline={offlineMembers}
       typingUsers={store.typingUsers}
       onShowProfile={handleShowProfile}
     />
