@@ -1,0 +1,44 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (rebuilt in container)
+web/node_modules
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+
+# Build artifacts
+web/dist
+*.whl
+dist/
+
+# Test artifacts
+test-results
+tests
+.pytest_cache
+playwright-report
+
+# Design mockups
+mockups
+
+# Work logs and docs
+.worklogs
+*.md
+
+# Editor / IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*

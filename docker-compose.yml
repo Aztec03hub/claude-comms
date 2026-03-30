@@ -2,15 +2,19 @@ services:
   claude-comms:
     build: .
     ports:
-      - "1883:1883"
-      - "9001:9001"
-      - "9920:9920"
-      - "9921:9921"
+      - "1883:1883"   # MQTT TCP
+      - "9001:9001"   # MQTT WebSocket
+      - "9920:9920"   # MCP HTTP server
+      - "9921:9921"   # Web UI
     volumes:
       - comms-data:/root/.claude-comms
     environment:
       - CLAUDE_COMMS_PASSWORD=${CLAUDE_COMMS_PASSWORD:-changeme}
     restart: unless-stopped
+    # NOTE: The web UI host is hardcoded to 127.0.0.1 in cli.py.
+    # Until that is made configurable, the web UI (port 9921) will not
+    # be reachable from outside the container. The broker and MCP server
+    # hosts are configurable via config.yaml (set to 0.0.0.0 for Docker).
 
 volumes:
   comms-data:

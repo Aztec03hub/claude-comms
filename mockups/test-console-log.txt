@@ -1,7 +1,17 @@
 [DEBUG] [vite] connecting...
-[ERROR] WebSocket connection to 'ws://localhost:9001/mqtt' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED
-[ERROR] WebSocket connection to 'ws://localhost:9001/mqtt' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED
 [DEBUG] [vite] connected.
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/project-alpha' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/lora-training' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/random' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
+[ERROR] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[ERROR] Failed to load resource: net::ERR_FAILED
 
 --- Interaction Results ---
   1. Clicked 4 sidebar channels
@@ -14,7 +24,7 @@
   8. Channel modal filled: true
      Channel modal cancelled
   9. Channel created
-  10. Context menu open: false
+  10. Context menu open: true
       Context menu closed
   11. Emoji picker open: true
       Emoji picker closed
@@ -30,6 +40,12 @@
 SMOKE TEST REPORT
 ========================================
 Interactions completed: 18
-App errors (non-ignored): 0
+App errors (non-ignored): 6
 
-No application JS errors or warnings detected across all interactions.
+ERRORS:
+  [console.error] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  [console.error] Access to fetch at 'http://localhost:9920/api/participants/project-alpha' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  [console.error] Access to fetch at 'http://localhost:9920/api/participants/lora-training' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  [console.error] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  [console.error] Access to fetch at 'http://localhost:9920/api/participants/random' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  [console.error] Access to fetch at 'http://localhost:9920/api/participants/general' from origin 'http://localhost:5175' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.

@@ -23,8 +23,8 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir ".[all]"
 
-# Copy pre-built web assets into the package data directory
-COPY --from=web-builder /build/web/dist /app/web-dist
+# Copy pre-built web assets where the CLI expects them (../../web/dist from src/claude_comms/)
+COPY --from=web-builder /build/web/dist /app/web/dist
 
 # Create data directory for config and logs
 RUN mkdir -p /root/.claude-comms
