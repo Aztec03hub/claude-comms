@@ -128,7 +128,15 @@ class TestGetChannelParticipants:
             result = srv.get_channel_participants("general")
             assert len(result) == 1
             p = result[0]
-            assert set(p.keys()) == {"key", "name", "type", "client", "status", "connections", "online"}
+            assert set(p.keys()) == {
+                "key",
+                "name",
+                "type",
+                "client",
+                "status",
+                "connections",
+                "online",
+            }
             assert p["name"] == "alice"
             assert p["client"] == "unknown"  # fallback when no connections
             assert p["status"] == "offline"  # no active connections

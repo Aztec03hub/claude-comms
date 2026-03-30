@@ -1309,9 +1309,7 @@ class TestRound12HandlePresence:
                 "#participant-sidebar", ParticipantList
             )
             assert "peer0002" in participant_list._items
-            assert (
-                participant_list._items["peer0002"].presence == PresenceState.AWAY
-            )
+            assert participant_list._items["peer0002"].presence == PresenceState.AWAY
 
     @pytest.mark.asyncio
     async def test_handle_presence_offline_removes_connection(self):
@@ -1467,10 +1465,7 @@ class TestRound12HandlePresence:
                 "#participant-sidebar", ParticipantList
             )
             assert "peer0004" in participant_list._items
-            assert (
-                participant_list._items["peer0004"].presence
-                == PresenceState.OFFLINE
-            )
+            assert participant_list._items["peer0004"].presence == PresenceState.OFFLINE
 
     @pytest.mark.asyncio
     async def test_handle_presence_updates_status_bar_count(self):
