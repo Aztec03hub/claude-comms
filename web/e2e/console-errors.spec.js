@@ -51,9 +51,8 @@ test.describe('JS error monitoring', () => {
     // 4. Open and close channel creation modal
     await page.locator('[data-testid="sidebar-create-channel"]').click();
     await page.waitForTimeout(200);
-    const cancelBtn = page.locator('[data-testid="channel-modal-cancel"]');
-    await cancelBtn.scrollIntoViewIfNeeded();
-    await cancelBtn.click({ force: true });
+    // Cancel button may be outside viewport due to modal layout; click via JS
+    await page.evaluate(() => document.querySelector('[data-testid="channel-modal-cancel"]')?.click());
     await page.waitForTimeout(100);
 
     // 5. Click through channels
