@@ -1,4 +1,5 @@
 <script>
+  import { Pin, X } from 'lucide-svelte';
   import { formatTime, getParticipantColor, getInitials } from '../lib/utils.js';
 
   let { messages = [], onClose } = $props();
@@ -9,11 +10,11 @@
 <div class="pinned-panel" data-testid="pinned-panel">
   <div class="pinned-header">
     <div class="pinned-title">
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2l5 5-3 3-1 4-4-4-4 1 3-3z"/></svg>
+      <Pin size={14} strokeWidth={2} />
       Pinned Messages
       <span class="pinned-count">{messages.length}</span>
     </div>
-    <button class="pinned-close" onclick={onClose} data-testid="pinned-panel-close">&times;</button>
+    <button class="pinned-close" onclick={onClose} data-testid="pinned-panel-close"><X size={16} strokeWidth={2} /></button>
   </div>
   <div class="pinned-list">
     {#each messages as msg (msg.id)}
@@ -26,7 +27,7 @@
         </div>
         <div class="pinned-item-text">{msg.body}</div>
         <div class="pinned-item-pin">
-          <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1l3.5 3.5-2 2-.7 2.8L4 6.5l-2.8.7L3 5z"/></svg>
+          <Pin size={10} strokeWidth={2} />
           Pinned by {msg.sender.name}
         </div>
       </div>

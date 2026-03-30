@@ -1,16 +1,18 @@
 <script>
+  import { Reply, Smile, Ellipsis } from 'lucide-svelte';
+
   let { message, onReply, onReact } = $props();
 </script>
 
 <div class="msg-actions" data-testid="message-actions">
   <button class="msg-action-btn" title="Reply" onclick={onReply} data-testid="action-reply">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4L1 7.5 5 11"/><path d="M1 7.5h8a4 4 0 014 4v.5"/></svg>
+    <Reply size={14} />
   </button>
   <button class="msg-action-btn" title="React" onclick={onReact} data-testid="action-react">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="7" r="5.5"/><path d="M5 8.5s.8 1 2 1 2-1 2-1"/></svg>
+    <Smile size={14} />
   </button>
   <button class="msg-action-btn" title="More" data-testid="action-more">
-    <svg width="14" height="14" fill="currentColor"><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="11" cy="7" r="1.2"/></svg>
+    <Ellipsis size={14} />
   </button>
 </div>
 

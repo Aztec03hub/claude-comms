@@ -1,4 +1,6 @@
 <script>
+  import { Hash, VolumeX, Plus, Settings } from 'lucide-svelte';
+
   let { store, onCreateChannel, onShowProfile } = $props();
 
   let starredCollapsed = $state(false);
@@ -48,7 +50,7 @@
             data-testid="starred-channel-item-{channel.id}"
           >
             <div class="ch-icon">
-              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2v12M12 2v12M2 6h12M2 10h12"/></svg>
+              <Hash size={16} />
             </div>
             <div class="ch-info">
               <div class="ch-name">{channel.id}</div>
@@ -85,7 +87,7 @@
           data-testid="channel-item-{channel.id}"
         >
           <div class="ch-icon">
-            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2v12M12 2v12M2 6h12M2 10h12"/></svg>
+            <Hash size={16} />
           </div>
           <div class="ch-info">
             <div class="ch-name">{channel.id}</div>
@@ -98,7 +100,7 @@
           </div>
           <div class="ch-actions">
             <button class="ch-action-btn" title="Mute" onclick={(e) => e.stopPropagation()}>
-              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 3.5h2l3-2.5v8l-3-2.5H1z"/></svg>
+              <VolumeX size={10} />
             </button>
           </div>
         </div>
@@ -107,7 +109,7 @@
   {/if}
 
   <button class="create-channel" onclick={onCreateChannel} data-testid="sidebar-create-channel">
-    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v10 M1 6h10"/></svg>
+    <Plus size={12} />
     New Conversation
   </button>
 
@@ -127,7 +129,7 @@
       <div class="ustatus">Online</div>
     </div>
     <button class="user-settings" title="User settings">
-      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3m10 0h1.5M3.1 3.1l1 1m7.8 7.8l1 1M12.9 3.1l-1 1M4.1 11.9l-1 1"/></svg>
+      <Settings size={16} />
     </button>
   </div>
 </aside>

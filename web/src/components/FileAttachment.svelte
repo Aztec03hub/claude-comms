@@ -1,4 +1,6 @@
 <script>
+  import { File, Download } from 'lucide-svelte';
+
   let { name = '', type = 'file', size = '' } = $props();
 
   let iconClass = $derived(
@@ -10,7 +12,7 @@
 
 <div class="file-attachment">
   <div class="file-icon {iconClass}">
-    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 1h7l5 5v10a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M11 1v5h5"/></svg>
+    <File size={18} strokeWidth={2} />
   </div>
   <div class="file-info">
     <div class="file-name">{name}</div>
@@ -21,7 +23,7 @@
     </div>
   </div>
   <button class="file-download">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 2v8m-3-3l3 3 3-3 M2 12h10"/></svg>
+    <Download size={14} strokeWidth={2} />
   </button>
 </div>
 

@@ -1,4 +1,6 @@
 <script>
+  import { Copy, Check } from 'lucide-svelte';
+
   let { language = '', code = '', lines = [] } = $props();
 
   let copied = $state(false);
@@ -20,10 +22,10 @@
     <span class="code-lang">{language || 'code'}</span>
     <button class="code-copy-btn" class:copied onclick={copyCode}>
       {#if copied}
-        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l3 3 5-6"/></svg>
+        <Check size={12} strokeWidth={2} />
         Copied!
       {:else}
-        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><path d="M3 9V2.5A1.5 1.5 0 014.5 1H9"/></svg>
+        <Copy size={12} strokeWidth={2} />
         Copy
       {/if}
     </button>

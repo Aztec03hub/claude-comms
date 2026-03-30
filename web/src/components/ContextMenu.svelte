@@ -1,5 +1,6 @@
 <script>
   import { ContextMenu } from 'bits-ui';
+  import { Reply, Forward, Pin, Copy, Smile, MailOpen, Trash2 } from 'lucide-svelte';
   import { tick, onMount } from 'svelte';
 
   let { x = 0, y = 0, message = null, onAction, onClose } = $props();
@@ -60,7 +61,7 @@
       data-testid="ctx-reply"
       onSelect={() => handleAction('reply')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4L1 7.5 5 11"/><path d="M1 7.5h8a4 4 0 014 4v.5"/></svg>
+      <Reply size={14} />
       <span>Reply</span>
       <span class="ctx-kbd">R</span>
     </ContextMenu.Item>
@@ -69,7 +70,7 @@
       data-testid="ctx-forward"
       onSelect={() => handleAction('forward')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h8 M7 3l4 4-4 4"/></svg>
+      <Forward size={14} />
       <span>Forward</span>
     </ContextMenu.Item>
     <ContextMenu.Item
@@ -77,7 +78,7 @@
       data-testid="ctx-pin"
       onSelect={() => handleAction('pin')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2l5 5-3 3-1 4-4-4-4 1 3-3z"/></svg>
+      <Pin size={14} />
       <span>Pin Message</span>
       <span class="ctx-kbd">P</span>
     </ContextMenu.Item>
@@ -86,7 +87,7 @@
       data-testid="ctx-copy"
       onSelect={() => handleAction('copy')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><path d="M3 9V2.5A1.5 1.5 0 014.5 1H9"/></svg>
+      <Copy size={14} />
       <span>Copy Text</span>
       <span class="ctx-kbd">C</span>
     </ContextMenu.Item>
@@ -96,7 +97,7 @@
       data-testid="ctx-react"
       onSelect={() => handleAction('react')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="7" r="5.5"/><path d="M5 8.5s.8 1 2 1 2-1 2-1"/></svg>
+      <Smile size={14} />
       <span>React</span>
     </ContextMenu.Item>
     <ContextMenu.Item
@@ -104,7 +105,7 @@
       data-testid="ctx-unread"
       onSelect={() => handleAction('unread')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3h10 M4 3V2h6v1 M3 3v9a1 1 0 001 1h6a1 1 0 001-1V3"/></svg>
+      <MailOpen size={14} />
       <span>Mark Unread</span>
     </ContextMenu.Item>
     <ContextMenu.Separator class="ctx-divider" />
@@ -113,7 +114,7 @@
       data-testid="ctx-delete"
       onSelect={() => handleAction('delete')}
     >
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3h10 M4 3V2h6v1 M3 3v9a1 1 0 001 1h6a1 1 0 001-1V3 M6 6v4 M8 6v4"/></svg>
+      <Trash2 size={14} />
       <span>Delete</span>
       <span class="ctx-kbd">Del</span>
     </ContextMenu.Item>

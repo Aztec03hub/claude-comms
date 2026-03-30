@@ -1,4 +1,5 @@
 <script>
+  import { Search } from 'lucide-svelte';
   import { getInitials, getParticipantColor } from '../lib/utils.js';
 
   let { online = [], offline = [], typingUsers = {}, onShowProfile } = $props();
@@ -8,7 +9,7 @@
   <div class="members-header">
     <span>Members ({online.length + offline.length})</span>
     <button class="members-search-btn" title="Search members">
-      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="5" r="3.5"/><line x1="8" y1="8" x2="11" y2="11"/></svg>
+      <Search size={12} />
     </button>
   </div>
 

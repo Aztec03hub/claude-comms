@@ -1,5 +1,6 @@
 <script>
   import { Popover } from 'bits-ui';
+  import { Star } from 'lucide-svelte';
   import { getParticipantColor, getInitials } from '../lib/utils.js';
 
   let { participant, onClose } = $props();
@@ -27,7 +28,7 @@
       <div class="profile-card-divider"></div>
       <div class="profile-card-section">Role</div>
       <div class="profile-card-role" style="background: rgba(245,158,11,0.1); color: var(--ember-400); border: 1px solid rgba(245,158,11,0.2);">
-        <svg width="10" height="10" fill="currentColor" viewBox="0 0 16 16"><path d="M8 1l2 5h5l-4 3.5 1.5 5L8 11.5 3.5 14.5 5 9.5 1 6h5z"/></svg>
+        <Star size={10} />
         {participant.type === 'human' ? 'Admin' : 'Agent'}
       </div>
       <div class="profile-card-actions">

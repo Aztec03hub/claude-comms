@@ -1,5 +1,6 @@
 <script>
   import MentionDropdown from './MentionDropdown.svelte';
+  import { Type, Code, Paperclip, Smile, SendHorizontal } from 'lucide-svelte';
 
   let { store, channelName, typingUsers = [], onOpenEmoji } = $props();
 
@@ -72,12 +73,12 @@
 
   <div class="input-toolbar">
     <button class="input-toolbar-btn">
-      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 1h4l2 3H1z M7 1h4v5H7z M1 7h10v4H1z"/></svg>
+      <Type size={12} />
       Format
     </button>
     <div class="input-toolbar-divider"></div>
     <button class="input-toolbar-btn">
-      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6h8 M6 2v8"/></svg>
+      <Code size={12} />
       Snippet
     </button>
   </div>
@@ -94,14 +95,14 @@
     >
     <div class="input-actions">
       <button class="btn-icon" title="Attach file" data-testid="input-attach">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.5 10.5l-5.2 5.2a3.5 3.5 0 01-5-5l6.4-6.4a2.3 2.3 0 013.3 3.3l-6.3 6.3a1.2 1.2 0 01-1.7-1.7l5.2-5.1"/></svg>
+        <Paperclip size={18} />
       </button>
       <button class="btn-icon" title="Add emoji" onclick={onOpenEmoji} data-testid="input-emoji">
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="7.5"/><path d="M6 11s1 2 3 2 3-2 3-2"/><circle cx="6.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/></svg>
+        <Smile size={18} />
       </button>
     </div>
     <button class="btn-send" title="Send message" onclick={sendMessage} data-testid="send-button">
-      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M1.7 1.1a.75.75 0 01.9-.2l12 6a.75.75 0 010 1.3l-12 6a.75.75 0 01-1.05-.9L3.6 8 1.55 2.8a.75.75 0 01.15-.7z"/></svg>
+      <SendHorizontal size={16} />
     </button>
   </div>
 

@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { X } from 'lucide-svelte';
   import { getParticipantColor, getInitials, formatTime } from '../lib/utils.js';
 
   let { store, onClose } = $props();
@@ -43,7 +44,7 @@
   <div class="search-panel-header">
     <div class="search-panel-top">
       <span class="search-panel-title">Search Messages</span>
-      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close">&times;</button>
+      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close"><X size={16} strokeWidth={2} /></button>
     </div>
     <input
       class="search-panel-input"
