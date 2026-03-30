@@ -460,7 +460,18 @@ def start(
             mcp_uvi_server = uvicorn.Server(mcp_uvi_config)
             mcp_task = asyncio.create_task(mcp_uvi_server.serve())
 
-            # Start MQTT subscriber to feed messages into the MCP store
+            # Create LogExporter for persisting messages to disk
+            from claude_comms.log_exporter import LogExporter
+
+            _log_exporter = LogExporter.from_config(
+                config, deduplicator=_mcp_mod._deduplicator
+            )
+            console.print(
+                f"  [green]Log exporter[/green] writing to "
+                f"{_log_exporter.log_dir} (format: {_log_exporter.fmt})"
+            )
+
+            # Start MQTT subscriber to feed messages into the MCP store + disk
             broker_cfg = config.get("broker", {})
             broker_host = broker_cfg.get("host", "127.0.0.1")
             broker_port = broker_cfg.get("port", 1883)
@@ -474,6 +485,7 @@ def start(
                     broker_port,
                     _mcp_mod._store,
                     _mcp_mod._deduplicator,
+                    log_exporter=_log_exporter,
                 )
             )
 

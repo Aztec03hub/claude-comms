@@ -117,8 +117,12 @@ async def _mqtt_subscriber(
     port: int,
     store: MessageStore,
     deduplicator: MessageDeduplicator,
+    log_exporter: Any = None,
 ) -> None:
     """Subscribe to all conversation messages and feed them into the store.
+
+    Also writes each message to disk via *log_exporter* (if provided)
+    so messages persist across daemon restarts.
 
     Runs as a long-lived background task.  Reconnects on failure.
     """
@@ -164,6 +168,12 @@ async def _mqtt_subscriber(
                             if deduplicator.is_duplicate(msg_id):
                                 continue
                             store.add(conv_id, data)
+                            # Persist to disk for replay on restart
+                            if log_exporter is not None:
+                                try:
+                                    log_exporter.write_message(data)
+                                except Exception:
+                                    logger.warning("Failed to write message to log", exc_info=True)
 
                         # Handle presence — auto-register participants
                         # Topic: claude-comms/conv/{channel}/presence/{key}
