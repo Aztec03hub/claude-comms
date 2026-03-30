@@ -22,6 +22,7 @@
     <div class="toast-text">{text}</div>
   </div>
   <button class="toast-close" onclick={dismiss} data-testid="toast-close" title="Dismiss" aria-label="Dismiss notification">&times;</button>
+  <div class="toast-progress" aria-hidden="true"></div>
 </div>
 
 <style>
@@ -91,4 +92,20 @@
   }
 
   .toast-close:hover { color: var(--text-primary); background: var(--bg-surface); }
+
+  .toast-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--ember-400), var(--ember-500));
+    border-radius: 0 0 0 var(--radius);
+    animation: toastProgress 5s linear both;
+    opacity: 0.6;
+  }
+
+  @keyframes toastProgress {
+    from { width: 100%; }
+    to { width: 0%; }
+  }
 </style>

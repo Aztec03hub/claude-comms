@@ -122,8 +122,8 @@
     position: relative;
     z-index: 1;
     scroll-behavior: smooth;
-    mask-image: linear-gradient(transparent, black 8px, black calc(100% - 8px), transparent);
-    -webkit-mask-image: linear-gradient(transparent, black 8px, black calc(100% - 8px), transparent);
+    mask-image: linear-gradient(transparent, black 20px, black calc(100% - 20px), transparent);
+    -webkit-mask-image: linear-gradient(transparent, black 20px, black calc(100% - 20px), transparent);
   }
 
   .empty-state {
