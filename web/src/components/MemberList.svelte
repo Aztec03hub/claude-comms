@@ -88,6 +88,12 @@
     z-index: 1;
   }
 
+  @media (max-width: 640px) {
+    .sidebar-right {
+      display: none;
+    }
+  }
+
   .sidebar-right :global(*) {
     transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   }

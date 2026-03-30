@@ -527,4 +527,15 @@
     background: var(--bg-surface);
     color: var(--text-secondary);
   }
+
+  @media (max-width: 480px) {
+    .sidebar-left {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 100;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+  }
 </style>

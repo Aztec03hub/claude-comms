@@ -33,9 +33,11 @@
   }
 
   .connection-banner.connected {
-    background: linear-gradient(90deg, rgba(5,150,105,0.12), rgba(5,150,105,0.08));
-    border-bottom: 1px solid rgba(5,150,105,0.2);
+    background: linear-gradient(90deg, rgba(5,150,105,0.06), rgba(5,150,105,0.03));
+    border-bottom: 1px solid rgba(5,150,105,0.1);
     color: #34d399;
+    padding: 4px 16px;
+    font-size: 10.5px;
   }
 
   .connection-banner.error {

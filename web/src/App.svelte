@@ -257,23 +257,17 @@
     opacity: 0.025;
   }
 
-  .center::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    background: repeating-linear-gradient(transparent, transparent 2px, rgba(0,0,0,0.02) 2px, rgba(0,0,0,0.02) 4px);
-  }
+  /* Scanline overlay removed - not in design spec */
 
   .chat-header {
     padding: 14px 22px;
     display: flex;
     align-items: center;
     gap: 12px;
+    border-bottom: 1px solid var(--border);
     position: relative;
     z-index: 101;
-    background: rgba(17,17,19,0.8);
+    background: linear-gradient(180deg, var(--bg-base), rgba(17,17,19,0.97));
     backdrop-filter: blur(16px) saturate(1.2);
   }
 

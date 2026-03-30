@@ -73,20 +73,28 @@
   onscroll={handleScroll}
   data-testid="chat-view"
 >
-  {#each groupedMessages as group, i}
-    {#if group.type === 'date'}
-      <DateSeparator ts={group.ts} />
-    {:else}
-      <MessageGroup
-        messages={group.messages}
-        {currentUser}
-        {participants}
-        {onOpenThread}
-        onContextMenu={handleMessageContextMenu}
-        {onShowProfile}
-      />
-    {/if}
-  {/each}
+  {#if messages.length === 0}
+    <div class="empty-state">
+      <div class="empty-icon">#</div>
+      <div class="empty-title">No messages yet</div>
+      <div class="empty-subtitle">Start the conversation by sending a message below.</div>
+    </div>
+  {:else}
+    {#each groupedMessages as group, i}
+      {#if group.type === 'date'}
+        <DateSeparator ts={group.ts} />
+      {:else}
+        <MessageGroup
+          messages={group.messages}
+          {currentUser}
+          {participants}
+          {onOpenThread}
+          onContextMenu={handleMessageContextMenu}
+          {onShowProfile}
+        />
+      {/if}
+    {/each}
+  {/if}
 </div>
 
 {#if showScrollBtn}
@@ -104,7 +112,42 @@
     position: relative;
     z-index: 1;
     scroll-behavior: smooth;
-    mask-image: linear-gradient(transparent, black 20px, black calc(100% - 20px), transparent);
-    -webkit-mask-image: linear-gradient(transparent, black 20px, black calc(100% - 20px), transparent);
+    mask-image: linear-gradient(transparent, black 8px, black calc(100% - 8px), transparent);
+    -webkit-mask-image: linear-gradient(transparent, black 8px, black calc(100% - 8px), transparent);
+  }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    opacity: 0.5;
+  }
+
+  .empty-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    color: var(--text-faint);
+    margin-bottom: 4px;
+  }
+
+  .empty-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-secondary);
+  }
+
+  .empty-subtitle {
+    font-size: 12.5px;
+    color: var(--text-faint);
   }
 </style>

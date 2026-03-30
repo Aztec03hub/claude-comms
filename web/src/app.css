@@ -257,3 +257,17 @@ body::after {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-w: 240px;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --sidebar-w: 220px;
+    --right-w: 0px;
+  }
+}
