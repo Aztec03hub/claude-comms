@@ -8,7 +8,7 @@ test('debug: send message and check reactivity', async ({ page }) => {
     }
   });
 
-  await page.goto('http://localhost:6002');
+  await page.goto('/');
 
   // Wait for the app to load
   await page.waitForSelector('[data-testid="chat-view"]', { timeout: 10000 });
