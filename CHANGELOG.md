@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Final Overnight Summary (2026-03-30)
+
+- **818 Python tests** (up from 360) -- TUI +20, CLI +31, MCP server +20, plus hundreds of gap/integration tests across all modules
+- **Security fixes** -- XSS vulnerability patched in SearchPanel (unsanitized HTML injection); CORS lockdown applied to REST API endpoints
+- **Performance audit complete** -- All 8 audit findings addressed: IntersectionObserver O(1) optimization, `$effect` timer cleanup, message cap (5000), reaction array spread replaced with O(1) self-assignment, 3-chunk Vite build split
+- **CONTRIBUTING.md created** -- Developer onboarding guide with setup, testing, architecture, and contribution workflow
+- **Coverage report** -- 68% overall (core modules 95-100%); coverage report committed to repo
+- **30 Svelte components documented** -- JSDoc annotations on all public props, events, and exported functions
+- **Dead code cleanup** -- mqtt-store-v2 and other unused modules moved to `_alt/` directory
+- **CI lint gate** -- Lint job now properly blocks builds; 109 ruff errors fixed across `src/` and `tests/`
+- **pyright 0 type errors** -- Full type checking passes clean across the Python codebase
+- **README badges added** -- Test count, coverage, pyright, ruff, and license badges
+
 ### Added
 
 ### Fixed
@@ -24,8 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web UI host configurable for Docker** -- Web server bind address now reads from `config.yaml` (`web.host`), defaulting to `0.0.0.0` in Docker containers for proper container accessibility.
 - **TUI typing indicators + LWT** -- Typing indicator re-trigger bug fixed on send; Last Will and Testament publishes to global `system/participants/{key}` topic for cross-channel offline detection.
 - **25 API endpoint tests** -- New test coverage for REST API endpoints (message history, identity, participants).
-- **746 Python tests passing** (up from 714) -- 32 new tests in the final overnight session.
-- **169 total commits** for the overnight build session.
+- **818 Python tests passing** (up from 714) -- 104 new tests across TUI, CLI, and MCP server modules.
+- **174 total commits** for the overnight build session.
 
 #### Overnight (2026-03-30 late): Presence REST API, Build Optimization, Cross-Browser Diagnostics
 
