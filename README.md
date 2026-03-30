@@ -525,14 +525,21 @@ The web UI uses the **"Obsidian Forge"** design language (evolved from "Phantom 
 - Vite (plain SPA, no SvelteKit)
 - Tailwind CSS v4 (CSS `@theme` directive)
 - mqtt.js (connects directly to broker via WebSocket)
+- bits-ui (headless accessible primitives: Dialog, Popover, ContextMenu, Combobox)
+- lucide-svelte (tree-shakeable SVG icon library)
 
 **Features:**
 - Real-time message display with virtual scrolling
-- @mention autocomplete with floating dropdown
-- Channel sidebar with unread badges
-- Participant list with presence indicators
+- @mention autocomplete with floating dropdown (bits-ui Combobox)
+- Channel sidebar with unread badges and mute toggles
+- Participant list with presence indicators, toggle visibility, and member search
+- Settings panel with profile editing, notification toggles, and connection status
+- Context menu with full action wiring (reply, forward, pin, copy, react, mark unread, delete)
+- Confirmation dialogs for destructive actions
 - Browser notifications (when tab is unfocused)
 - Code block syntax highlighting
+- File attachment handling and download
+- Format help popover and code snippet insertion
 - Responsive layout
 
 **Accessing the web UI:**
@@ -823,7 +830,7 @@ claude-comms/
 |   +-- conftest.py                   # Shared fixtures
 |   +-- test_*.py                     # 10 test modules (unit, integration, E2E)
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
-+-- .worklogs/                        # Agent work logs (22 logs from parallel agents)
++-- .worklogs/                        # Agent work logs (36 logs from parallel agents)
 ```
 
 ---
@@ -836,7 +843,7 @@ claude-comms/
 4. Ensure all tests pass (`pytest`)
 5. Submit a pull request
 
-Please follow the existing code style: type hints everywhere, Pydantic models for data, async where I/O is involved, and comprehensive docstrings. For Svelte components, add `data-testid` attributes to all interactive elements.
+Please follow the existing code style: type hints everywhere, Pydantic models for data, async where I/O is involved, and comprehensive docstrings. For Svelte components, add `data-testid` attributes to all interactive elements. Use bits-ui headless primitives for overlays, modals, and dropdowns (not hand-rolled positioning/focus trapping). Use lucide-svelte for icons (not inline SVGs).
 
 ---
 
@@ -859,4 +866,6 @@ Built with [Claude Code](https://claude.ai/code) by Phil Lafayette.
 - [Rich](https://rich.readthedocs.io/) -- Terminal formatting
 - [Pydantic](https://docs.pydantic.dev/) -- Data validation
 - [Svelte 5](https://svelte.dev/) -- Web UI framework
+- [bits-ui](https://bits-ui.com/) -- Headless accessible Svelte components
+- [Lucide](https://lucide.dev/) -- Tree-shakeable SVG icon library
 - [Tailwind CSS](https://tailwindcss.com/) -- Utility-first CSS

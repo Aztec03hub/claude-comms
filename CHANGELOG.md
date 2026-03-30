@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Sprint 2: bits-ui Component Migration (Batch 1)
+
+- **ContextMenu -> bits-ui ContextMenu** -- `ContextMenu.Root`/`Content`/`Item`/`Separator` with controlled open state, Floating UI viewport-aware positioning (replaces manual clamping), arrow key navigation between items, Enter/Space activation, Escape/click-outside dismiss via bits-ui layers, `data-highlighted` keyboard focus state
+- **ChannelModal -> bits-ui Dialog** -- `Dialog.Root`/`Portal`/`Overlay`/`Content`/`Title`/`Close` with focus trap, `role="dialog"`, `aria-labelledby` auto-wiring, portal rendering into document body, Escape and backdrop dismiss handled natively
+- **EmojiPicker -> bits-ui Popover** -- `Popover.Root`/`Content` with click-outside dismiss, `onOpenAutoFocus` for search input auto-focus, controlled `open` prop for parent state management
+- **ProfileCard -> bits-ui Popover** -- `Popover.Root`/`Content` replacing manual backdrop div, click-outside and Escape dismiss via bits-ui layers, removed a11y suppression comments
+- **MentionDropdown -> bits-ui Combobox** -- `Combobox.Root`/`Input`/`ContentStatic`/`Item` providing `role="listbox"`/`role="option"`, `aria-selected`, `aria-activedescendant`, `data-highlighted`, hidden input for keyboard event ownership (replaces manual keydown handler and index tracking)
+
+#### Sprint 2: Lucide Icon Migration (Batch 2)
+
+- **~37 inline SVGs replaced with lucide-svelte imports** across 15 components -- tree-shakeable, consistent sizing via `size` prop
+- **App.svelte**: `Users`, `Search`, `Pin`, `Settings`
+- **ThemeToggle.svelte**: `Sun`, `Moon`
+- **Sidebar.svelte**: `Hash`, `VolumeX`, `Plus`, `Settings`
+- **MemberList.svelte**: `Search`
+- **MessageInput.svelte**: `Type`, `Code`, `Paperclip`, `Smile`, `SendHorizontal`
+- **MessageActions.svelte**: `Reply`, `Smile`, `Ellipsis`
+- **ScrollToBottom.svelte**: `ChevronDown`
+- **ContextMenu.svelte**: `Reply`, `Forward`, `Pin`, `Copy`, `Smile`, `MailOpen`, `Trash2`
+- **ProfileCard.svelte**: `Star`
+- **PinnedPanel.svelte**: `Pin`, `X`
+- **SearchPanel.svelte**: `X`
+- **ThreadPanel.svelte**: `MessageSquare`, `Send`, `X`
+- **CodeBlock.svelte**: `Copy`, `Check`
+- **FileAttachment.svelte**: `File`, `Download`
+
+#### Sprint 2: Dead Buttons Wired (Batch 3)
+
+- **SettingsPanel** (new component) -- slide-out panel with profile editing, notification toggles, appearance section, connection status; wired to header settings button and Sidebar gear button
+- **Member list toggle** -- header member count pill toggles `MemberList` visibility via `showMemberList` state
+- **Member search** -- search input in MemberList filters online/offline members by name with `$derived` reactive filtering
+- **Attach file button** -- hidden file input triggered by attach button; shows "File sharing coming soon" notice
+- **Format help button** -- toggles Markdown formatting reference popover (`**bold** *italic* \`code\``)
+- **Code snippet insertion** -- inserts fenced code block template at cursor position in message input
+- **Context menu Forward action** -- copies message body to clipboard with toast notification
+- **Context menu Mark Unread action** -- calls `store.markUnread(message)` setting `unreadFrom` cursor
+- **Context menu Delete action** -- opens ConfirmDialog (new bits-ui Dialog component) for confirmation, then calls `store.deleteMessage(messageId)`
+- **ConfirmDialog** (new component) -- reusable confirmation dialog using bits-ui Dialog, with danger styling option
+- **Channel mute toggle** -- mute buttons on sidebar channels call `store.muteChannel(channelId)`, visual `.muted` class with reduced opacity, VolumeX icon indicator
+- **File download handler** -- FileAttachment download button triggers programmatic `<a>` download with `url` prop
+- **More button -> context menu** -- MessageActions More button opens context menu at button position via `onMore` -> `onContextMenu`
+- **Store methods added**: `markUnread()`, `deleteMessage()`, `muteChannel()`, `forwardMessage()` in `mqtt-store.svelte.js`
+
+#### New Dependencies
+
+- **bits-ui** -- headless Svelte 5 UI primitives (ContextMenu, Dialog, Popover, Combobox) for accessibility, keyboard nav, ARIA roles, focus trapping, floating positioning
+- **lucide-svelte** -- tree-shakeable SVG icon library (1500+ icons as Svelte components)
+
 #### Comprehensive Functional Browser Testing (10 Parallel Agents)
 
 - **10 parallel testing agents** deployed for functional browser testing across the entire web UI -- **104 Playwright tests** written, **12 bugs found and fixed**
