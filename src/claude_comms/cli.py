@@ -463,9 +463,11 @@ def start(
             # Create LogExporter for persisting messages to disk
             from claude_comms.log_exporter import LogExporter
 
-            _log_exporter = LogExporter.from_config(
-                config, deduplicator=_mcp_mod._deduplicator
-            )
+            # LogExporter gets its OWN deduplicator — NOT the shared one.
+            # The subscriber deduplicates first (marking IDs as seen),
+            # then passes to the exporter. If they share a deduplicator,
+            # the exporter sees every message as a duplicate and skips it.
+            _log_exporter = LogExporter.from_config(config)
             console.print(
                 f"  [green]Log exporter[/green] writing to "
                 f"{_log_exporter.log_dir} (format: {_log_exporter.fmt})"
