@@ -245,20 +245,6 @@ export class MqttChatStore {
       };
       // Fetch message history from the REST API so messages survive page refresh
       this.#fetchHistory(this.activeChannel);
-
-      // DEBUG: Add a test message to verify rendering works
-      const testMsg = {
-        id: 'debug-test-' + Date.now(),
-        ts: new Date().toISOString(),
-        sender: { key: this.userProfile.key, name: 'System', type: 'human' },
-        recipients: null,
-        body: 'DEBUG: Connection established, testing message rendering.',
-        reply_to: null,
-        conv: this.activeChannel,
-        channel: this.activeChannel
-      };
-      this.messages = [...this.messages, testMsg];
-      console.log('[claude-comms] DEBUG: added test message, messages.length =', this.messages.length, 'activeMessages.length =', this.activeMessages.length);
     });
 
     this.#client.on('error', (err) => {
@@ -647,8 +633,6 @@ export class MqttChatStore {
   #handleMessage(topic, msg) {
     if (!topic.startsWith(TOPIC_PREFIX + '/')) return;
     const topicParts = topic.slice(TOPIC_PREFIX.length + 1).split('/');
-    // Debug: log all incoming MQTT messages (remove after verifying broker bridging)
-    console.debug('[claude-comms] MQTT ←', topic, msg?.id || '(no id)');
 
     if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
       this.#handleChatMessage(topicParts[1], msg);
