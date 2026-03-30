@@ -165,24 +165,26 @@
       onkeydown={handleKeydown}
       data-testid="message-input"
     ></textarea>
-    <div class="input-actions">
-      <input
-        bind:this={fileInputEl}
-        type="file"
-        class="hidden-file-input"
-        onchange={handleFileSelected}
-        data-testid="input-file-hidden"
-      />
-      <button class="btn-icon" title="Attach file" onclick={handleAttachClick} data-testid="input-attach">
-        <Paperclip size={18} />
-      </button>
-      <button class="btn-icon" title="Add emoji" onclick={onOpenEmoji} data-testid="input-emoji">
-        <Smile size={18} />
+    <div class="input-bottom-row">
+      <div class="input-actions">
+        <input
+          bind:this={fileInputEl}
+          type="file"
+          class="hidden-file-input"
+          onchange={handleFileSelected}
+          data-testid="input-file-hidden"
+        />
+        <button class="btn-icon" title="Attach file" onclick={handleAttachClick} data-testid="input-attach">
+          <Paperclip size={16} />
+        </button>
+        <button class="btn-icon" title="Add emoji" onclick={onOpenEmoji} data-testid="input-emoji">
+          <Smile size={16} />
+        </button>
+      </div>
+      <button class="btn-send" title="Send message" onclick={sendMessage} data-testid="send-button">
+        <SendHorizontal size={16} />
       </button>
     </div>
-    <button class="btn-send" title="Send message" onclick={sendMessage} data-testid="send-button">
-      <SendHorizontal size={16} />
-    </button>
   </div>
 
   {#if showCharCounter}
@@ -337,14 +339,20 @@
 
   .input-wrap {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 4px 6px 4px 16px;
+    padding: 8px 12px 4px;
     transition: var(--transition-med);
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+
+  .input-bottom-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 4px;
   }
 
   .input-wrap:focus-within {
@@ -353,19 +361,19 @@
   }
 
   .input-wrap textarea {
-    flex: 1;
+    width: 100%;
     background: none;
     border: none;
     outline: none !important;
     box-shadow: none !important;
     color: var(--text-primary);
     font-size: 14px;
-    padding: 8px 0;
+    padding: 4px 0;
     font-family: inherit;
     resize: none;
     overflow-y: auto;
     line-height: 1.5;
-    min-height: 44px;
+    min-height: 36px;
     max-height: 180px;
   }
 
