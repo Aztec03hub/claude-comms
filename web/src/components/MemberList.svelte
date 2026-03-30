@@ -1,19 +1,42 @@
 <!--
   @component MemberList
-  @description Right sidebar panel displaying online and offline channel members with avatars, role badges (Admin/Agent), typing indicators, and a search filter. Clicking a member opens their profile card.
-  @prop {Array} online - Array of online member objects with name, key, type, and client fields.
+  @description Right sidebar panel displaying online and offline channel members with avatars,
+  role badges (Admin/Agent), connection type icons, typing indicators, and a search filter.
+  Each user appears once, with connection icons showing how they are connected.
+  @prop {Array} online - Array of online member objects with name, key, type, and connections fields.
   @prop {Array} offline - Array of offline member objects.
   @prop {object} typingUsers - Map of participant keys to typing state objects ({ typing: boolean }).
   @prop {Function} onShowProfile - Callback invoked with a member object to display their profile.
 -->
 <script>
-  import { Search } from 'lucide-svelte';
+  import { Search, Globe, Monitor, Plug, Terminal, Link } from 'lucide-svelte';
   import { getInitials, getParticipantColor } from '../lib/utils.js';
 
   let { online = [], offline = [], typingUsers = {}, onShowProfile } = $props();
 
   let showSearch = $state(false);
   let searchQuery = $state('');
+
+  const CONNECTION_ICONS = {
+    web: Globe,
+    tui: Monitor,
+    mcp: Plug,
+    cli: Terminal,
+    api: Link,
+  };
+
+  const CONNECTION_LABELS = {
+    web: 'Web UI',
+    tui: 'Terminal',
+    mcp: 'MCP',
+    cli: 'CLI',
+    api: 'API',
+  };
+
+  function getClientTypes(member) {
+    if (!member.connections || typeof member.connections !== 'object') return [];
+    return [...new Set(Object.values(member.connections).map(c => c.client))];
+  }
 
   let filteredOnline = $derived(
     searchQuery ? online.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())) : online
@@ -46,9 +69,10 @@
   {#if filteredOnline.length > 0}
     <div class="members-section" data-testid="members-online-section">Online ({filteredOnline.length})</div>
     <div class="members-list">
-      {#each filteredOnline as member (member.key + '-' + (member.client || 'unknown'))}
+      {#each filteredOnline as member (member.key)}
         {@const color = getParticipantColor(member.key)}
         {@const isTyping = typingUsers[member.key]?.typing}
+        {@const clientTypes = getClientTypes(member)}
         <div
           class="member"
           onclick={() => onShowProfile(member)}
@@ -64,17 +88,32 @@
           <div class="member-info">
             <div class="member-name" style="color: {color.textColor}">
               {member.name}
-              <span class="member-client client-{member.client || 'unknown'}">{member.client || 'unknown'}</span>
             </div>
             {#if isTyping}
               <div class="member-typing">
                 <div class="member-typing-dots"><span></span><span></span><span></span></div>
                 typing...
               </div>
-            {:else if member.type === 'human'}
-              <span class="member-badge admin">Admin</span>
             {:else}
-              <span class="member-badge agent">Agent</span>
+              <div class="member-meta">
+                {#if member.type === 'human'}
+                  <span class="member-badge admin">Admin</span>
+                {:else}
+                  <span class="member-badge agent">Agent</span>
+                {/if}
+                {#if clientTypes.length > 0}
+                  <div class="connection-icons">
+                    {#each clientTypes as clientType (clientType)}
+                      {#if CONNECTION_ICONS[clientType]}
+                        {@const IconComponent = CONNECTION_ICONS[clientType]}
+                        <span class="connection-icon" title="Connected via {CONNECTION_LABELS[clientType] || clientType}">
+                          <IconComponent size={11} />
+                        </span>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             {/if}
           </div>
         </div>
@@ -85,7 +124,7 @@
   {#if filteredOffline.length > 0}
     <div class="members-section" style="margin-top: 8px" data-testid="members-offline-section">Offline ({filteredOffline.length})</div>
     <div class="members-list">
-      {#each filteredOffline as member (member.key + '-' + (member.client || 'unknown'))}
+      {#each filteredOffline as member (member.key)}
         <div
           class="member"
           onclick={() => onShowProfile(member)}
@@ -101,7 +140,6 @@
           <div class="member-info">
             <div class="member-name" style="color: var(--text-muted)">
               {member.name}
-              <span class="member-client client-{member.client || 'unknown'}">{member.client || 'unknown'}</span>
             </div>
             <span class="member-badge member-tag">Member</span>
           </div>
@@ -263,36 +301,45 @@
 
   .member-dot.offline { background: var(--text-faint); }
 
-  .member-info { display: flex; flex-direction: column; }
-  .member-name { font-size: 13px; font-weight: 500; display: flex; align-items: baseline; gap: 4px; }
-
-  .member-client {
-    font-size: 9px;
+  .member-info { display: flex; flex-direction: column; min-width: 0; }
+  .member-name {
+    font-size: 13px;
     font-weight: 500;
-    font-style: italic;
-    text-transform: lowercase;
-    margin-left: 3px;
-    padding: 0 4px;
-    border-radius: 3px;
-    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  /* Color-code by client type */
-  .member-client.client-web {
-    color: #60a5fa;
-    background: rgba(96, 165, 250, 0.1);
+  .member-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
-  .member-client.client-tui {
-    color: #a78bfa;
-    background: rgba(167, 139, 250, 0.1);
+
+  .connection-icons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
-  .member-client.client-mcp {
-    color: #34d399;
-    background: rgba(52, 211, 153, 0.1);
-  }
-  .member-client.client-unknown {
+
+  .connection-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-faint);
-    background: transparent;
+    cursor: default;
+    opacity: 1;
+    transition: opacity 0.3s ease, color 0.2s ease;
+    animation: iconFadeIn 0.3s ease forwards;
+  }
+
+  .connection-icon:hover {
+    color: var(--text-secondary);
+  }
+
+  @keyframes iconFadeIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
   }
 
   .member-badge {
@@ -302,6 +349,7 @@
     border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
+    flex-shrink: 0;
   }
 
   .member-badge.admin {
