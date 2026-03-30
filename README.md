@@ -39,6 +39,8 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 - **PostToolUse hook** -- Automatic notification injection so Claude sees new messages between tool calls
 - **Log rotation** -- Configurable size-based rotation with numbered suffixes
 - **Conversation management** -- Create, list, and delete conversations via CLI or MCP tools
+- **Message history REST API** -- Persistent message history accessible via REST endpoints, web UI reloads messages on refresh
+- **Broker crash resilience** -- Daemon survives amqtt broker crashes on WebSocket disconnect without going down
 
 ---
 
@@ -739,7 +741,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **668+ total tests**: **504 Python tests** across 12 test files (~0.5s) plus **43 TUI tests** (Textual `run_test()`) plus **121+ Playwright browser E2E tests** across 20 spec files with 120+ test screenshots:
+The test suite includes **714+ total tests**: **647 Python tests** across 12 test files (~14.6s) plus **43 TUI tests** (Textual `run_test()`) plus **121+ Playwright browser E2E tests** across 24 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -756,9 +758,11 @@ The test suite includes **668+ total tests**: **504 Python tests** across 12 tes
 | `test_cli.py` | 19 | CLI init, status, config env vars, force overwrite, key generation, stale PID |
 | `test_tui.py` | 43 | TUI app rendering, channel switching, message sending, keyboard shortcuts, edge cases, @mention tab completion, unread badges, presence |
 
+**Note:** Python test count grew from 504 to 647 via expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules (36 new tests in the overnight 2026-03-30 session).
+
 ### Playwright E2E Tests
 
-The web UI has **121+ browser-level E2E tests** across **20 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
+The web UI has **121+ browser-level E2E tests** across **24 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
 
 ```bash
 cd web
@@ -789,6 +793,10 @@ npx playwright test --headed # Visible browser
 | `overnight-members-theme.spec.js` | 19 | Member list, profile card (7 tests), theme toggle (3), responsive at 5 viewports (5) |
 | `a11y-keyboard.spec.js` | 10 | Tab focus, focus-visible rings, Enter activation, Escape handling, ARIA roles, sr-only class |
 | `user-stories.spec.js` | 7 | E2E user stories: first experience, team discussion, channel management, reactions/interactions, search/navigation, customization/settings, mobile user |
+| `visual-regression.spec.js` | -- | Visual regression tests |
+| `round6-modals.spec.js` | -- | Round 6 modal tests |
+| `round7-keyboard.spec.js` | -- | Round 7 keyboard tests |
+| `round8-edge-cases.spec.js` | -- | Round 8 edge case tests |
 
 **Zero JS runtime errors** confirmed across all 18 interaction types during the console smoke test. **12 bugs found and fixed** by the testing swarm: `addReaction` missing, localStorage key persistence, Ctrl+K shortcut, Escape priority ordering, focus return after panel close, ThemeToggle wiring, light theme CSS, mobile viewport overflow, context menu edge clamping, search panel z-index, search auto-focus, and header pointer-events.
 
@@ -843,11 +851,11 @@ claude-comms/
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
-+-- tests/                            # pytest test suite (504 tests)
++-- tests/                            # pytest test suite (647 tests)
 |   +-- conftest.py                   # Shared fixtures
 |   +-- test_*.py                     # 12 test modules (unit, integration, E2E)
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
-+-- .worklogs/                        # Agent work logs (63 logs from parallel agents)
++-- .worklogs/                        # Agent work logs (74 logs from parallel agents)
 ```
 
 ---

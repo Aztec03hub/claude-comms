@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Overnight (2026-03-30): Test Expansion, REST API, Broker Resilience, UI Polish
+
+- **714 Python tests** (up from 647) -- 36 expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules
+- **REST API for message history** (`/api/messages/{conversation}`) -- Web UI now persists messages on page refresh via new REST endpoints backed by the MQTT message store **(in progress)**
+- **MCP `comms_join` publishes MQTT presence** -- Joining a conversation now publishes a retained presence message to `system/participants/{key}`, making MCP-connected agents visible to TUI and Web UI clients
+- **Broker crash resilience** -- Daemon handles amqtt broker crashes on WebSocket disconnect gracefully instead of terminating the entire process **(in progress)**
+- **Connection banner auto-hide + dismiss** -- Connection status banner auto-hides after successful connect; dismiss button added for manual close
+- **Mobile hamburger menu** -- Responsive navigation menu for narrow viewports
+- **Emoji picker enlarged** -- Picker sizing increased for better usability; reaction badges improved with better visibility
+- **Full code cleanup** -- Removed unused imports and dead code from both Python source files and Svelte components; moved misplaced import to top of EmojiPicker script block
+- **User story tests round 2** -- Expanded end-to-end user story coverage **(in progress)**
+- **14,076 lines of source code** / **8,768 lines of test code** -- 70+ commits overnight across 121 files changed
+
 #### Overnight (2026-03-29 final): Critical Daemon Fix + Feature Completion
 
 - **MCP server + Web UI now actually start** -- The daemon's `claude-comms start` command previously only printed "MCP server ready" and "Web UI available" as placeholder messages without launching either server. Now the daemon starts the MCP server (uvicorn + FastMCP on `:9920`) and the web UI static file server (Starlette on `:9921`) as async tasks alongside the broker. Graceful shutdown added for both servers. **(Placeholder audit #1 and #2 -- CRITICAL fix)**
@@ -26,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Profile card buttons functional** -- "Message" button pre-fills `@name` in input; "View Profile" opens UserProfileView for other users or SettingsPanel for self
 
 ### Fixed
+
+#### Overnight (2026-03-30)
+
+- **MCP presence not published on join** -- `comms_join` tool did not publish an MQTT retained presence message, making MCP-connected agents invisible to TUI/Web UI participant lists. Now publishes to `system/participants/{key}`.
+- **Broker crash on WS disconnect** -- amqtt broker could crash the entire daemon process when a WebSocket client disconnected ungracefully. Added exception handling to keep the daemon running.
+- **Svelte cleanup** -- Removed unused imports and dead code; fixed misplaced import in EmojiPicker component.
+- **Own presence overwrite** -- Skip own presence messages to prevent offline status from overwriting online status during reconnection.
 
 #### Overnight (2026-03-29 final)
 
