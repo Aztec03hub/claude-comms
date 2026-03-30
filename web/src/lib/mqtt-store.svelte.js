@@ -268,6 +268,39 @@ export class MqttChatStore {
   }
 
   /**
+   * Add or toggle a reaction on a message.
+   * @param {string} messageId
+   * @param {string} emoji
+   */
+  addReaction(messageId, emoji) {
+    const msg = this.messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    if (!msg.reactions) {
+      msg.reactions = [];
+    }
+
+    const existing = msg.reactions.find(r => r.emoji === emoji);
+    if (existing) {
+      if (existing.active) {
+        existing.count--;
+        existing.active = false;
+        if (existing.count <= 0) {
+          msg.reactions = msg.reactions.filter(r => r.emoji !== emoji);
+        }
+      } else {
+        existing.count++;
+        existing.active = true;
+      }
+    } else {
+      msg.reactions.push({ emoji, count: 1, active: true });
+    }
+
+    // Trigger reactivity by reassigning
+    this.messages = [...this.messages];
+  }
+
+  /**
    * Pin or unpin a message.
    * @param {object} message
    */
