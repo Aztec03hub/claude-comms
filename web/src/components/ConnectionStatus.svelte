@@ -220,4 +220,25 @@
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
+
+  .dismiss-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.5;
+    cursor: pointer;
+    padding: 2px;
+    margin-left: 4px;
+    border-radius: 3px;
+    transition: opacity 0.15s ease, background 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .dismiss-btn:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.1);
+  }
 </style>
