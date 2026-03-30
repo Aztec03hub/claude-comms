@@ -42,6 +42,9 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 - **Message history REST API** -- Persistent message history accessible via REST endpoints, web UI reloads messages on refresh
 - **Unified identity endpoint** (`/api/identity`) -- Single REST endpoint for consistent identity across all clients
 - **Client type display** -- Participants show their client type: "Phil (web)", "Phil (tui)", "claude-orchestrator (mcp)"
+- **Presence REST API** (`/api/participants/{channel}`) -- Query channel membership with client type and online status via REST, no MQTT subscription needed
+- **Build optimization** -- 3-chunk Vite split (`vendor-mqtt`, `vendor-ui`, app) eliminates the 500KB chunk size warning
+- **Stale presence filtering** -- Both TUI and Web UI filter out stale/offline retained MQTT presence, preventing phantom participants
 - **Broker crash resilience** -- Daemon survives amqtt broker crashes on WebSocket disconnect with retry loop
 
 ---
@@ -859,6 +862,18 @@ claude-comms/
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
 +-- .worklogs/                        # Agent work logs (74 logs from parallel agents)
 ```
+
+---
+
+## Known Issues
+
+| Issue | Impact | Status |
+|-------|--------|--------|
+| **Svelte 5 `$derived` in class stores** | Reactive `$derived` state inside `MqttStore` class does not reliably trigger component re-renders (e.g., participant list updates). Workaround: use `$effect` with explicit assignment in consuming components. | Actively debugging |
+| **TCP-to-WS message bridging** | amqtt does not bridge messages between its TCP (:1883) and WebSocket (:9001) listeners. Clients on different transports cannot see each other. Use WS for all clients. | Architecture limitation |
+| **File sharing** | Attach button shows "coming soon" -- needs file upload backend. | Planned |
+| **Read receipts** | Component exists but `read_by` is never populated via MQTT. | Planned |
+| **Version mismatch** | Sidebar shows "v0.9" vs Python "0.1.0" -- cosmetic only. | Low priority |
 
 ---
 

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Known Issues
+
+- **Svelte 5 `$derived` in class-based stores does not trigger re-render** -- Reactive `$derived` state inside the `MqttStore` class does not reliably propagate to Svelte components. This affects participant list updates and is being actively debugged. Workaround: use `$effect` with explicit assignment in components that consume store-derived values.
+- **TCP-to-WebSocket message bridging** -- amqtt does not bridge messages between its TCP (:1883) and WebSocket (:9001) listeners. Clients on different transports cannot see each other's messages. All clients should use the same transport (WS recommended for web+TUI interop).
+
+#### Overnight (2026-03-30 late): Presence REST API, Build Optimization, Cross-Browser Diagnostics
+
+- **Presence REST API** (`/api/participants/{channel}`) -- New REST endpoint returns the participant list for a given channel, including `client` (web/tui/mcp) and `status` (online/offline) fields. Enables external tooling and health checks to query channel membership without an MQTT subscription.
+- **Build optimization: 3-chunk split** -- Vite `manualChunks` config splits the JS bundle into `vendor-mqtt` (mqtt.js), `vendor-ui` (bits-ui + lucide-svelte), and the app chunk. Eliminates the 500KB chunk size warning from production builds.
+- **Stale presence filtering** -- Both TUI and Web UI now filter out stale/offline presence entries from the participant list, fixing phantom participants that accumulated from retained MQTT messages of disconnected clients.
+- **Cross-browser integration test diagnostics** -- Documented TCP-to-WebSocket bridging gap: the MQTT broker exposes TCP (:1883) and WS (:9001) as separate listeners, but amqtt does not bridge messages between transport types. All clients using the same transport (e.g., all WS) see each other's messages; cross-transport requires protocol bridging not yet implemented.
+
 #### Overnight (2026-03-30): Test Expansion, REST API, Broker Resilience, UI Polish
 
 - **714 Python tests** (up from 647) -- 36 expanded gap tests across broker, log exporter, MCP tools, notification hook, and CLI modules
@@ -24,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **12 user story E2E tests** (2 rounds) -- Comprehensive end-to-end user story coverage across Web UI flows
 - **~949 total tests** -- 714 Python tests + 235 Playwright E2E tests across 25 spec files
 - **Debug cleanup passes** -- Removed debug seed messages and console.debug logging injected by agents
-- **14,076 lines of source code** / **8,768 lines of test code** -- 70+ commits overnight across 121 files changed
+- **14,076 lines of source code** / **8,768 lines of test code** -- 98+ commits overnight across 121 files changed
 
 #### Overnight (2026-03-29 final): Critical Daemon Fix + Feature Completion
 
@@ -43,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Profile card buttons functional** -- "Message" button pre-fills `@name` in input; "View Profile" opens UserProfileView for other users or SettingsPanel for self
 
 ### Fixed
+
+#### Overnight (2026-03-30 late)
+
+- **TUI phantom participants** -- TUI participant list showed stale/offline entries from retained MQTT presence. Now filters the same way as the Web UI.
+- **Presence API missing fields** -- `/api/participants/{channel}` initially returned only name/key; added `client` and `status` fields for full participant metadata.
 
 #### Overnight (2026-03-30)
 
