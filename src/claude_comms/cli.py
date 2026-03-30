@@ -343,7 +343,14 @@ def start(
                 return JSONResponse(
                     {"channel": channel, "count": len(msgs), "messages": msgs},
                     headers={
-                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
+                        "Access-Control-Allow-Origin": next(
+                            (
+                                o
+                                for o in cors_origins
+                                if o in request.headers.get("origin", "")
+                            ),
+                            cors_origins[0],
+                        ),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -354,7 +361,14 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
+                        "Access-Control-Allow-Origin": next(
+                            (
+                                o
+                                for o in cors_origins
+                                if o in request.headers.get("origin", "")
+                            ),
+                            cors_origins[0],
+                        ),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -370,7 +384,14 @@ def start(
                         "type": identity.get("type", "human"),
                     },
                     headers={
-                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
+                        "Access-Control-Allow-Origin": next(
+                            (
+                                o
+                                for o in cors_origins
+                                if o in request.headers.get("origin", "")
+                            ),
+                            cors_origins[0],
+                        ),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -381,7 +402,14 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
+                        "Access-Control-Allow-Origin": next(
+                            (
+                                o
+                                for o in cors_origins
+                                if o in request.headers.get("origin", "")
+                            ),
+                            cors_origins[0],
+                        ),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -399,7 +427,14 @@ def start(
                 return JSONResponse(
                     {"version": 2, "channel": channel, "participants": participants},
                     headers={
-                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
+                        "Access-Control-Allow-Origin": next(
+                            (
+                                o
+                                for o in cors_origins
+                                if o in request.headers.get("origin", "")
+                            ),
+                            cors_origins[0],
+                        ),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -410,7 +445,14 @@ def start(
                 return JSONResponse(
                     {},
                     headers={
-                        "Access-Control-Allow-Origin": next((o for o in cors_origins if o in request.headers.get("origin", "")), cors_origins[0]),
+                        "Access-Control-Allow-Origin": next(
+                            (
+                                o
+                                for o in cors_origins
+                                if o in request.headers.get("origin", "")
+                            ),
+                            cors_origins[0],
+                        ),
                         "Access-Control-Allow-Methods": "GET, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type",
                     },
@@ -613,9 +655,7 @@ def stop() -> None:
     """
     pid = _read_pid()
     if pid is None:
-        console.print(
-            "[yellow]No daemon running.[/yellow]"
-        )
+        console.print("[yellow]No daemon running.[/yellow]")
         raise typer.Exit(0)  # Exit 0 so && chains continue
 
     # Check process exists

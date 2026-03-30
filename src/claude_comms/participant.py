@@ -25,9 +25,7 @@ class ConnectionInfo(BaseModel):
     """A single active connection for a participant."""
 
     client: str = Field(description="Client type: web, tui, mcp, cli, api")
-    instance_id: str | None = Field(
-        default=None, description="Instance identifier"
-    )
+    instance_id: str | None = Field(default=None, description="Instance identifier")
     since: str = Field(description="ISO 8601 timestamp when connection was established")
     last_seen: str = Field(description="ISO 8601 timestamp of last activity")
 

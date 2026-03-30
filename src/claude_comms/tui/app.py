@@ -222,9 +222,7 @@ class ClaudeCommsApp(App):
                 await self._publish_presence(client, "online")
 
                 # Start heartbeat (60-second periodic re-publish)
-                self._heartbeat_task = asyncio.create_task(
-                    self._heartbeat_loop(client)
-                )
+                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(client))
 
                 self._show_system(f"Connected as {self._name} ({self._key})")
                 try:
@@ -339,9 +337,7 @@ class ClaudeCommsApp(App):
                     except Exception:
                         pass  # Skip malformed messages
 
-                self._show_system(
-                    f"Loaded {len(messages)} message(s) from history"
-                )
+                self._show_system(f"Loaded {len(messages)} message(s) from history")
         except Exception:
             # History fetch failed — not critical, live messages still work
             pass
@@ -420,7 +416,11 @@ class ClaudeCommsApp(App):
         conn_key = f"{client_type}-{instance_id}" if instance_id else client_type
 
         # Skip our own TUI instance
-        if key == self._key and client_type == "tui" and instance_id == self._instance_id:
+        if (
+            key == self._key
+            and client_type == "tui"
+            and instance_id == self._instance_id
+        ):
             return
 
         participant_list = self.query_one("#participant-sidebar", ParticipantList)

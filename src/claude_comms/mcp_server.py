@@ -101,12 +101,11 @@ def get_channel_participants(channel: str) -> list[dict]:
             "key": m.key,
             "name": m.name,
             "type": m.type,
-            "connections": {
-                k: v.model_dump() for k, v in m.connections.items()
-            },
+            "connections": {k: v.model_dump() for k, v in m.connections.items()},
             "online": m.is_online,
             # Backward compat
-            "client": m.client or (m.active_client_types[0] if m.active_client_types else "unknown"),
+            "client": m.client
+            or (m.active_client_types[0] if m.active_client_types else "unknown"),
             "status": "online" if m.is_online else "offline",
         }
         for m in members
@@ -185,7 +184,9 @@ async def _mqtt_subscriber(
                                 try:
                                     log_exporter.write_message(data)
                                 except Exception:
-                                    logger.warning("Failed to write message to log", exc_info=True)
+                                    logger.warning(
+                                        "Failed to write message to log", exc_info=True
+                                    )
 
                         # Handle NEW presence topic
                         # Topic: claude-comms/presence/{key}/{client}-{instanceId}
@@ -220,7 +221,9 @@ async def _mqtt_subscriber(
                                     p.connections[conn_key] = ConnectionInfo(
                                         client=client_type,
                                         instance_id=instance_id,
-                                        since=p.connections[conn_key].since if conn_key in p.connections else (ts or ""),
+                                        since=p.connections[conn_key].since
+                                        if conn_key in p.connections
+                                        else (ts or ""),
                                         last_seen=ts or "",
                                     )
                             elif status == "offline" and _registry:
@@ -246,9 +249,19 @@ async def _mqtt_subscriber(
                             ts = data.get("ts", "")
                             # Only register participants that declare a known client type.
                             # Skip 'unknown' to avoid stale retained presence from old sessions.
-                            if key and name and status == "online" and client_type != "unknown" and _registry:
+                            if (
+                                key
+                                and name
+                                and status == "online"
+                                and client_type != "unknown"
+                                and _registry
+                            ):
                                 # Register in the MCP participant registry
-                                conv = parts[2] if len(parts) > 2 and parts[1] == "conv" else "general"
+                                conv = (
+                                    parts[2]
+                                    if len(parts) > 2 and parts[1] == "conv"
+                                    else "general"
+                                )
                                 _registry.join(
                                     name, conv, key=key, participant_type=p_type
                                 )
@@ -258,11 +271,17 @@ async def _mqtt_subscriber(
                                     p.client = client_type
                                     # Track connection if client type is valid
                                     if client_type in CONNECTION_TYPES:
-                                        conn_key = f"{client_type}-{instance_id}" if instance_id else client_type
+                                        conn_key = (
+                                            f"{client_type}-{instance_id}"
+                                            if instance_id
+                                            else client_type
+                                        )
                                         p.connections[conn_key] = ConnectionInfo(
                                             client=client_type,
                                             instance_id=instance_id,
-                                            since=p.connections[conn_key].since if conn_key in p.connections else (ts or ""),
+                                            since=p.connections[conn_key].since
+                                            if conn_key in p.connections
+                                            else (ts or ""),
                                             last_seen=ts or "",
                                         )
                             elif key and status == "offline" and _registry:
@@ -270,7 +289,11 @@ async def _mqtt_subscriber(
                                 if existing:
                                     # Remove specific connection if instanceId provided
                                     if client_type in CONNECTION_TYPES:
-                                        conn_key = f"{client_type}-{instance_id}" if instance_id else client_type
+                                        conn_key = (
+                                            f"{client_type}-{instance_id}"
+                                            if instance_id
+                                            else client_type
+                                        )
                                         existing.connections.pop(conn_key, None)
                                     if not existing.connections:
                                         _registry.leave(key, "general")

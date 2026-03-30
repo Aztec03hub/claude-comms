@@ -228,6 +228,5 @@ class ParticipantList(Vertical):
         Keys are now the bare user key (not composite).
         """
         return {
-            item.participant_name: item.participant_key
-            for item in self._items.values()
+            item.participant_name: item.participant_key for item in self._items.values()
         }
