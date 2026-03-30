@@ -115,7 +115,9 @@ class TestGetChannelParticipants:
         finally:
             srv._registry = original
 
-    def test_returns_participants_with_correct_shape(self, registry: ParticipantRegistry):
+    def test_returns_participants_with_correct_shape(
+        self, registry: ParticipantRegistry
+    ):
         """Each participant dict should have key, name, type, client, status."""
         import claude_comms.mcp_server as srv
 
@@ -211,7 +213,9 @@ class TestGetterGuards:
         finally:
             srv._store = original
 
-    def test_get_registry_returns_registry_when_set(self, registry: ParticipantRegistry):
+    def test_get_registry_returns_registry_when_set(
+        self, registry: ParticipantRegistry
+    ):
         """_get_registry() returns the registry when it has been initialised."""
         import claude_comms.mcp_server as srv
 

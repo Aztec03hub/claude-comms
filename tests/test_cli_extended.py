@@ -7,9 +7,7 @@ WITHOUT requiring a running broker or daemon.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
@@ -134,9 +132,7 @@ class TestSendCommand:
         assert "Config not found" in result.output
 
     def test_send_no_identity_key(self, tmp_path: Path, monkeypatch) -> None:
-        config_path, _ = _setup_config(
-            tmp_path, monkeypatch, **{"identity.key": ""}
-        )
+        config_path, _ = _setup_config(tmp_path, monkeypatch, **{"identity.key": ""})
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
 
         result = runner.invoke(app, ["send", "hello"])
@@ -299,6 +295,7 @@ class TestConvListCommand:
         config_path, _ = _setup_config(tmp_path, monkeypatch)
         # Override auto_join to empty so no conversations appear
         from claude_comms.config import load_config
+
         config = load_config(config_path)
         config["mcp"]["auto_join"] = []
         save_config(config, config_path)
@@ -385,6 +382,7 @@ class TestStatusRemoteBroker:
     def test_status_remote_mode(self, tmp_path: Path, monkeypatch) -> None:
         config_path, _ = _setup_config(tmp_path, monkeypatch)
         from claude_comms.config import load_config
+
         config = load_config(config_path)
         config["broker"]["mode"] = "remote"
         config["broker"]["remote_host"] = "mqtt.example.com"
@@ -411,6 +409,7 @@ class TestStatusWebEnabled:
     def test_status_web_enabled(self, tmp_path: Path, monkeypatch) -> None:
         config_path, _ = _setup_config(tmp_path, monkeypatch)
         from claude_comms.config import load_config
+
         config = load_config(config_path)
         config["web"]["enabled"] = True
         save_config(config, config_path)
@@ -425,6 +424,7 @@ class TestStatusWebEnabled:
     def test_status_web_disabled(self, tmp_path: Path, monkeypatch) -> None:
         config_path, _ = _setup_config(tmp_path, monkeypatch)
         from claude_comms.config import load_config
+
         config = load_config(config_path)
         config["web"]["enabled"] = False
         save_config(config, config_path)
@@ -435,5 +435,3 @@ class TestStatusWebEnabled:
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
         assert "disabled" in result.output
-
-

@@ -457,7 +457,9 @@ def start(
             broker_host = broker_cfg.get("host", "127.0.0.1")
             broker_port = broker_cfg.get("port", 1883)
             assert _mcp_mod._store is not None, "MCP store not initialised"
-            assert _mcp_mod._deduplicator is not None, "MCP deduplicator not initialised"
+            assert _mcp_mod._deduplicator is not None, (
+                "MCP deduplicator not initialised"
+            )
             mqtt_sub_task = asyncio.create_task(
                 _mqtt_subscriber(
                     broker_host,

@@ -1254,18 +1254,22 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "key": "peer0001",
-                "name": "peer-alice",
-                "type": "claude",
-                "status": "online",
-                "client": "mcp",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0001",
+                    "name": "peer-alice",
+                    "type": "claude",
+                    "status": "online",
+                    "client": "mcp",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/peer0001"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             assert "peer0001-mcp" in participant_list._items
             item = participant_list._items["peer0001-mcp"]
             assert item.participant_name == "peer-alice"
@@ -1278,20 +1282,26 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "key": "peer0002",
-                "name": "peer-bob",
-                "type": "human",
-                "status": "away",
-                "client": "web",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0002",
+                    "name": "peer-bob",
+                    "type": "human",
+                    "status": "away",
+                    "client": "web",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/peer0002"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             assert "peer0002-web" in participant_list._items
-            assert participant_list._items["peer0002-web"].presence == PresenceState.AWAY
+            assert (
+                participant_list._items["peer0002-web"].presence == PresenceState.AWAY
+            )
 
     @pytest.mark.asyncio
     async def test_handle_presence_offline_removes_participant(self):
@@ -1300,7 +1310,9 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             # First add a participant
             participant_list.set_participant(
                 key="peer0003-mcp",
@@ -1313,13 +1325,15 @@ class TestRound12HandlePresence:
             assert "peer0003-mcp" in participant_list._items
 
             # Now send offline presence
-            payload = json.dumps({
-                "key": "peer0003",
-                "name": "peer-charlie",
-                "type": "claude",
-                "status": "offline",
-                "client": "mcp",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0003",
+                    "name": "peer-charlie",
+                    "type": "claude",
+                    "status": "offline",
+                    "client": "mcp",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/peer0003"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
@@ -1333,16 +1347,20 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             initial_count = len(participant_list._items)
 
-            payload = json.dumps({
-                "key": "tkey0001",
-                "name": "test-user",
-                "type": "human",
-                "status": "online",
-                "client": "tui",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "tkey0001",
+                    "name": "test-user",
+                    "type": "human",
+                    "status": "online",
+                    "client": "tui",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/tkey0001"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
@@ -1357,18 +1375,22 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "key": "tkey0001",
-                "name": "test-user",
-                "type": "human",
-                "status": "online",
-                "client": "web",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "tkey0001",
+                    "name": "test-user",
+                    "type": "human",
+                    "status": "online",
+                    "client": "web",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/tkey0001"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             assert "tkey0001-web" in participant_list._items
 
     @pytest.mark.asyncio
@@ -1388,11 +1410,13 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "name": "no-key-user",
-                "status": "online",
-                "client": "mcp",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "name": "no-key-user",
+                    "status": "online",
+                    "client": "mcp",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/nokey"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
@@ -1405,20 +1429,27 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "key": "peer0004",
-                "name": "peer-dave",
-                "type": "claude",
-                "status": "busy",
-                "client": "mcp",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0004",
+                    "name": "peer-dave",
+                    "type": "claude",
+                    "status": "busy",
+                    "client": "mcp",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/peer0004"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             assert "peer0004-mcp" in participant_list._items
-            assert participant_list._items["peer0004-mcp"].presence == PresenceState.OFFLINE
+            assert (
+                participant_list._items["peer0004-mcp"].presence
+                == PresenceState.OFFLINE
+            )
 
     @pytest.mark.asyncio
     async def test_handle_presence_updates_status_bar_count(self):
@@ -1430,13 +1461,15 @@ class TestRound12HandlePresence:
             status_bar = pilot.app.query_one("#status-bar", StatusBar)
             initial_count = status_bar.participant_count
 
-            payload = json.dumps({
-                "key": "peer0005",
-                "name": "peer-eve",
-                "type": "human",
-                "status": "online",
-                "client": "web",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0005",
+                    "name": "peer-eve",
+                    "type": "human",
+                    "status": "online",
+                    "client": "web",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/peer0005"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
@@ -1459,11 +1492,13 @@ class TestRound13HandleTyping:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "key": "peer0001",
-                "name": "alice",
-                "typing": True,
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0001",
+                    "name": "alice",
+                    "typing": True,
+                }
+            ).encode()
             topic = "claude-comms/conv/general/typing/peer0001"
             await pilot.app._handle_typing(topic, payload)
             await pilot.pause()
@@ -1482,11 +1517,13 @@ class TestRound13HandleTyping:
             status_bar.typing_who = "alice"
             await pilot.pause()
 
-            payload = json.dumps({
-                "key": "peer0001",
-                "name": "alice",
-                "typing": False,
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0001",
+                    "name": "alice",
+                    "typing": False,
+                }
+            ).encode()
             topic = "claude-comms/conv/general/typing/peer0001"
             await pilot.app._handle_typing(topic, payload)
             await pilot.pause()
@@ -1502,11 +1539,13 @@ class TestRound13HandleTyping:
 
             status_bar = pilot.app.query_one("#status-bar", StatusBar)
 
-            payload = json.dumps({
-                "key": "tkey0001",
-                "name": "test-user",
-                "typing": True,
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "tkey0001",
+                    "name": "test-user",
+                    "typing": True,
+                }
+            ).encode()
             topic = "claude-comms/conv/general/typing/tkey0001"
             await pilot.app._handle_typing(topic, payload)
             await pilot.pause()
@@ -1532,10 +1571,12 @@ class TestRound13HandleTyping:
 
             status_bar = pilot.app.query_one("#status-bar", StatusBar)
 
-            payload = json.dumps({
-                "key": "peer0001",
-                "typing": True,
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0001",
+                    "typing": True,
+                }
+            ).encode()
             topic = "claude-comms/conv/general/typing/peer0001"
             await pilot.app._handle_typing(topic, payload)
             await pilot.pause()
@@ -1625,17 +1666,21 @@ class TestRound14SwitchConvErrors:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            payload = json.dumps({
-                "key": "peer0006",
-                "name": "",
-                "type": "claude",
-                "status": "online",
-                "client": "mcp",
-            }).encode()
+            payload = json.dumps(
+                {
+                    "key": "peer0006",
+                    "name": "",
+                    "type": "claude",
+                    "status": "online",
+                    "client": "mcp",
+                }
+            ).encode()
             topic = "claude-comms/conv/general/presence/peer0006"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one("#participant-sidebar", ParticipantList)
+            participant_list = pilot.app.query_one(
+                "#participant-sidebar", ParticipantList
+            )
             item = participant_list._items["peer0006-mcp"]
             assert item.participant_name == "user-peer0006"
