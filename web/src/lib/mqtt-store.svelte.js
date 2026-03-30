@@ -875,7 +875,10 @@ export class MqttChatStore {
     const participantKey = msg.key + '-' + clientType;
 
     // Skip our own web presence messages — we manage our own status locally.
-    if (msg.key === this.userProfile.key && clientType === 'web') return;
+    // Skip our own web presence — we manage it via self-add.
+    // Allow same key with different client type (e.g., Phil on TUI).
+    // Also skip 'unknown' client from our key (stale retained messages).
+    if (msg.key === this.userProfile.key && (clientType === 'web' || clientType === 'unknown')) return;
 
     // Skip stale offline presence (retained LWT from old sessions)
     // Only add offline participants if they were seen recently (5 min)
@@ -927,6 +930,8 @@ export class MqttChatStore {
   #handleParticipantRegistry(msg) {
     if (msg.key) {
       const clientType = msg.client || 'unknown';
+      // Skip own web/unknown entries — managed by self-add
+      if (msg.key === this.userProfile.key && (clientType === 'web' || clientType === 'unknown')) return;
       const participantKey = msg.key + '-' + clientType;
       this.participants[participantKey] = {
         ...this.participants[participantKey],
