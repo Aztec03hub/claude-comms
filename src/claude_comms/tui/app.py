@@ -376,6 +376,9 @@ class ClaudeCommsApp(App):
         # Only act on the message input widget
         if event.input.id != "message-input":
             return
+        # Don't publish typing when input is cleared (e.g. after send)
+        if not event.value:
+            return
         now = _time.monotonic()
         if now - self._last_typing_publish >= self._TYPING_DEBOUNCE_SECS:
             self._last_typing_publish = now

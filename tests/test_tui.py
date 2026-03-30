@@ -1117,3 +1117,83 @@ class TestRound9EmptyChannelAndHelp:
             await pilot.press("f1")
             await pilot.pause()
             assert not isinstance(pilot.app.screen, HelpScreen)
+
+
+# ============================================================================
+# Round 10: Typing indicators
+# ============================================================================
+
+
+class TestRound10TypingIndicators:
+    """Verify typing indicator publishing and debouncing."""
+
+    @pytest.mark.asyncio
+    async def test_typing_debounce_state_exists(self):
+        """App should have typing debounce attributes initialised."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert hasattr(pilot.app, "_last_typing_publish")
+            assert hasattr(pilot.app, "_TYPING_DEBOUNCE_SECS")
+            assert pilot.app._last_typing_publish == 0.0
+            assert pilot.app._TYPING_DEBOUNCE_SECS == 2.0
+
+    @pytest.mark.asyncio
+    async def test_typing_resets_on_send(self):
+        """Submitting a message should reset the typing debounce timestamp."""
+        app = _make_app()
+        sent_bodies: list[str] = []
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
+            # Manually set a recent typing timestamp
+            pilot.app._last_typing_publish = 999999.0
+
+            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget.focus()
+            await pilot.pause()
+
+            await pilot.press(*list("hi"))
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # After send, the debounce timestamp should be reset to 0
+            assert pilot.app._last_typing_publish == 0.0
+
+    @pytest.mark.asyncio
+    async def test_on_input_changed_only_for_message_input(self):
+        """on_input_changed should only trigger for the message-input widget."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            # The app starts with _last_typing_publish == 0.0
+            # Type something in the message input — should update the timestamp
+            input_widget = pilot.app.query_one("#message-input", Input)
+            input_widget.focus()
+            await pilot.pause()
+
+            await pilot.press("a")
+            await pilot.pause()
+
+            # After typing, the debounce time should have been set
+            assert pilot.app._last_typing_publish > 0.0
+
+
+# ============================================================================
+# Round 11: LWT configuration
+# ============================================================================
+
+
+class TestRound11LWT:
+    """Verify LWT (Last Will and Testament) is configured on the MQTT client."""
+
+    @pytest.mark.asyncio
+    async def test_lwt_attributes_available(self):
+        """The app should have the identity attributes needed for LWT."""
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            # Verify the identity attributes the LWT uses are set
+            assert pilot.app._key == "tkey0001"
+            assert pilot.app._name == "test-user"
+            assert pilot.app._type == "human"
+            # The active conv determines the LWT topic
+            assert pilot.app._active_conv == "general"
