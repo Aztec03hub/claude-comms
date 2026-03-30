@@ -36,7 +36,7 @@ test.describe('Overnight: Members, Profile Card, Theme, Responsive', () => {
     });
 
     cdp = await page.context().newCDPSession(page);
-    await page.goto('http://localhost:6002/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('[data-testid="message-input"]')).toBeAttached({ timeout: 30000 });
   });
 

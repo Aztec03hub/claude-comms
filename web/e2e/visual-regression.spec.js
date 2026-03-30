@@ -36,7 +36,7 @@ test.describe('Visual Regression Screenshots', () => {
 
     cdp = await page.context().newCDPSession(page);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('http://localhost:6005/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('[data-testid="message-input"]')).toBeAttached({ timeout: 30000 });
     await delay(1000);
   });

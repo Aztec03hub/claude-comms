@@ -37,7 +37,7 @@ test.describe('Final Screenshots', () => {
 
     cdp = await page.context().newCDPSession(page);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('http://localhost:6001/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForSelector('[data-testid="message-input"]', { timeout: 30000 });
     await delay(1000);
   });

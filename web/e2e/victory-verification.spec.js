@@ -14,7 +14,7 @@ test.describe('Reactivity Fix Verification', () => {
     });
     const page = await context.newPage();
 
-    await page.goto('http://localhost:6001', { waitUntil: 'networkidle', timeout: 15000 });
+    await page.goto('/', { waitUntil: 'networkidle', timeout: 15000 });
 
     // Wait for the app layout to load
     await page.waitForSelector('[data-testid="message-input"]', { timeout: 10000 });
