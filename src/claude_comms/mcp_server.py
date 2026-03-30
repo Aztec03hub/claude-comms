@@ -154,9 +154,11 @@ async def _mqtt_subscriber(
                         parts = topic_str.split("/")
 
                         # Handle messages
-                        if len(parts) >= 4 and parts[2] == "messages":
+                        # Topic: claude-comms/conv/{channel}/messages
+                        # parts: ['claude-comms', 'conv', '{channel}', 'messages']
+                        if len(parts) >= 4 and parts[3] == "messages":
                             msg_id = data.get("id", "")
-                            conv_id = data.get("conv", "")
+                            conv_id = data.get("conv", "") or parts[2]
                             if not msg_id or not conv_id:
                                 continue
                             if deduplicator.is_duplicate(msg_id):
@@ -164,7 +166,9 @@ async def _mqtt_subscriber(
                             store.add(conv_id, data)
 
                         # Handle presence — auto-register participants
-                        elif (len(parts) >= 4 and parts[2] == "presence") or (
+                        # Topic: claude-comms/conv/{channel}/presence/{key}
+                        # parts: ['claude-comms', 'conv', '{channel}', 'presence', '{key}']
+                        elif (len(parts) >= 5 and parts[3] == "presence") or (
                             len(parts) >= 3 and parts[1] == "participants"
                         ):
                             key = data.get("key", "")
@@ -174,7 +178,7 @@ async def _mqtt_subscriber(
                             p_type = data.get("type", "claude")
                             if key and name and status == "online" and _registry:
                                 # Register in the MCP participant registry
-                                conv = parts[2] if parts[1] == "conv" else "general"
+                                conv = parts[2] if len(parts) > 2 and parts[1] == "conv" else "general"
                                 _registry.join(
                                     name, conv, key=key, participant_type=p_type
                                 )
