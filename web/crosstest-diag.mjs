@@ -12,35 +12,25 @@ async function run() {
   page.on('console', msg => logs.push(`[${msg.type()}] ${msg.text()}`));
 
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(6000);
 
-  // Wait much longer for retained message flood to clear
-  console.log('Waiting 15s for retained messages to clear...');
-  await page.waitForTimeout(15000);
-
-  // NOW signal ready (after retained flood is done)
+  // Signal
   writeFileSync(join(__dirname, '..', '.crosstest-ready'), 'ready');
-  console.log('Signaled ready. Waiting for MCP message...');
+  console.log('Ready. Waiting for MCP...');
 
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(1000);
     const cnt = await page.locator('.msg-row').count();
-    if (i % 5 === 0) {
-      const chatMsgs = logs.filter(l => l.includes('conv/general/messages'));
-      console.log(`[${i+1}s] msg-rows: ${cnt}, MQTT chat msgs: ${chatMsgs.length}`);
-    }
-    if (cnt > 0) {
-      console.log(`Messages appeared at ${i+1}s!`);
-      break;
-    }
+    const chatLogs = logs.filter(l => l.includes('/messages'));
+    if (i % 3 === 0) console.log(`[${i+1}s] rows=${cnt} chatLogs=${chatLogs.length}`);
+    if (cnt > 0) { console.log('SUCCESS at ' + (i+1) + 's!'); break; }
   }
 
+  // Print ALL console logs (not just filtered)
+  console.log('\nAll console logs (' + logs.length + ' total):');
+  logs.slice(0, 50).forEach(l => console.log('  ' + l));
+
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
-
-  // Print chat message logs
-  const chatMsgs = logs.filter(l => l.includes('conv/general/messages'));
-  console.log('\nChat message logs:', chatMsgs.length);
-  chatMsgs.forEach(l => console.log('  ' + l));
-
   await browser.close();
 }
 run().catch(console.error);
