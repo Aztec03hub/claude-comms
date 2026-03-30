@@ -838,16 +838,16 @@ claude-comms/
 |   |   +-- styles.tcss              # Carbon Ember theme
 +-- web/                              # Svelte 5 web UI
 |   +-- src/
-|   +-- e2e/                         # Playwright E2E tests (19 spec files)
+|   +-- e2e/                         # Playwright E2E tests (20 spec files)
 |   +-- playwright.config.js
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
-+-- tests/                            # pytest test suite (360 tests)
++-- tests/                            # pytest test suite (504 tests)
 |   +-- conftest.py                   # Shared fixtures
-|   +-- test_*.py                     # 10 test modules (unit, integration, E2E)
+|   +-- test_*.py                     # 12 test modules (unit, integration, E2E)
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
-+-- .worklogs/                        # Agent work logs (36 logs from parallel agents)
++-- .worklogs/                        # Agent work logs (63 logs from parallel agents)
 ```
 
 ---

@@ -9,7 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Overnight: Comprehensive Test Expansion (661+ total tests)
+#### Overnight (2026-03-29 final): Critical Daemon Fix + Feature Completion
+
+- **MCP server + Web UI now actually start** -- The daemon's `claude-comms start` command previously only printed "MCP server ready" and "Web UI available" as placeholder messages without launching either server. Now the daemon starts the MCP server (uvicorn + FastMCP on `:9920`) and the web UI static file server (Starlette on `:9921`) as async tasks alongside the broker. Graceful shutdown added for both servers. **(Placeholder audit #1 and #2 -- CRITICAL fix)**
+- **UserProfileView component** (`web/src/components/UserProfileView.svelte`) -- Slide-out panel for viewing other participants' info (avatar, name, handle, role badge, type, key, status). "View Profile" on someone's ProfileCard now shows their profile instead of opening your own Settings. Own profile still opens SettingsPanel. Added to Escape priority chain.
+- **7 user story E2E tests** (`web/e2e/user-stories.spec.js`) -- End-to-end flows: new user first experience, team discussion with threads, channel management, message reactions/interactions, search/navigation, customization/settings, mobile user at 480px viewport. All 7 passing with 26 screenshots.
+- **Placeholder audit completed** -- 25 items identified across Python backend and Svelte frontend; high-priority items (#1 MCP server, #2 web UI, #4 forward, #6 search filters, #7 sidebar search, #8 settings name persist) now resolved
+- **Sidebar channel search** -- Sidebar search input now filters starred and unstarred channels by case-insensitive name match using `$derived` reactive state **(Placeholder audit #7)**
+- **Search panel filter tabs wired** -- All/Messages/Files/Code/Links tabs now actively filter results: URL regex for links, triple-backtick detection for code, attachment markers for files. Clicking a tab re-runs the search immediately **(Placeholder audit #6)**
+- **ForwardPicker component** (`web/src/components/ForwardPicker.svelte`) -- Modal overlay listing all channels except current; forwards via `store.forwardMessage()` with confirmation toast. Replaces the "Forwarding coming soon" clipboard stub **(Placeholder audit #4)**
+- **Settings name persistence** -- Display name changes in SettingsPanel now persist to localStorage, surviving page reloads **(Placeholder audit #8)**
+- **Component polish** -- DateSeparator (gradient lines, ember glow, hover effect), ReadReceipt (animated staggered check marks, hover tooltip with reader names, theme support), LinkPreview (favicon via Google S2, image thumbnail, hover elevation, proper `<a>` element)
+- **Store improvements** -- JSDoc on all public methods, `messageCount` derived state, `getChannelById()` and `getParticipantByKey()` helpers, improved MQTT error messages (ECONNREFUSED shows broker URL, WebSocket-specific errors, offline/reconnect messages)
+- **Utils improvements** -- `formatRelativeTime()` for human-readable timestamps, `sanitizeHtml()` for safe rendering, `truncateText()` with word-boundary awareness, improved `parseMentions()` edge case handling
+- **Notification sound toggle** -- Web Audio API beep (880Hz sine, 300ms decay) gated by `soundEnabled` state, `toggleSound()` export, click-to-focus on notification click, channel name prefix in notification body
+- **Profile card buttons functional** -- "Message" button pre-fills `@name` in input; "View Profile" opens UserProfileView for other users or SettingsPanel for self
+
+### Fixed
+
+#### Overnight (2026-03-29 final)
+
+- **View Profile showed own settings** -- Clicking "View Profile" on any user's ProfileCard always opened the SettingsPanel. Now correctly shows the target user's profile via UserProfileView.
+- **ForwardPicker Svelte 5 syntax** -- Used Svelte 4 event modifier syntax (`onmousedown|stopPropagation`) which broke the build. Fixed to Svelte 5 pattern.
+
+#### Overnight: Comprehensive Test Expansion (668+ total tests, up from 661+)
 
 - **504 Python tests** (up from 360) -- 113 new MQTT integration tests across 5 rounds: broker lifecycle (31), MCP tools logic (43), log exporter (24), CLI commands (19), gap coverage for error handling and edge cases (27)
 - **19 new CLI tests** (`tests/test_cli.py`) -- init config creation, name options, key generation, force overwrite, status commands, env var overrides, deep merge
@@ -376,7 +399,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 ### Project Stats
 
 - **64 source files** across Python, Svelte, JS, CSS, and shell scripts
-- **661+ total tests**: 504 Python (12 test modules, ~0.5s) + 43 TUI (Textual run_test) + 114+ Playwright browser E2E (19 spec files) with **120+ test screenshots**
+- **668+ total tests**: 504 Python (12 test modules, ~0.5s) + 43 TUI (Textual run_test) + 121+ Playwright browser E2E (20 spec files) with **120+ test screenshots**
 - **10 parallel testing agents** deployed for comprehensive functional browser testing, finding and fixing **12 bugs**
 - **Zero JS runtime errors** confirmed across all interaction types
 - **27 Svelte components** (26 in `components/` + `App.svelte`) with **60+ `data-testid` attributes**
