@@ -348,8 +348,7 @@
   }
 
   .input-wrap:focus-within {
-    border-color: rgba(245,158,11,0.25);
-    box-shadow: 0 0 0 3px var(--border-glow), 0 0 24px rgba(245,158,11,0.04), 0 2px 8px rgba(0,0,0,0.15);
+    border-color: rgba(245,158,11,0.15);
   }
 
   .input-wrap textarea {
@@ -392,9 +391,9 @@
   }
 
   .btn-send {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-sm);
     border: none;
     background: linear-gradient(135deg, var(--ember-600), var(--ember-400));
     color: #0a0a0c;
