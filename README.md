@@ -722,7 +722,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **360 tests** across 10 test files (passing in ~0.5s):
+The test suite includes **406 tests** -- 360 Python tests across 10 test files (~0.5s) plus 46 Playwright browser E2E tests:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -736,6 +736,21 @@ The test suite includes **360 tests** across 10 test files (passing in ~0.5s):
 | `test_notification_hook.py` | 45 | Script generation, settings manipulation, install/uninstall |
 | `test_integration.py` | 45 | Cross-module integration: config flow, message roundtrip, mention pipeline, log exporter, dedup, registry, hook installer, MCP tools pipeline |
 | `test_e2e.py` | 22 | End-to-end flows: two-participant chat, targeted messaging, conversation lifecycle, presence, name changes, JSONL replay, notifications, full session |
+
+### Playwright E2E Tests
+
+The web UI has 46 browser-level E2E tests across 8 suites, running against headless Chromium:
+
+```bash
+cd web
+npx playwright test          # Headless (CI)
+npx playwright test --ui     # Interactive UI mode
+npx playwright test --headed # Visible browser
+```
+
+Tests cover app loading, sidebar interactions, chat messaging, panel open/close, modal behavior, member list, context menus, and JS console error monitoring. The MQTT broker does not need to be running -- tests focus on UI interaction via local echo.
+
+**For contributors:** All interactive Svelte components use `data-testid` attributes for reliable test selectors. When adding new components, follow the existing convention (e.g., `data-testid="my-component"`, `data-testid="my-button"`) so Playwright tests remain stable across CSS refactors.
 
 ### Build the Web UI
 
@@ -776,6 +791,8 @@ claude-comms/
 |   |   +-- styles.tcss              # Carbon Ember theme
 +-- web/                              # Svelte 5 web UI
 |   +-- src/
+|   +-- e2e/                         # Playwright E2E tests (46 tests)
+|   +-- playwright.config.js
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
@@ -796,7 +813,7 @@ claude-comms/
 4. Ensure all tests pass (`pytest`)
 5. Submit a pull request
 
-Please follow the existing code style: type hints everywhere, Pydantic models for data, async where I/O is involved, and comprehensive docstrings.
+Please follow the existing code style: type hints everywhere, Pydantic models for data, async where I/O is involved, and comprehensive docstrings. For Svelte components, add `data-testid` attributes to all interactive elements.
 
 ---
 

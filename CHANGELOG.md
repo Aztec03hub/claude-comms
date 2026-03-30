@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playwright test suite** (`web/e2e/`) -- 46 browser E2E tests across 8 test files covering: app loading (5), sidebar interactions (8), chat area (6), panel open/close (6), modal interactions (7), member list (6), context menu (5), and JS console error monitoring (3). Runs against Chromium headless with auto-started Vite dev server.
 - **`playwright.config.js`** -- Headless Chromium, screenshots on failure, video on failure, 1 retry, 30s timeout, built-in web server config
 - **npm test scripts** -- `test` (headless), `test:ui` (Playwright UI mode), `test:headed` (visible browser)
-- **`data-testid` attributes** -- Added to all interactive Svelte components for reliable test selectors
+- **`data-testid` attributes** -- 60+ attributes added across all 18 interactive Svelte components for reliable Playwright test selectors (replaces fragile CSS class selectors). All 8 E2E test files updated to use `[data-testid="..."]` selectors.
+
+#### Defensive Programming (Python Backend)
+
+- **6 Python modules hardened** -- `participant.py` and `message.py` validators accept `None` safely; `log_exporter.py` handles missing/malformed fields gracefully; `hook_installer.py` validates inputs and wraps file I/O in try/except; `broker.py` validates `generate_client_id()` inputs; `mcp_server.py` replaces bare `assert` with proper `RuntimeError` (asserts are stripped with `python -O`)
 
 ### Fixed
 
@@ -221,7 +225,7 @@ Initial release. Built across three development batches by 8 parallel Claude Cod
 ### Project Stats
 
 - **64 source files** across Python, Svelte, JS, CSS, and shell scripts
-- **360 tests** across 10 test modules (unit, integration, E2E)
+- **406 tests** -- 360 Python (10 test modules) + 46 Playwright browser E2E (8 suites)
 - **27 Svelte components** (26 in `components/` + `App.svelte`)
 - **18 Python source files** (14 modules + TUI subpackage)
 - **4 deployment targets**: pip install, Docker, docker-compose, VPS
