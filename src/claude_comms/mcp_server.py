@@ -176,7 +176,9 @@ async def _mqtt_subscriber(
                             status = data.get("status", "offline")
                             client_type = data.get("client", "unknown")
                             p_type = data.get("type", "claude")
-                            if key and name and status == "online" and _registry:
+                            # Only register participants that declare a known client type.
+                            # Skip 'unknown' to avoid stale retained presence from old sessions.
+                            if key and name and status == "online" and client_type != "unknown" and _registry:
                                 # Register in the MCP participant registry
                                 conv = parts[2] if len(parts) > 2 and parts[1] == "conv" else "general"
                                 _registry.join(
