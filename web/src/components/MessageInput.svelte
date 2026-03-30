@@ -1,3 +1,11 @@
+<!--
+  @component MessageInput
+  @description The main message composition area with a text input, formatting toolbar (bold/italic/code helpers), code snippet insertion, file attachment button, emoji picker trigger, @mention autocomplete, typing indicator display, character counter (warns at 9000, max 10000), and send button.
+  @prop {object} store - The ChatStore instance for sending messages, typing notifications, and participant data.
+  @prop {string} channelName - The current channel name shown in the input placeholder.
+  @prop {Array} typingUsers - Array of user objects currently typing in this channel.
+  @prop {Function} onOpenEmoji - Callback invoked to open the emoji picker.
+-->
 <script>
   import MentionDropdown from './MentionDropdown.svelte';
   import { Type, Code, Paperclip, Smile, SendHorizontal } from 'lucide-svelte';

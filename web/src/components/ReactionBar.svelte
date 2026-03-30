@@ -1,3 +1,10 @@
+<!--
+  @component ReactionBar
+  @description Displays a row of emoji reaction pills below a message, each showing the emoji and its count. Active reactions (from the current user) are highlighted. Includes a "+" button to add new reactions.
+  @prop {Array} reactions - Array of reaction objects with emoji, count, and active fields.
+  @prop {Function} onAddReaction - Callback invoked to open the emoji picker for adding a new reaction.
+  @prop {Function} onToggleReaction - Callback invoked with the emoji string to toggle a reaction.
+-->
 <script>
   let { reactions = [], onAddReaction, onToggleReaction } = $props();
 </script>

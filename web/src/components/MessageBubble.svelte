@@ -1,3 +1,16 @@
+<!--
+  @component MessageBubble
+  @description Renders a single chat message as a styled bubble with avatar, sender name, timestamp, inline mentions, link detection with previews, reactions bar, thread indicator, read receipts, and hover action buttons. Supports consecutive message grouping.
+  @prop {object} message - The message object with id, sender, body, ts, reactions, thread_count, and read_by fields.
+  @prop {boolean} consecutive - Whether this follows a message from the same sender (hides avatar/name).
+  @prop {object} currentUser - The current user's profile for identifying own messages.
+  @prop {object} participants - Map of participant keys to participant objects.
+  @prop {Function} onOpenThread - Callback invoked with a message to open its thread.
+  @prop {Function} onContextMenu - Callback invoked with { x, y, message } for the context menu.
+  @prop {Function} onShowProfile - Callback invoked with a participant to show their profile card.
+  @prop {Function} onReact - Callback invoked when adding a reaction to a message.
+  @prop {Function} onMore - Callback for the "more actions" button.
+-->
 <script>
   import Avatar from './Avatar.svelte';
   import MessageActions from './MessageActions.svelte';

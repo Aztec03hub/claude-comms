@@ -1,3 +1,11 @@
+<!--
+  @component MessageActions
+  @description Floating action toolbar that appears on message hover, providing quick-access buttons for reply, react, and more actions. Positions itself above the message row.
+  @prop {object} message - The message object this toolbar acts on.
+  @prop {Function} onReply - Callback invoked to open a thread reply for this message.
+  @prop {Function} onReact - Callback invoked to open the emoji reaction picker.
+  @prop {Function} onMore - Callback invoked to open the full context menu.
+-->
 <script>
   import { Reply, Smile, Ellipsis } from 'lucide-svelte';
 

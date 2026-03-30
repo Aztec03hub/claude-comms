@@ -1,3 +1,12 @@
+<!--
+  @component NotificationToast
+  @description Fixed-position toast notification that slides in from the top-right, showing a sender avatar, name, channel, and message preview. Auto-dismisses via a progress bar animation and can be manually closed.
+  @prop {string} id - Unique identifier for this toast notification.
+  @prop {object} sender - Sender object with name and key fields.
+  @prop {string} channel - The channel name where the message was sent.
+  @prop {string} text - The message body text to preview.
+  @prop {Function} onDismiss - Callback invoked when the toast is dismissed.
+-->
 <script>
   import { getParticipantColor, getInitials } from '../lib/utils.js';
 

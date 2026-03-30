@@ -1,3 +1,11 @@
+<!--
+  @component FileAttachment
+  @description Renders a downloadable file card within a message bubble, with a file-type icon, name, metadata, and download button. Triggers browser download on click.
+  @prop {string} name - The file name to display and use for download (default: '').
+  @prop {string} type - File type identifier for icon styling: 'pdf', 'doc', 'image', etc. (default: 'file').
+  @prop {string} size - Human-readable file size string, e.g. '2.4 MB' (default: '').
+  @prop {string} url - Download URL or data URI for the file (default: '').
+-->
 /**
  * @component FileAttachment
  *

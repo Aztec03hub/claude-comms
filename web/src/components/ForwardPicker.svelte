@@ -1,3 +1,11 @@
+<!--
+  @component ForwardPicker
+  @description Overlay dialog that lets the user forward a message to another channel. Displays a filterable list of available channels (excluding the current one) with their topics.
+  @prop {Array} channels - Array of channel objects with id and optional topic fields.
+  @prop {string} currentChannel - The ID of the current channel (excluded from the list).
+  @prop {Function} onSelect - Callback invoked with the selected channel ID.
+  @prop {Function} onClose - Callback invoked when the picker is dismissed.
+-->
 <script>
   import { X, Forward } from 'lucide-svelte';
 

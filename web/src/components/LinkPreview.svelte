@@ -1,3 +1,12 @@
+<!--
+  @component LinkPreview
+  @description Renders a rich link preview card with a left accent border, favicon, domain label, title, optional description, and optional thumbnail image. Opens the link in a new tab on click.
+  @prop {string} domain - The link's domain name, used for the favicon and label (default: '').
+  @prop {string} title - The link's title text (default: '').
+  @prop {string} description - Optional description text for the link (default: '').
+  @prop {string} url - The full URL to navigate to on click (default: '').
+  @prop {string} image - Optional thumbnail image URL for the preview (default: '').
+-->
 <script>
   import { ExternalLink } from 'lucide-svelte';
 

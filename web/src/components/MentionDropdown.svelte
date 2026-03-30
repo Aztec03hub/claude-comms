@@ -1,3 +1,11 @@
+<!--
+  @component MentionDropdown
+  @description Autocomplete dropdown that appears above the message input when typing @mentions. Filters participants by query string, supports keyboard navigation via bits-ui Combobox, and inserts the selected name into the input.
+  @prop {string} query - The current @mention search string (text after '@').
+  @prop {Array} participants - Array of participant objects with name, key, and type fields.
+  @prop {Function} onSelect - Callback invoked with the selected participant's name.
+  @prop {Function} onClose - Callback invoked when the dropdown is dismissed.
+-->
 <script>
   import { Combobox } from 'bits-ui';
   import { getInitials, getParticipantColor } from '../lib/utils.js';

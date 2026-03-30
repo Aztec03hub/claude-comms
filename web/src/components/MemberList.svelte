@@ -1,3 +1,11 @@
+<!--
+  @component MemberList
+  @description Right sidebar panel displaying online and offline channel members with avatars, role badges (Admin/Agent), typing indicators, and a search filter. Clicking a member opens their profile card.
+  @prop {Array} online - Array of online member objects with name, key, type, and client fields.
+  @prop {Array} offline - Array of offline member objects.
+  @prop {object} typingUsers - Map of participant keys to typing state objects ({ typing: boolean }).
+  @prop {Function} onShowProfile - Callback invoked with a member object to display their profile.
+-->
 <script>
   import { Search } from 'lucide-svelte';
   import { getInitials, getParticipantColor } from '../lib/utils.js';

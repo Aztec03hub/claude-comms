@@ -1,3 +1,11 @@
+<!--
+  @component ProfileCard
+  @description Compact popup card showing a participant's avatar, name, handle, and role badge. Provides action buttons for sending a direct message or viewing the full profile. Dismisses on backdrop click or Escape.
+  @prop {object} participant - Participant object with name, key, and type fields.
+  @prop {Function} onClose - Callback invoked to dismiss the profile card.
+  @prop {Function} onMessage - Optional callback invoked with the participant to start a direct message.
+  @prop {Function} onViewProfile - Optional callback invoked with the participant to open the full profile view.
+-->
 <script>
   import { Star } from 'lucide-svelte';
   import { getParticipantColor, getInitials } from '../lib/utils.js';

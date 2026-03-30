@@ -1,3 +1,9 @@
+<!--
+  @component PinnedPanel
+  @description Floating panel that displays a scrollable list of pinned messages for the current channel, each showing sender avatar, name, timestamp, message preview, and pin attribution.
+  @prop {Array} messages - Array of pinned message objects with id, sender, body, and ts fields.
+  @prop {Function} onClose - Callback invoked to close the pinned messages panel.
+-->
 <script>
   import { Pin, X } from 'lucide-svelte';
   import { formatTime, getParticipantColor, getInitials } from '../lib/utils.js';
