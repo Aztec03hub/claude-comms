@@ -1,4 +1,6 @@
 <script>
+  import { onMount } from 'svelte';
+
   let { onSelect, onClose } = $props();
 
   let searchQuery = $state('');
@@ -35,8 +37,6 @@
     { emoji: '🙌', name: 'Raised Hands', code: ':raised_hands:' },
     { emoji: '👌', name: 'OK Hand', code: ':ok_hand:' },
   ];
-
-  import { onMount } from 'svelte';
 
   function selectEmoji(emojiData) {
     onSelect(emojiData);
