@@ -8,7 +8,7 @@ test('debug: send message and check reactivity', async ({ page }) => {
     }
   });
 
-  await page.goto('http://localhost:6001');
+  await page.goto('http://localhost:6002');
 
   // Wait for the app to load
   await page.waitForSelector('[data-testid="chat-view"]', { timeout: 10000 });
@@ -23,8 +23,8 @@ test('debug: send message and check reactivity', async ({ page }) => {
   await input.fill('Hello reactivity test');
   await input.press('Enter');
 
-  // Wait a moment for reactivity
-  await page.waitForTimeout(1000);
+  // Wait for reactivity + polling interval
+  await page.waitForTimeout(3000);
 
   // Check if empty state is still showing
   const stillEmpty = await page.locator('.empty-state').isVisible().catch(() => false);

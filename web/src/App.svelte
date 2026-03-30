@@ -22,6 +22,15 @@
   import { Users, Search, Pin, Settings, Menu } from 'lucide-svelte';
 
   const store = new MqttChatStore();
+  // Expose store globally for debugging
+  if (typeof window !== 'undefined') window.__store = store;
+
+  // Reactive wrappers — reading $derived from a class instance in template
+  // expressions doesn't always trigger Svelte 5 re-renders when the underlying
+  // $state changes asynchronously (e.g. from MQTT callbacks).  Wrapping in a
+  // local $derived forces the compiler to set up a proper reactive subscription.
+  let visibleMessages = $derived(store.activeMessages);
+  let visiblePinnedMessages = $derived(store.activePinnedMessages);
 
   let theme = $state('dark');
 
@@ -113,6 +122,7 @@
   // Notify on new messages (when not focused)
   $effect(() => {
     const msgs = store.messages;
+    console.log('[DEBUG App.svelte] notification effect, msgs.length:', msgs.length);
     if (msgs.length === 0) return;
     const last = msgs[msgs.length - 1];
     if (last.sender.key !== store.userProfile.key) {
@@ -267,13 +277,13 @@
 
     {#if showPinnedPanel}
       <PinnedPanel
-        messages={store.activePinnedMessages}
+        messages={visiblePinnedMessages}
         onClose={() => showPinnedPanel = false}
       />
     {/if}
 
     <ChatView
-      messages={store.activeMessages}
+      messages={visibleMessages}
       currentUser={store.userProfile}
       participants={store.participants}
       onOpenThread={handleOpenThread}

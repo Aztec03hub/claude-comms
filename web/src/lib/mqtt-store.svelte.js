@@ -164,58 +164,69 @@ export class MqttChatStore {
     }
   }
 
-  // ── Derived State (getters) ──
-  // Using getters instead of $derived to guarantee re-evaluation when
-  // $state is mutated from async MQTT callbacks (Bug #4 workaround).
-  // Getters are re-invoked on every access within a reactive context,
-  // and Svelte 5 tracks the $state reads inside them correctly.
+  // ── Derived State ──
+  // $derived.by() with explicit dependency reads to ensure Svelte 5
+  // tracks mutations from async MQTT callbacks (Bug #4 fix).
+  activeMessages = $derived.by(() => {
+    // Read .length to ensure proxy dependency is registered
+    const _len = this.messages.length;
+    const _ch = this.activeChannel;
+    return this.messages.filter(m => m.channel === _ch);
+  });
 
-  get activeMessages() {
-    return this.messages.filter(m => m.channel === this.activeChannel);
-  }
+  activeChannelMeta = $derived.by(() => {
+    const _len = this.channels.length;
+    const _ch = this.activeChannel;
+    return this.channels.find(c => c.id === _ch);
+  });
 
-  get activeChannelMeta() {
-    return this.channels.find(c => c.id === this.activeChannel);
-  }
-
-  get starredChannels() {
+  starredChannels = $derived.by(() => {
+    const _len = this.channels.length;
     return this.channels.filter(c => c.starred);
-  }
+  });
 
-  get onlineParticipants() {
-    return Object.values(this.participants).filter(p => p.status === 'online');
-  }
+  onlineParticipants = $derived.by(() => {
+    const _p = this.participants;
+    return Object.values(_p).filter(p => p.status === 'online');
+  });
 
-  get offlineParticipants() {
-    return Object.values(this.participants).filter(p => p.status !== 'online');
-  }
+  offlineParticipants = $derived.by(() => {
+    const _p = this.participants;
+    return Object.values(_p).filter(p => p.status !== 'online');
+  });
 
-  get activeTypingUsers() {
-    return Object.entries(this.typingUsers)
+  activeTypingUsers = $derived.by(() => {
+    const _t = this.typingUsers;
+    const _ch = this.activeChannel;
+    const _key = this.userProfile.key;
+    return Object.entries(_t)
       .filter(([key, info]) => {
-        return info.channel === this.activeChannel
+        return info.channel === _ch
           && info.typing
-          && key !== this.userProfile.key
+          && key !== _key
           && (Date.now() - new Date(info.ts).getTime()) < TYPING_TTL_MS;
       })
       .map(([key, info]) => ({
         key,
         name: this.participants[key]?.name || key
       }));
-  }
+  });
 
-  get activePinnedMessages() {
-    return this.pinnedMessages.filter(m => m.channel === this.activeChannel);
-  }
+  activePinnedMessages = $derived.by(() => {
+    const _len = this.pinnedMessages.length;
+    const _ch = this.activeChannel;
+    return this.pinnedMessages.filter(m => m.channel === _ch);
+  });
 
-  get onlineCount() {
-    return Object.values(this.participants).filter(p => p.status === 'online').length;
-  }
+  onlineCount = $derived.by(() => {
+    const _p = this.participants;
+    return Object.values(_p).filter(p => p.status === 'online').length;
+  });
 
   /** Total number of messages across all channels. */
-  get messageCount() {
+  messageCount = $derived.by(() => {
     return this.messages.length;
-  }
+  });
 
   /**
    * Look up a channel by its ID.
