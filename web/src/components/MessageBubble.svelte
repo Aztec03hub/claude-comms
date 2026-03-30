@@ -82,6 +82,7 @@
   class:has-code={hasCode}
   oncontextmenu={handleContext}
   data-testid="message-{message.id}"
+  data-message-id={message.id}
   role="article"
   aria-label="Message from {message.sender.name}"
 >
@@ -300,6 +301,20 @@
   .mention:hover {
     background: rgba(245,158,11,0.22);
     box-shadow: 0 0 12px rgba(245,158,11,0.12);
+  }
+
+  .inline-link {
+    color: var(--ember-400);
+    text-decoration: underline;
+    text-decoration-color: rgba(245,158,11,0.3);
+    text-underline-offset: 2px;
+    word-break: break-all;
+    transition: var(--transition-fast);
+  }
+
+  .inline-link:hover {
+    text-decoration-color: var(--ember-400);
+    filter: brightness(1.15);
   }
 
   .thread-indicator {

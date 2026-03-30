@@ -1,3 +1,33 @@
+/**
+ * @component FileAttachment
+ *
+ * Renders a downloadable file card within a message bubble.
+ *
+ * **Planned architecture for file sharing:**
+ *
+ * 1. **Upload path:** MessageInput will accept file drops/selections.
+ *    Files under a size threshold (e.g. 256 KB) are base64-encoded and
+ *    published inline in the MQTT message payload under an `attachments[]`
+ *    array. Larger files are uploaded to a companion HTTP endpoint
+ *    (`POST /api/files`) backed by local-disk or S3-compatible storage,
+ *    which returns a signed download URL.
+ *
+ * 2. **Message schema:** Each attachment object carries
+ *    `{ name, type, size, url, inline_data? }`. The `url` field is
+ *    either the HTTP download URL or a `data:` URI for inline files.
+ *
+ * 3. **Download path:** This component reads the attachment metadata and
+ *    triggers a browser download via an `<a>` element. For inline data
+ *    it creates a Blob URL; for HTTP URLs it fetches with the signed token.
+ *
+ * 4. **Retention & cleanup:** Files stored server-side honor the channel's
+ *    retention policy. A periodic cleanup job prunes expired uploads.
+ *    MQTT retained messages are re-published without expired attachment URLs.
+ *
+ * 5. **Security:** Uploads are validated for MIME type and scanned for size
+ *    limits. Signed URLs expire after a configurable TTL. Inline payloads
+ *    are sanitized before rendering.
+ */
 <script>
   import { File, Download } from 'lucide-svelte';
 
