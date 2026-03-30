@@ -1,7 +1,7 @@
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'fs';
 
-const BASE_URL = 'http://localhost:5177';
+const BASE_URL = 'http://localhost:5175';
 const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
 async function delay(ms) {
