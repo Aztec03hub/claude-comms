@@ -1,5 +1,5 @@
 /**
- * Diagnostic: use page.evaluate to dispatch a properly-constructed event
+ * Diagnostic: check if messages exist in store but DOM hasn't updated
  */
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'fs';
@@ -16,80 +16,53 @@ async function run() {
   const consoleLogs = [];
   page.on('console', msg => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
 
+  // Expose store on window before page loads
+  await page.addInitScript(() => {
+    // Monkey-patch to expose the store
+    window.__exposeStore = (store) => {
+      window.__store = store;
+      console.log('[DIAG] Store exposed on window.__store');
+    };
+  });
+
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
   await page.waitForTimeout(4000);
 
-  // Type text using native setter + input event (works with Svelte 5 bindings)
-  await page.evaluate(() => {
-    const input = document.querySelector('[data-testid="message-input"]');
-    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    nativeSetter.call(input, 'EVALTEST: Hello from evaluate');
-    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-  });
-  await page.waitForTimeout(200);
+  // We can't easily access the store from the outside unless we modify App.svelte.
+  // Let's temporarily add a window exposure.
 
-  // Check if Svelte 5 picked up the value
-  const val1 = await page.locator('[data-testid="message-input"]').inputValue();
-  console.log('After input event, value:', val1);
+  // Instead, let's add a console.log to the store's handleChatMessage to trace
+  // Let's modify the store file to add debug logging
 
-  // Now simulate Enter with a proper KeyboardEvent
-  await page.evaluate(() => {
-    const input = document.querySelector('[data-testid="message-input"]');
-    const event = new KeyboardEvent('keydown', {
-      key: 'Enter',
-      code: 'Enter',
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true,
-      composed: true
-    });
-    input.dispatchEvent(event);
-  });
-  await page.waitForTimeout(1000);
+  // Actually, let's check if messages are being received but the channel filter is wrong.
+  // The activeMessages derived filters: m.channel === this.activeChannel
+  // activeChannel is 'general'.
+  // But messages might have channel = undefined or something else.
 
-  const val2 = await page.locator('[data-testid="message-input"]').inputValue();
-  console.log('After Enter, value:', val2);
-  console.log('Input cleared:', val2 === '');
+  // Let's send a message via MCP and check the raw MQTT topic/payload
+  writeFileSync(join(__dirname, '..', '.crosstest-ready'), 'ready');
+  console.log('Signaled ready. Waiting for MCP message...');
 
-  const msgCount = await page.locator('.msg-row').count();
-  console.log('msg-row count:', msgCount);
-
-  // If still no message, try clicking send button with a real click
-  if (msgCount === 0) {
-    console.log('\nTrying send button click via evaluate...');
-
-    // Re-set the value since it was cleared
-    await page.evaluate(() => {
-      const input = document.querySelector('[data-testid="message-input"]');
-      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      nativeSetter.call(input, 'EVALTEST2: Click send');
-      input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-    });
-    await page.waitForTimeout(200);
-
-    // Click send button
-    await page.evaluate(() => {
-      const btn = document.querySelector('[data-testid="send-button"]');
-      btn.click();
-    });
+  for (let i = 0; i < 15; i++) {
     await page.waitForTimeout(1000);
-
-    const val3 = await page.locator('[data-testid="message-input"]').inputValue();
-    console.log('After button click, value:', val3);
-    console.log('msg-row count:', await page.locator('.msg-row').count());
+    // Check console for message receipt
+    const received = consoleLogs.filter(l => l.includes('conv/general/messages'));
+    if (received.length > 0 && i > 3) {
+      console.log(`[${i+1}s] Messages received via MQTT: ${received.length}`);
+      break;
+    }
   }
 
+  // Now check all console logs
+  const allLogs = consoleLogs.filter(l => l.includes('claude-comms'));
+  console.log('\nAll claude-comms logs:');
+  allLogs.slice(0, 20).forEach(l => console.log('  ' + l));
+
+  // Check DOM
+  console.log('\nmsg-row count:', await page.locator('.msg-row').count());
+  console.log('empty-state:', await page.locator('.empty-state').count());
+
   await page.screenshot({ path: join(MOCKUPS, 'crosstest-diag.png') });
-
-  // Check for MQTT message publish
-  const published = consoleLogs.filter(l => l.includes('conv/general/messages'));
-  console.log('\nMQTT messages published:', published.length);
-  published.forEach(l => console.log('  ' + l));
-
-  // Check errors
-  consoleLogs.filter(l => l.includes('[error]') && !l.includes('CORS') && !l.includes('9920')).forEach(l => console.log('ERR:', l));
-
   await browser.close();
 }
 

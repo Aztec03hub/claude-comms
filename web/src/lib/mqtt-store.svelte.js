@@ -661,6 +661,7 @@ export class MqttChatStore {
     };
 
     this.messages.push(message);
+    console.log('[claude-comms] handleChatMessage: pushed to messages, total:', this.messages.length, 'channel:', channel, 'activeChannel:', this.activeChannel, 'activeMessages:', this.activeMessages.length);
 
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
