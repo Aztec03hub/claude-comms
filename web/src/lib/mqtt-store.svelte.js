@@ -1,12 +1,15 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
 
-// Derive URLs from the current page hostname so CORS always matches.
-// If the user accesses via 127.0.0.1, API/WS calls go to 127.0.0.1.
-// If via localhost, they go to localhost. No more cross-origin mismatches.
+// Derive URLs from the current page hostname.
+// API calls use relative paths (/api/...) so they work through Vite proxy
+// in dev mode and directly in production (same origin).
+// WebSocket must be absolute since it's a different port.
 const _host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 const BROKER_URL = `ws://${_host}:9001/mqtt`;
-const MCP_API_URL = `http://${_host}:9920`;
+// In production (port 9921), API is on 9920. In dev (Vite proxy), /api/* is proxied.
+const _port = typeof window !== 'undefined' ? window.location.port : '9921';
+const MCP_API_URL = _port === '9921' ? `http://${_host}:9920` : '';
 const TOPIC_PREFIX = 'claude-comms';
 const TYPING_TTL_MS = 5000;
 const BASE_RECONNECT_MS = 3000;
