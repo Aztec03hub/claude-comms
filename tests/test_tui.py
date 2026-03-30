@@ -644,12 +644,14 @@ class TestRound5EdgeCases:
                 name="alice",
                 participant_type="claude",
                 presence=PresenceState.ONLINE,
+                client_type="mcp",
             )
             participant_list.set_participant(
                 key="bob00001",
                 name="bob",
                 participant_type="human",
                 presence=PresenceState.ONLINE,
+                client_type="web",
             )
             await pilot.pause()
 
@@ -679,12 +681,14 @@ class TestRound5EdgeCases:
                 name="alice",
                 participant_type="claude",
                 presence=PresenceState.ONLINE,
+                client_type="mcp",
             )
             participant_list.set_participant(
                 key="alex0001",
                 name="alex",
                 participant_type="human",
                 presence=PresenceState.ONLINE,
+                client_type="web",
             )
             await pilot.pause()
 
@@ -848,6 +852,7 @@ class TestRound5EdgeCases:
                 name="assistant",
                 participant_type="claude",
                 presence=PresenceState.ONLINE,
+                client_type="mcp",
             )
             await pilot.pause()
 
@@ -1263,19 +1268,21 @@ class TestRound12HandlePresence:
                     "type": "claude",
                     "status": "online",
                     "client": "mcp",
+                    "instanceId": "a1b2",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/peer0001"
+            topic = "claude-comms/presence/peer0001/mcp-a1b2"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
             participant_list = pilot.app.query_one(
                 "#participant-sidebar", ParticipantList
             )
-            assert "peer0001-mcp" in participant_list._items
-            item = participant_list._items["peer0001-mcp"]
+            assert "peer0001" in participant_list._items
+            item = participant_list._items["peer0001"]
             assert item.participant_name == "peer-alice"
             assert item.presence == PresenceState.ONLINE
+            assert "mcp-a1b2" in item.connections
 
     @pytest.mark.asyncio
     async def test_handle_presence_away_sets_away_state(self):
@@ -1291,23 +1298,24 @@ class TestRound12HandlePresence:
                     "type": "human",
                     "status": "away",
                     "client": "web",
+                    "instanceId": "c3d4",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/peer0002"
+            topic = "claude-comms/presence/peer0002/web-c3d4"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
             participant_list = pilot.app.query_one(
                 "#participant-sidebar", ParticipantList
             )
-            assert "peer0002-web" in participant_list._items
+            assert "peer0002" in participant_list._items
             assert (
-                participant_list._items["peer0002-web"].presence == PresenceState.AWAY
+                participant_list._items["peer0002"].presence == PresenceState.AWAY
             )
 
     @pytest.mark.asyncio
-    async def test_handle_presence_offline_removes_participant(self):
-        """An offline presence should remove the participant from the list."""
+    async def test_handle_presence_offline_removes_connection(self):
+        """An offline presence should remove the connection from the participant."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             import json
@@ -1315,18 +1323,20 @@ class TestRound12HandlePresence:
             participant_list = pilot.app.query_one(
                 "#participant-sidebar", ParticipantList
             )
-            # First add a participant
+            # First add a participant with a specific connection
             participant_list.set_participant(
-                key="peer0003-mcp",
+                key="peer0003",
                 name="peer-charlie",
                 participant_type="claude",
                 presence=PresenceState.ONLINE,
                 client_type="mcp",
+                connection_key="mcp-e5f6",
+                connection_info={"client": "mcp", "instanceId": "e5f6"},
             )
             await pilot.pause()
-            assert "peer0003-mcp" in participant_list._items
+            assert "peer0003" in participant_list._items
 
-            # Now send offline presence
+            # Now send offline presence for that connection
             payload = json.dumps(
                 {
                     "key": "peer0003",
@@ -1334,17 +1344,19 @@ class TestRound12HandlePresence:
                     "type": "claude",
                     "status": "offline",
                     "client": "mcp",
+                    "instanceId": "e5f6",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/peer0003"
+            topic = "claude-comms/presence/peer0003/mcp-e5f6"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            assert "peer0003-mcp" not in participant_list._items
+            # With no connections left, participant is removed
+            assert "peer0003" not in participant_list._items
 
     @pytest.mark.asyncio
-    async def test_handle_presence_skips_own_tui(self):
-        """Our own presence from the TUI client should be skipped."""
+    async def test_handle_presence_skips_own_tui_instance(self):
+        """Our own presence from our TUI instance should be skipped."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             import json
@@ -1354,6 +1366,7 @@ class TestRound12HandlePresence:
             )
             initial_count = len(participant_list._items)
 
+            # Use the app's own instance ID — should be skipped
             payload = json.dumps(
                 {
                     "key": "tkey0001",
@@ -1361,18 +1374,19 @@ class TestRound12HandlePresence:
                     "type": "human",
                     "status": "online",
                     "client": "tui",
+                    "instanceId": pilot.app._instance_id,
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/tkey0001"
+            topic = f"claude-comms/presence/tkey0001/tui-{pilot.app._instance_id}"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
-            # Should NOT add a duplicate entry for ourselves
+            # Should NOT add a duplicate — self-add already put us in
             assert len(participant_list._items) == initial_count
 
     @pytest.mark.asyncio
     async def test_handle_presence_allows_own_key_different_client(self):
-        """Our key from a different client type (e.g. web) should be added."""
+        """Our key from a different client type (e.g. web) should add a connection."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             import json
@@ -1384,23 +1398,27 @@ class TestRound12HandlePresence:
                     "type": "human",
                     "status": "online",
                     "client": "web",
+                    "instanceId": "ff01",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/tkey0001"
+            topic = "claude-comms/presence/tkey0001/web-ff01"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
             participant_list = pilot.app.query_one(
                 "#participant-sidebar", ParticipantList
             )
-            assert "tkey0001-web" in participant_list._items
+            # Should exist as the same user key (merged connections)
+            assert "tkey0001" in participant_list._items
+            item = participant_list._items["tkey0001"]
+            assert "web-ff01" in item.connections
 
     @pytest.mark.asyncio
     async def test_handle_presence_invalid_json_ignored(self):
         """Invalid JSON payloads should be silently ignored."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            topic = "claude-comms/conv/general/presence/bad"
+            topic = "claude-comms/presence/bad/web-0000"
             # Should not raise
             await pilot.app._handle_presence(topic, b"not-json{{{")
             await pilot.pause()
@@ -1419,7 +1437,7 @@ class TestRound12HandlePresence:
                     "client": "mcp",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/nokey"
+            topic = "claude-comms/presence/nokey/mcp-0000"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
             # Should not crash and should not add participant
@@ -1438,18 +1456,19 @@ class TestRound12HandlePresence:
                     "type": "claude",
                     "status": "busy",
                     "client": "mcp",
+                    "instanceId": "g7h8",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/peer0004"
+            topic = "claude-comms/presence/peer0004/mcp-g7h8"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
             participant_list = pilot.app.query_one(
                 "#participant-sidebar", ParticipantList
             )
-            assert "peer0004-mcp" in participant_list._items
+            assert "peer0004" in participant_list._items
             assert (
-                participant_list._items["peer0004-mcp"].presence
+                participant_list._items["peer0004"].presence
                 == PresenceState.OFFLINE
             )
 
@@ -1470,9 +1489,10 @@ class TestRound12HandlePresence:
                     "type": "human",
                     "status": "online",
                     "client": "web",
+                    "instanceId": "i9j0",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/peer0005"
+            topic = "claude-comms/presence/peer0005/web-i9j0"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
@@ -1675,14 +1695,15 @@ class TestRound14SwitchConvErrors:
                     "type": "claude",
                     "status": "online",
                     "client": "mcp",
+                    "instanceId": "k1l2",
                 }
             ).encode()
-            topic = "claude-comms/conv/general/presence/peer0006"
+            topic = "claude-comms/presence/peer0006/mcp-k1l2"
             await pilot.app._handle_presence(topic, payload)
             await pilot.pause()
 
             participant_list = pilot.app.query_one(
                 "#participant-sidebar", ParticipantList
             )
-            item = participant_list._items["peer0006-mcp"]
+            item = participant_list._items["peer0006"]
             assert item.participant_name == "user-peer0006"

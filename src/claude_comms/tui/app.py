@@ -6,8 +6,10 @@ with an MQTT async worker for real-time messaging.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import secrets
 import time as _time
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from claude_comms.broker import generate_client_id
 from claude_comms.config import load_config
 from claude_comms.mention import resolve_mentions
 from claude_comms.message import Message, validate_conv_id
+from claude_comms.participant import CONNECTION_TYPES
 from claude_comms.tui.channel_list import ChannelList, ChannelSelected
 from claude_comms.tui.chat_view import ChatView
 from claude_comms.tui.message_input import MessageInput, MessageSubmitted
@@ -68,6 +71,9 @@ class ClaudeCommsApp(App):
         self._name = identity.get("name", "") or f"user-{self._key}"
         self._type = identity.get("type", "human")
 
+        # Per-session instance ID (4 hex chars)
+        self._instance_id = secrets.token_hex(2)
+
         # MQTT connection info
         broker_cfg = self._config.get("broker", {})
         self._mqtt_host = broker_cfg.get("host", "127.0.0.1")
@@ -83,6 +89,9 @@ class ClaudeCommsApp(App):
 
         # MQTT client reference (set by worker)
         self._mqtt_client = None
+
+        # Heartbeat task reference (cancelled on disconnect)
+        self._heartbeat_task: asyncio.Task | None = None
 
         # Typing indicator debounce: publish at most once per 2 seconds
         self._last_typing_publish: float = 0.0
@@ -119,13 +128,16 @@ class ClaudeCommsApp(App):
         channel_list = self.query_one("#channel-sidebar", ChannelList)
         channel_list.active_channel = self._active_conv
 
-        # Add ourselves to the participant list
+        # Add ourselves to the participant list (user key, with tui connection)
+        conn_key = f"tui-{self._instance_id}"
         participant_list.set_participant(
-            key=f"{self._key}-tui",
+            key=self._key,
             name=self._name,
             participant_type=self._type,
             presence=PresenceState.ONLINE,
             client_type="tui",
+            connection_key=conn_key,
+            connection_info={"client": "tui", "instanceId": self._instance_id},
         )
 
         # Initialize status bar
@@ -141,6 +153,29 @@ class ClaudeCommsApp(App):
         # Start the MQTT listener worker
         self._start_mqtt_worker()
 
+    # -- Presence helpers -----------------------------------------------------
+
+    @property
+    def _presence_topic(self) -> str:
+        """Our per-instance presence topic."""
+        return f"claude-comms/presence/{self._key}/tui-{self._instance_id}"
+
+    def _make_presence_payload(self, status: str) -> str:
+        """Build a JSON presence payload."""
+        from claude_comms.message import now_iso
+
+        return json.dumps(
+            {
+                "key": self._key,
+                "name": self._name,
+                "type": self._type,
+                "status": status,
+                "client": "tui",
+                "instanceId": self._instance_id,
+                "ts": now_iso(),
+            }
+        )
+
     # -- MQTT Worker -----------------------------------------------------------
 
     @work(exclusive=True, thread=False, group="mqtt")
@@ -154,21 +189,10 @@ class ClaudeCommsApp(App):
 
         client_id = generate_client_id("tui", self._key)
 
-        # Build LWT (Last Will and Testament) so the broker auto-publishes
-        # an offline presence message if this client crashes/disconnects.
-
-        lwt_topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
-        lwt_payload = json.dumps(
-            {
-                "key": self._key,
-                "name": self._name,
-                "type": self._type,
-                "status": "offline",
-                "client": "tui",
-            }
-        )
+        # Build LWT on per-instance presence topic
+        lwt_payload = self._make_presence_payload("offline")
         lwt = aiomqtt.Will(
-            topic=lwt_topic,
+            topic=self._presence_topic,
             payload=lwt_payload,
             qos=1,
             retain=True,
@@ -188,11 +212,19 @@ class ClaudeCommsApp(App):
                 # Subscribe to all conversation messages
                 await client.subscribe("claude-comms/conv/+/messages", qos=1)
 
-                # Subscribe to presence and typing for active conversation
+                # Subscribe to new presence topic (global)
+                await client.subscribe("claude-comms/presence/+/+", qos=0)
+
+                # Subscribe to old presence topics (dual subscription for migration)
                 await self._subscribe_conv_topics(client, self._active_conv)
 
                 # Publish our own presence as online
                 await self._publish_presence(client, "online")
+
+                # Start heartbeat (60-second periodic re-publish)
+                self._heartbeat_task = asyncio.create_task(
+                    self._heartbeat_loop(client)
+                )
 
                 self._show_system(f"Connected as {self._name} ({self._key})")
                 try:
@@ -222,6 +254,9 @@ class ClaudeCommsApp(App):
                     except Exception as exc:
                         logger.debug("Error handling MQTT message: %s", exc)
 
+        except asyncio.CancelledError:
+            # Graceful shutdown — publish offline + clear retained
+            await self._graceful_disconnect()
         except Exception as exc:
             self._show_system(
                 f"MQTT connection failed: {exc}\n"
@@ -229,9 +264,44 @@ class ClaudeCommsApp(App):
                 f"  Ensure the broker is running: claude-comms broker start"
             )
             logger.exception("MQTT worker error")
+        finally:
+            if self._heartbeat_task and not self._heartbeat_task.done():
+                self._heartbeat_task.cancel()
+                self._heartbeat_task = None
+
+    async def _heartbeat_loop(self, client) -> None:
+        """Re-publish presence every 60 seconds to keep lastSeen fresh."""
+        try:
+            while True:
+                await asyncio.sleep(60)
+                await self._publish_presence(client, "online")
+        except asyncio.CancelledError:
+            pass
+
+    async def _graceful_disconnect(self) -> None:
+        """Publish offline status and clear retained presence on disconnect."""
+        if not self._mqtt_client:
+            return
+        try:
+            # Publish offline
+            await self._mqtt_client.publish(
+                self._presence_topic,
+                self._make_presence_payload("offline"),
+                qos=1,
+                retain=True,
+            )
+            # Clear retained message
+            await self._mqtt_client.publish(
+                self._presence_topic,
+                b"",
+                qos=1,
+                retain=True,
+            )
+        except Exception:
+            pass
 
     async def _subscribe_conv_topics(self, client, conv_id: str) -> None:
-        """Subscribe to presence and typing topics for a conversation."""
+        """Subscribe to presence and typing topics for a conversation (old format)."""
         await client.subscribe(f"claude-comms/conv/{conv_id}/presence/+", qos=0)
         await client.subscribe(f"claude-comms/conv/{conv_id}/typing/+", qos=0)
 
@@ -277,29 +347,20 @@ class ClaudeCommsApp(App):
             pass
 
     async def _publish_presence(self, client, status: str) -> None:
-        """Publish our presence status for the active conversation.
+        """Publish our presence to the new per-instance topic.
 
-        Also publishes to the global system/participants topic so the
-        Web UI's participant registry picks us up (Web subscribes to
-        both conv/+/presence/+ and system/participants/+).
+        Also publishes to the old conv-level and system topics for
+        backward compatibility during migration.
         """
-        from claude_comms.message import now_iso
+        payload = self._make_presence_payload(status)
+        # New per-instance topic
+        await client.publish(self._presence_topic, payload, qos=1, retain=True)
 
-        payload = json.dumps(
-            {
-                "key": self._key,
-                "name": self._name,
-                "type": self._type,
-                "status": status,
-                "client": "tui",
-                "ts": now_iso(),
-            }
-        )
-        topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
-        await client.publish(topic, payload, qos=1, retain=True)
+        # Old conv-level topic (backward compat)
+        old_topic = f"claude-comms/conv/{self._active_conv}/presence/{self._key}"
+        await client.publish(old_topic, payload, qos=1, retain=True)
 
-        # Also publish to system/participants so Web UI sees us in the
-        # global participant registry (mirrors Web UI's own behaviour).
+        # Old system/participants topic (backward compat)
         system_topic = f"claude-comms/system/participants/{self._key}-tui"
         await client.publish(system_topic, payload, qos=1, retain=True)
 
@@ -330,7 +391,12 @@ class ClaudeCommsApp(App):
             channel_list.increment_unread(msg.conv)
 
     async def _handle_presence(self, topic: str, payload: bytes) -> None:
-        """Process a presence update from MQTT."""
+        """Process a presence update from MQTT.
+
+        Handles both new-format topics (``claude-comms/presence/{key}/{client}-{instanceId}``)
+        and old-format topics (``claude-comms/conv/{channel}/presence/{key}``).
+        Aggregates by user key so each user has one entry in the participant list.
+        """
         try:
             data = json.loads(payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -341,44 +407,44 @@ class ClaudeCommsApp(App):
             return
 
         status = data.get("status", "offline")
-
-        # Skip offline presence — don't track disconnected strangers.
-        # This prevents phantom participants from stale retained LWT messages.
-        if status == "offline":
-            # If we already have this participant, remove them
-            client_type = data.get("client", "unknown")
-            participant_key = f"{key}-{client_type}"
-            participant_list = self.query_one("#participant-sidebar", ParticipantList)
-            participant_list.remove_participant(participant_key)
-            return
-
         name = data.get("name", "") or f"user-{key}"
         ptype = data.get("type", "claude")
-        client_type = data.get("client", "unknown")
+        client_type = data.get("client", "")
+        instance_id = data.get("instanceId", "")
 
-        # Skip our own presence from the same client type
-        if key == self._key and client_type == "tui":
+        # Validate client type against allowed list
+        if not client_type or client_type not in CONNECTION_TYPES:
             return
 
-        # Use key-client as the participant map key so the same person
-        # on different clients shows as separate entries.
-        participant_key = f"{key}-{client_type}"
+        # Build connection key
+        conn_key = f"{client_type}-{instance_id}" if instance_id else client_type
 
-        state_map = {
-            "online": PresenceState.ONLINE,
-            "away": PresenceState.AWAY,
-            "offline": PresenceState.OFFLINE,
-        }
-        state = state_map.get(status, PresenceState.OFFLINE)
+        # Skip our own TUI instance
+        if key == self._key and client_type == "tui" and instance_id == self._instance_id:
+            return
 
         participant_list = self.query_one("#participant-sidebar", ParticipantList)
-        participant_list.set_participant(
-            key=participant_key,
-            name=name,
-            participant_type=ptype,
-            presence=state,
-            client_type=client_type,
-        )
+
+        if status == "offline":
+            # Remove this specific connection
+            participant_list.remove_connection(key, conn_key)
+        else:
+            # online / away / unknown status — add or update
+            state_map = {
+                "online": PresenceState.ONLINE,
+                "away": PresenceState.AWAY,
+            }
+            state = state_map.get(status, PresenceState.OFFLINE)
+
+            participant_list.set_participant(
+                key=key,
+                name=name,
+                participant_type=ptype,
+                presence=state,
+                client_type=client_type,
+                connection_key=conn_key,
+                connection_info={"client": client_type, "instanceId": instance_id},
+            )
 
         # Update participant count in status bar
         try:
