@@ -147,10 +147,9 @@ export class MqttChatStore {
         const compositeKey = p.key + '-' + clientType;
         serverKeys.add(compositeKey);
 
-        // Don't create duplicate entries for ourselves from API.
-        // Match by key OR by name+type (handles stale registry entries
-        // with old random keys from before the identity API fix).
-        if (p.key === this.userProfile.key) continue;
+        // Skip our own web/unknown entries from API (self-add handles web).
+        // Allow same key with 'tui' or 'mcp' so other clients of the same user show.
+        if (p.key === this.userProfile.key && (clientType === 'web' || clientType === 'unknown')) continue;
         if (p.name === this.userProfile.name && p.type === this.userProfile.type && clientType === 'unknown') continue;
 
         // Merge: preserve existing status if already tracked, default online
