@@ -541,7 +541,12 @@ def start(
             # Block until signalled
             await shutdown_event.wait()
 
-            # Graceful shutdown of MCP and web servers
+            # Graceful shutdown — suppress uvicorn's noisy CancelledError logs
+            import logging as _logging
+
+            _logging.getLogger("uvicorn.error").setLevel(_logging.CRITICAL)
+            _logging.getLogger("uvicorn").setLevel(_logging.CRITICAL)
+
             mcp_uvi_server.should_exit = True
             mqtt_sub_task.cancel()
             await pub_client.__aexit__(None, None, None)
