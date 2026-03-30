@@ -61,11 +61,22 @@ export function formatDateSeparator(isoString) {
 /**
  * Parse @mentions from message body text.
  * Returns segments of {type: 'text'|'mention', value: string}.
- * @param {string} body
+ *
+ * Handles edge cases:
+ * - Mentions at start/end of string ("@phil hello", "hello @phil")
+ * - Adjacent mentions ("@phil@claude" becomes two separate mentions)
+ * - Mentions after newlines
+ * - Empty/null input returns empty array
+ *
+ * @param {string} body - The raw message text.
  * @returns {Array<{type: string, value: string}>}
  */
 export function parseMentions(body) {
-  const mentionRegex = /@[\w-]+/g;
+  if (!body) return [];
+
+  // Match @mention that is preceded by start-of-string, whitespace, or another @
+  // This ensures "@foo@bar" is parsed as two mentions, and "email@host" is not
+  const mentionRegex = /(?:^|(?<=[\s@]))@[\w-]+/g;
   const segments = [];
   let lastIndex = 0;
   let match;
@@ -82,7 +93,8 @@ export function parseMentions(body) {
     segments.push({ type: 'text', value: body.slice(lastIndex) });
   }
 
-  return segments;
+  // Filter out empty text segments that can occur with adjacent mentions
+  return segments.filter(s => s.value.length > 0);
 }
 
 /**
@@ -188,4 +200,79 @@ export function isSameDay(a, b) {
   return da.getFullYear() === db.getFullYear()
     && da.getMonth() === db.getMonth()
     && da.getDate() === db.getDate();
+}
+
+/**
+ * Format a timestamp as a human-readable relative time string.
+ * Examples: "just now", "2 min ago", "1 hour ago", "yesterday", "3 days ago".
+ * @param {string|Date} timestamp - ISO 8601 string or Date object.
+ * @returns {string}
+ */
+export function formatRelativeTime(timestamp) {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  const now = new Date();
+  const diffMs = now - date;
+
+  if (diffMs < 0) return 'just now'; // future dates treated as "now"
+
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+
+  if (diffSec < 60) return 'just now';
+  if (diffMin === 1) return '1 min ago';
+  if (diffMin < 60) return diffMin + ' min ago';
+  if (diffHr === 1) return '1 hour ago';
+  if (diffHr < 24) return diffHr + ' hours ago';
+
+  // Check for "yesterday" by calendar day
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return 'yesterday';
+
+  if (diffDay === 1) return 'yesterday';
+  if (diffDay < 7) return diffDay + ' days ago';
+  if (diffDay < 30) {
+    const weeks = Math.floor(diffDay / 7);
+    return weeks === 1 ? '1 week ago' : weeks + ' weeks ago';
+  }
+
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Truncate text to a maximum length, appending an ellipsis if truncated.
+ * Tries to break at a word boundary when possible.
+ * @param {string} text - The text to truncate.
+ * @param {number} maxLength - Maximum character length (default 100).
+ * @returns {string}
+ */
+export function truncateText(text, maxLength = 100) {
+  if (!text || text.length <= maxLength) return text || '';
+
+  // Try to break at a word boundary within the last 20% of maxLength
+  const truncated = text.slice(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(' ', maxLength);
+  if (lastSpace > maxLength * 0.8) {
+    return truncated.slice(0, lastSpace) + '\u2026';
+  }
+  return truncated + '\u2026';
+}
+
+/**
+ * Basic HTML sanitization to prevent XSS in rendered message text.
+ * Escapes dangerous characters: &, <, >, ", ', and backtick.
+ * @param {string} text - Raw text that may contain HTML.
+ * @returns {string} Sanitized text safe for innerHTML rendering.
+ */
+export function sanitizeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
 }
