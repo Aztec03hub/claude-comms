@@ -4,8 +4,8 @@ const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
 test.describe('Panel open/close', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForSelector('[data-testid="chat-header"]', { timeout: 25000 });
+    await page.goto('/');
+    await expect(page.locator('[data-testid="chat-header"]')).toBeVisible({ timeout: 25000 });
   });
 
   // 1. Search panel — open/close

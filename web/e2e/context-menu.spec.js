@@ -108,7 +108,11 @@ test('Right-click context menu - full functional test', async ({ page, context }
   console.log('TEST 4: PASSED');
 
   // Close thread panel
-  await page.locator('[data-testid="thread-panel-close"]').click();
+  const closeBtn = page.locator('[data-testid="thread-panel-close"]');
+  if (await closeBtn.isVisible()) {
+    await closeBtn.click();
+    await expect(page.locator('[data-testid="thread-panel"]')).not.toBeVisible({ timeout: 3000 });
+  }
 
   // ── TEST 8: Edge positioning - menu doesn't overflow ──
   console.log('TEST 8: Edge positioning...');

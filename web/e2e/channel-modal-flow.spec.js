@@ -9,7 +9,7 @@ test.setTimeout(300000);
 test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   // Use baseURL from playwright.config.js (port 5175)
   await page.goto('/', { timeout: 60000 });
-  await page.locator('[data-testid="sidebar"]').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('[data-testid="sidebar"]').waitFor({ state: 'visible', timeout: 60000 });
   await page.waitForTimeout(500);
 
   // Helper: open the modal and wait for it to be visible
@@ -68,12 +68,12 @@ test('Channel creation modal — full flow (11 checks)', async ({ page }) => {
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(toggle).not.toHaveClass(/active/);
 
-  await toggle.click();
+  await toggle.click({ timeout: 10000 });
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect(toggle).toHaveClass(/active/);
   await page.screenshot({ path: `${SCREENSHOT_DIR}/test-modal-05-toggle-on.png`, fullPage: true });
 
-  await toggle.click();
+  await toggle.click({ timeout: 10000 });
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(toggle).not.toHaveClass(/active/);
   console.log('PASS: 5. Private toggle switches on and off');

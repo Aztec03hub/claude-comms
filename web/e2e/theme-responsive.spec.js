@@ -4,6 +4,12 @@ const SCREENSHOT_DIR = '/home/plafayette/claude-comms/mockups';
 
 test.setTimeout(60000);
 
+// Block Google Fonts to prevent "waiting for fonts to load" hangs in headless
+test.beforeEach(async ({ page }) => {
+  await page.route('**/*.googleapis.com/**', route => route.abort());
+  await page.route('**/*.gstatic.com/**', route => route.abort());
+});
+
 // Helper: navigate and wait for app shell
 async function loadApp(page, url = '/') {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });

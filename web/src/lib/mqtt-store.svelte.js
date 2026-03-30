@@ -85,12 +85,30 @@ export class MqttChatStore {
    * Connect to the MQTT broker.
    */
   connect() {
-    // Generate a client key if not set
+    // Persist user key in localStorage so sessions reuse the same identity.
+    // Without this, every page load creates a new retained presence message
+    // on the broker, causing phantom participant accumulation.
     if (!this.userProfile.key) {
-      this.userProfile.key = generateKey();
+      const stored = typeof localStorage !== 'undefined'
+        ? localStorage.getItem('claude-comms-user-key')
+        : null;
+      if (stored) {
+        this.userProfile.key = stored;
+      } else {
+        this.userProfile.key = generateKey();
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('claude-comms-user-key', this.userProfile.key);
+        }
+      }
     }
 
-    const clientId = 'claude-comms-web-' + generateKey();
+    // Also persist user name
+    if (typeof localStorage !== 'undefined') {
+      const storedName = localStorage.getItem('claude-comms-user-name');
+      if (storedName) this.userProfile.name = storedName;
+    }
+
+    const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + Math.random().toString(16).slice(2, 6);
 
     this.#client = mqtt.connect(BROKER_URL, {
       clientId,
