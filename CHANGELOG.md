@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Fixed
+
+- **Svelte 5 reactivity in class stores -- RESOLVED** -- `$derived` state inside the `MqttStore` class was not triggering component re-renders (e.g., message list, participant list). Root cause: Svelte 5 runes (`$state`, `$derived`) must live in `.svelte.js` files to be compiled as reactive. The store was in a plain `.js` file, so runes were treated as normal variables. Fix: renamed `mqtt-store.js` to `mqtt-store.svelte.js`, which enables the Svelte compiler to process runes correctly. A module-level alternative (`mqtt-store-v2.svelte.js`) also exists for future use if the class-based pattern needs revisiting.
+
 ### Known Issues
 
-- **Svelte 5 `$derived` in class-based stores does not trigger re-render** -- Reactive `$derived` state inside the `MqttStore` class does not reliably propagate to Svelte components. This affects participant list updates and is being actively debugged. Workaround: use `$effect` with explicit assignment in components that consume store-derived values.
 - **TCP-to-WebSocket message bridging** -- amqtt does not bridge messages between its TCP (:1883) and WebSocket (:9001) listeners. Clients on different transports cannot see each other's messages. All clients should use the same transport (WS recommended for web+TUI interop).
 
 #### Overnight (2026-03-30 late): Presence REST API, Build Optimization, Cross-Browser Diagnostics

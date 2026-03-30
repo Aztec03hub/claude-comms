@@ -869,7 +869,7 @@ claude-comms/
 
 | Issue | Impact | Status |
 |-------|--------|--------|
-| **Svelte 5 `$derived` in class stores** | Reactive `$derived` state inside `MqttStore` class does not reliably trigger component re-renders (e.g., participant list updates). Workaround: use `$effect` with explicit assignment in consuming components. | Actively debugging |
+| **Svelte 5 `$derived` in class stores** | **FIXED.** Root cause: `.js` files are not compiled by Svelte, so runes were inert. Renamed store to `.svelte.js` to enable rune compilation. Module-level alternative (`mqtt-store-v2.svelte.js`) available for future use. | Resolved |
 | **TCP-to-WS message bridging** | amqtt does not bridge messages between its TCP (:1883) and WebSocket (:9001) listeners. Clients on different transports cannot see each other. Use WS for all clients. | Architecture limitation |
 | **File sharing** | Attach button shows "coming soon" -- needs file upload backend. | Planned |
 | **Read receipts** | Component exists but `read_by` is never populated via MQTT. | Planned |
