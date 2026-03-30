@@ -762,9 +762,6 @@ export class MqttChatStore {
     // render even though they're in the array.
     this.messages = [...this.messages, message];
 
-    // TEMPORARY DEBUG
-    console.log('[DEBUG handleChatMessage] channel:', channel, 'activeChannel:', this.activeChannel, 'match:', channel === this.activeChannel, 'messages.length:', this.messages.length, 'activeMessages.length:', this.activeMessages.length);
-
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
       const ch = this.channels.find(c => c.id === channel);

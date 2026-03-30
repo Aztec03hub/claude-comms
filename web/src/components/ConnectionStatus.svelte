@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from 'svelte';
   import { RefreshCw, X } from 'lucide-svelte';
 
   let { connected = false, onlineCount = 0, error = null } = $props();
@@ -10,12 +11,14 @@
   let autoHideTimer = $state(null);
   let prevConnected = $state(undefined);
 
-  // Reset dismissed state when connection status changes; auto-hide connected banner
+  // Reset dismissed state when connection status changes; auto-hide connected banner.
+  // prevConnected is read inside untrack() to prevent circular dependency.
   $effect(() => {
     const currentConnected = connected;
     const currentError = error;
 
-    if (prevConnected !== undefined && currentConnected !== prevConnected) {
+    const prev = untrack(() => prevConnected);
+    if (prev !== undefined && currentConnected !== prev) {
       dismissed = false;
       autoHide = false;
     }
@@ -23,7 +26,8 @@
 
     // Auto-hide connected banner after 3 seconds
     if (currentConnected && !currentError) {
-      if (autoHideTimer) clearTimeout(autoHideTimer);
+      const timer = untrack(() => autoHideTimer);
+      if (timer) clearTimeout(timer);
       autoHide = false;
       autoHideTimer = setTimeout(() => {
         autoHide = true;
@@ -32,11 +36,14 @@
     }
   });
 
-  // Track reconnection attempts when in error state
+  // Track reconnection attempts when in error state.
+  // retryCount is read inside untrack() to prevent circular dependency.
   $effect(() => {
     if (error && !connected) {
-      retryCount++;
+      retryCount = untrack(() => retryCount) + 1;
       retrySeconds = 5;
+      const existingTimer = untrack(() => retryTimer);
+      if (existingTimer) clearInterval(existingTimer);
       retryTimer = setInterval(() => {
         retrySeconds--;
         if (retrySeconds <= 0) {
@@ -47,7 +54,8 @@
     } else if (connected) {
       retryCount = 0;
       retrySeconds = 0;
-      if (retryTimer) clearInterval(retryTimer);
+      const existingTimer = untrack(() => retryTimer);
+      if (existingTimer) clearInterval(existingTimer);
     }
   });
 
