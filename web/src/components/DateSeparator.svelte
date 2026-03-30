@@ -6,7 +6,7 @@
   let label = $derived(formatDateSeparator(ts));
 </script>
 
-<div class="msg-row system">
+<div class="msg-row system" data-testid="date-separator">
   <div class="system-msg">
     <span>
       <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity: 0.5;"><circle cx="6" cy="6" r="5"/><path d="M6 3v3l2 1"/></svg>

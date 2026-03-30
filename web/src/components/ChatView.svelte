@@ -71,6 +71,7 @@
   class="messages"
   bind:this={messagesEl}
   onscroll={handleScroll}
+  data-testid="chat-view"
 >
   {#each groupedMessages as group, i}
     {#if group.type === 'date'}

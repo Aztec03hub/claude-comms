@@ -14,6 +14,7 @@
     onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
     role="button"
     tabindex="0"
+    data-testid="avatar"
   >
     {initials}
     {#if status}
@@ -24,6 +25,7 @@
   <div
     class="avatar"
     style="background: {gradient}; width: {size}px; height: {size}px; font-size: {Math.round(size * 0.32)}px;"
+    data-testid="avatar"
   >
     {initials}
     {#if status}

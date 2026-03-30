@@ -280,6 +280,10 @@ def install_hook(
 
     Returns:
         Dict with 'script_path' and 'settings_path' keys.
+
+    Raises:
+        ValueError: If no participant key is available.
+        OSError: If file system operations fail.
     """
     # Resolve participant key
     if participant_key is None:
@@ -290,26 +294,41 @@ def install_hook(
                 "No participant key found in config. Run 'claude-comms init' first."
             )
 
+    if not isinstance(participant_key, str) or not participant_key.strip():
+        raise ValueError("participant_key must be a non-empty string.")
+
     # Generate and install hook script
     script_content = generate_hook_script(participant_key)
     script_path = _hook_script_path(participant_key)
-    script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(script_content)
+    try:
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        script_path.write_text(script_content)
+    except OSError as exc:
+        raise OSError(f"Failed to write hook script to {script_path}: {exc}") from exc
 
     # Make executable on Unix
     if not _is_windows():
-        script_path.chmod(
-            script_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-        )
+        try:
+            script_path.chmod(
+                script_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
+        except OSError:
+            pass  # Non-fatal: script may still work without explicit +x on some systems
 
     # Create notification directory
-    _notification_dir().mkdir(parents=True, exist_ok=True)
+    try:
+        _notification_dir().mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Failed to create notification directory: {exc}") from exc
 
     # Update Claude Code settings.json
     settings_path = _claude_settings_path()
-    settings = _load_settings(settings_path)
-    settings = _add_hook_to_settings(settings, participant_key)
-    _save_settings(settings, settings_path)
+    try:
+        settings = _load_settings(settings_path)
+        settings = _add_hook_to_settings(settings, participant_key)
+        _save_settings(settings, settings_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OSError(f"Failed to update settings at {settings_path}: {exc}") from exc
 
     return {
         "script_path": script_path,
@@ -340,18 +359,30 @@ def uninstall_hook(
 
     result = {"script_removed": False, "settings_updated": False}
 
+    if not participant_key:
+        return result
+
     # Remove hook script
     script_path = _hook_script_path(participant_key)
-    if script_path.exists():
-        script_path.unlink()
-        result["script_removed"] = True
+    try:
+        if script_path.exists():
+            script_path.unlink()
+            result["script_removed"] = True
+    except OSError as exc:
+        # Log but don't fail — settings cleanup can still proceed
+        import logging
+        logging.getLogger(__name__).warning("Could not remove hook script %s: %s", script_path, exc)
 
     # Update Claude Code settings.json
     settings_path = _claude_settings_path()
-    if settings_path.exists():
-        settings = _load_settings(settings_path)
-        settings = _remove_hook_from_settings(settings)
-        _save_settings(settings, settings_path)
-        result["settings_updated"] = True
+    try:
+        if settings_path.exists():
+            settings = _load_settings(settings_path)
+            settings = _remove_hook_from_settings(settings)
+            _save_settings(settings, settings_path)
+            result["settings_updated"] = True
+    except (OSError, json.JSONDecodeError) as exc:
+        import logging
+        logging.getLogger(__name__).warning("Could not update settings %s: %s", settings_path, exc)
 
     return result

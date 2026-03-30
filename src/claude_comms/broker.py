@@ -489,7 +489,22 @@ def generate_client_id(component: str, participant_key: str) -> str:
         Subsystem name, e.g. ``"mcp"``, ``"tui"``, ``"log"``.
     participant_key:
         The 8-hex-char participant key.
+
+    Returns
+    -------
+    str
+        A unique client ID string.
+
+    Raises
+    ------
+    ValueError
+        If *component* or *participant_key* is empty or None.
     """
+    if not component:
+        raise ValueError("component must be a non-empty string")
+    if not participant_key:
+        raise ValueError("participant_key must be a non-empty string")
+
     import secrets
 
     random_suffix = secrets.token_hex(4)

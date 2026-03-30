@@ -15,37 +15,37 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="ctx-backdrop" onclick={handleBackdrop}>
-  <div class="context-menu" style="top: {y}px; left: {x}px;">
-    <button class="ctx-item" onclick={() => handleAction('reply')}>
+  <div class="context-menu" style="top: {y}px; left: {x}px;" data-testid="context-menu">
+    <button class="ctx-item" onclick={() => handleAction('reply')} data-testid="ctx-reply">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4L1 7.5 5 11"/><path d="M1 7.5h8a4 4 0 014 4v.5"/></svg>
       <span>Reply</span>
       <span class="ctx-kbd">R</span>
     </button>
-    <button class="ctx-item" onclick={() => handleAction('forward')}>
+    <button class="ctx-item" onclick={() => handleAction('forward')} data-testid="ctx-forward">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h8 M7 3l4 4-4 4"/></svg>
       <span>Forward</span>
     </button>
-    <button class="ctx-item" onclick={() => handleAction('pin')}>
+    <button class="ctx-item" onclick={() => handleAction('pin')} data-testid="ctx-pin">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2l5 5-3 3-1 4-4-4-4 1 3-3z"/></svg>
       <span>Pin Message</span>
       <span class="ctx-kbd">P</span>
     </button>
-    <button class="ctx-item" onclick={() => handleAction('copy')}>
+    <button class="ctx-item" onclick={() => handleAction('copy')} data-testid="ctx-copy">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><path d="M3 9V2.5A1.5 1.5 0 014.5 1H9"/></svg>
       <span>Copy Text</span>
       <span class="ctx-kbd">C</span>
     </button>
     <div class="ctx-divider"></div>
-    <button class="ctx-item" onclick={() => handleAction('react')}>
+    <button class="ctx-item" onclick={() => handleAction('react')} data-testid="ctx-react">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="7" r="5.5"/><path d="M5 8.5s.8 1 2 1 2-1 2-1"/></svg>
       <span>React</span>
     </button>
-    <button class="ctx-item" onclick={() => handleAction('unread')}>
+    <button class="ctx-item" onclick={() => handleAction('unread')} data-testid="ctx-unread">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3h10 M4 3V2h6v1 M3 3v9a1 1 0 001 1h6a1 1 0 001-1V3"/></svg>
       <span>Mark Unread</span>
     </button>
     <div class="ctx-divider"></div>
-    <button class="ctx-item danger" onclick={() => handleAction('delete')}>
+    <button class="ctx-item danger" onclick={() => handleAction('delete')} data-testid="ctx-delete">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3h10 M4 3V2h6v1 M3 3v9a1 1 0 001 1h6a1 1 0 001-1V3 M6 6v4 M8 6v4"/></svg>
       <span>Delete</span>
       <span class="ctx-kbd">Del</span>

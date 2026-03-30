@@ -12,7 +12,7 @@
   }
 </script>
 
-<div class="toast" class:exiting>
+<div class="toast" class:exiting data-testid="toast">
   <div class="toast-avatar" style="background: {color.gradient}">{getInitials(sender.name)}</div>
   <div class="toast-content">
     <div class="toast-header">
@@ -21,7 +21,7 @@
     </div>
     <div class="toast-text">{text}</div>
   </div>
-  <button class="toast-close" onclick={dismiss}>&times;</button>
+  <button class="toast-close" onclick={dismiss} data-testid="toast-close">&times;</button>
 </div>
 
 <style>

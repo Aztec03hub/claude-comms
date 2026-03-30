@@ -49,13 +49,14 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="emoji-backdrop" onclick={handleBackdropClick}>
-  <div class="emoji-picker">
+  <div class="emoji-picker" data-testid="emoji-picker">
     <div class="emoji-picker-header">
       <input
         class="emoji-search"
         type="text"
         placeholder="Search emoji..."
         bind:value={searchQuery}
+        data-testid="emoji-search"
       >
     </div>
     <div class="emoji-categories">
@@ -65,6 +66,7 @@
           class:active={activeCategory === cat.id}
           title={cat.label}
           onclick={() => activeCategory = cat.id}
+          data-testid="emoji-category-{cat.id}"
         >{cat.icon}</button>
       {/each}
     </div>
@@ -75,6 +77,7 @@
           class="emoji-item"
           onclick={() => selectEmoji(emojiData)}
           onmouseenter={() => previewEmoji = emojiData}
+          data-testid="emoji-item"
         >{emojiData.emoji}</button>
       {/each}
     </div>

@@ -2,7 +2,7 @@
   let { mode = 'dark', onToggle } = $props();
 </script>
 
-<button class="theme-toggle" onclick={onToggle} title="Toggle theme">
+<button class="theme-toggle" onclick={onToggle} title="Toggle theme" data-testid="theme-toggle">
   {#if mode === 'dark'}
     <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="4"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>
   {:else}

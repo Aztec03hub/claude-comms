@@ -32,6 +32,7 @@
   class:consecutive
   class:has-code={hasCode}
   oncontextmenu={handleContext}
+  data-testid="message-{message.id}"
 >
   {#if !consecutive}
     <Avatar
@@ -49,6 +50,7 @@
         <span
           class="sender-name"
           style="color: {senderColor.textColor}"
+          data-testid="message-sender-{message.sender.key}"
           onclick={handleAvatarClick}
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleAvatarClick(); }}
           role="button"

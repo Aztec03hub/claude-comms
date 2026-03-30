@@ -18,13 +18,15 @@
   }
 </script>
 
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} />
+
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+<div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }} data-testid="channel-modal">
   <div class="modal">
     <div class="modal-header">
       <span class="modal-title">Create Conversation</span>
-      <button class="modal-close" onclick={onClose}>&times;</button>
+      <button class="modal-close" onclick={onClose} data-testid="channel-modal-close">&times;</button>
     </div>
     <div class="modal-body">
       <div class="modal-field">
@@ -36,6 +38,7 @@
           placeholder="e.g. project-phoenix"
           bind:value={channelName}
           onkeydown={handleKeydown}
+          data-testid="channel-modal-name-input"
         >
         <div class="modal-hint">Names must be lowercase, no spaces. Use dashes instead.</div>
       </div>
@@ -46,6 +49,7 @@
           class="modal-textarea"
           placeholder="What is this channel about?"
           bind:value={description}
+          data-testid="channel-modal-description"
         ></textarea>
       </div>
       <div class="modal-toggle">
@@ -60,12 +64,13 @@
           role="switch"
           aria-checked={isPrivate}
           tabindex="0"
+          data-testid="channel-modal-private-toggle"
         ></div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="modal-btn secondary" onclick={onClose}>Cancel</button>
-      <button class="modal-btn primary" onclick={handleCreate}>Create Channel</button>
+      <button class="modal-btn secondary" onclick={onClose} data-testid="channel-modal-cancel">Cancel</button>
+      <button class="modal-btn primary" onclick={handleCreate} data-testid="channel-modal-create">Create Channel</button>
     </div>
   </div>
 </div>

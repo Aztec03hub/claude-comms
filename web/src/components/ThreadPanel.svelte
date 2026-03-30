@@ -21,14 +21,14 @@
   }
 </script>
 
-<div class="thread-panel">
+<div class="thread-panel" data-testid="thread-panel">
   <div class="thread-header">
     <div class="thread-title">
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3h10v6H7L4 12V9H3V3z"/></svg>
       Thread
     </div>
     <span class="thread-reply-count">{messages.length} replies</span>
-    <button class="thread-close" onclick={onClose}>&times;</button>
+    <button class="thread-close" onclick={onClose} data-testid="thread-panel-close">&times;</button>
   </div>
 
   <div class="thread-parent">
@@ -67,8 +67,9 @@
         placeholder="Reply in thread..."
         bind:value={replyText}
         onkeydown={handleKeydown}
+        data-testid="thread-reply-input"
       >
-      <button class="thread-send" onclick={handleSend} aria-label="Send reply">
+      <button class="thread-send" onclick={handleSend} aria-label="Send reply" data-testid="thread-send">
         <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M1.7 1.1a.75.75 0 01.9-.2l12 6a.75.75 0 010 1.3l-12 6a.75.75 0 01-1.05-.9L3.6 8 1.55 2.8a.75.75 0 01.15-.7z"/></svg>
       </button>
     </div>

@@ -4,7 +4,7 @@
   let { online = [], offline = [], typingUsers = {}, onShowProfile } = $props();
 </script>
 
-<aside class="sidebar-right">
+<aside class="sidebar-right" data-testid="member-list">
   <div class="members-header">
     <span>Members ({online.length + offline.length})</span>
     <button class="members-search-btn" title="Search members">
@@ -13,7 +13,7 @@
   </div>
 
   {#if online.length > 0}
-    <div class="members-section">Online ({online.length})</div>
+    <div class="members-section" data-testid="members-online-section">Online ({online.length})</div>
     <div class="members-list">
       {#each online as member (member.key)}
         {@const color = getParticipantColor(member.key)}
@@ -24,6 +24,7 @@
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile(member); }}
           role="button"
           tabindex="0"
+          data-testid="member-{member.key}"
         >
           <div class="member-avatar" style="background: {color.gradient}">
             {getInitials(member.name)}
@@ -48,7 +49,7 @@
   {/if}
 
   {#if offline.length > 0}
-    <div class="members-section" style="margin-top: 8px">Offline ({offline.length})</div>
+    <div class="members-section" style="margin-top: 8px" data-testid="members-offline-section">Offline ({offline.length})</div>
     <div class="members-list">
       {#each offline as member (member.key)}
         <div
@@ -57,6 +58,7 @@
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile(member); }}
           role="button"
           tabindex="0"
+          data-testid="member-{member.key}"
         >
           <div class="member-avatar" style="background: var(--bg-elevated)">
             {getInitials(member.name)}

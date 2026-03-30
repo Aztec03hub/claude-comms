@@ -4,14 +4,14 @@
   let { messages = [], onClose } = $props();
 </script>
 
-<div class="pinned-panel">
+<div class="pinned-panel" data-testid="pinned-panel">
   <div class="pinned-header">
     <div class="pinned-title">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2l5 5-3 3-1 4-4-4-4 1 3-3z"/></svg>
       Pinned Messages
       <span class="pinned-count">{messages.length}</span>
     </div>
-    <button class="pinned-close" onclick={onClose}>&times;</button>
+    <button class="pinned-close" onclick={onClose} data-testid="pinned-panel-close">&times;</button>
   </div>
   <div class="pinned-list">
     {#each messages as msg (msg.id)}

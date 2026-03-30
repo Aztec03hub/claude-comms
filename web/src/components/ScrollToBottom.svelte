@@ -2,7 +2,7 @@
   let { count = 0, onClick } = $props();
 </script>
 
-<button class="scroll-bottom" title="Scroll to bottom" onclick={onClick}>
+<button class="scroll-bottom" title="Scroll to bottom" onclick={onClick} data-testid="scroll-to-bottom">
   <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6l4 4 4-4"/></svg>
   {#if count > 0}
     <span class="badge">{count}</span>

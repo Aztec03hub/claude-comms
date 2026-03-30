@@ -55,12 +55,20 @@ _config: dict[str, Any] | None = None
 
 
 def _get_registry() -> ParticipantRegistry:
-    assert _registry is not None, "Server not initialised"
+    """Return the shared participant registry, raising if uninitialised."""
+    if _registry is None:
+        raise RuntimeError(
+            "MCP server not initialised. Call create_server() before using tools."
+        )
     return _registry
 
 
 def _get_store() -> MessageStore:
-    assert _store is not None, "Server not initialised"
+    """Return the shared message store, raising if uninitialised."""
+    if _store is None:
+        raise RuntimeError(
+            "MCP server not initialised. Call create_server() before using tools."
+        )
     return _store
 
 

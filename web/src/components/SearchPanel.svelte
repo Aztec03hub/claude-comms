@@ -29,11 +29,11 @@
   }
 </script>
 
-<div class="search-panel">
+<div class="search-panel" data-testid="search-panel">
   <div class="search-panel-header">
     <div class="search-panel-top">
       <span class="search-panel-title">Search Messages</span>
-      <button class="search-panel-close" onclick={onClose}>&times;</button>
+      <button class="search-panel-close" onclick={onClose} data-testid="search-panel-close">&times;</button>
     </div>
     <input
       class="search-panel-input"
@@ -41,6 +41,7 @@
       placeholder="Search..."
       bind:value={searchQuery}
       oninput={handleInput}
+      data-testid="search-panel-input"
     >
     <div class="search-panel-filters">
       {#each filters as filter}
@@ -48,6 +49,7 @@
           class="search-filter"
           class:active={activeFilter === filter.toLowerCase()}
           onclick={() => activeFilter = filter.toLowerCase()}
+          data-testid="search-filter-{filter.toLowerCase()}"
         >{filter}</button>
       {/each}
     </div>

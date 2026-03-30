@@ -19,8 +19,13 @@ RESERVED_CONV_IDS = frozenset({"system", "meta"})
 ParticipantType = Literal["claude", "human"]
 
 
-def validate_conv_id(conv_id: str) -> bool:
-    """Return True if *conv_id* is valid for use in topics and file paths."""
+def validate_conv_id(conv_id: str | None) -> bool:
+    """Return True if *conv_id* is valid for use in topics and file paths.
+
+    Returns ``False`` for ``None`` or empty strings.
+    """
+    if not conv_id:
+        return False
     if conv_id in RESERVED_CONV_IDS:
         return False
     return bool(CONV_ID_PATTERN.match(conv_id))

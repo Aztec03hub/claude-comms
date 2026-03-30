@@ -27,13 +27,23 @@ def generate_key() -> str:
     return secrets.token_hex(4)
 
 
-def validate_key(key: str) -> bool:
-    """Check whether *key* is a valid 8-character lowercase hex string."""
+def validate_key(key: str | None) -> bool:
+    """Check whether *key* is a valid 8-character lowercase hex string.
+
+    Returns ``False`` for ``None`` or empty strings.
+    """
+    if not key:
+        return False
     return bool(KEY_PATTERN.match(key))
 
 
-def validate_name(name: str) -> bool:
-    """Check whether *name* is a valid display name."""
+def validate_name(name: str | None) -> bool:
+    """Check whether *name* is a valid display name.
+
+    Returns ``False`` for ``None`` or empty strings.
+    """
+    if not name:
+        return False
     return bool(NAME_PATTERN.match(name))
 
 

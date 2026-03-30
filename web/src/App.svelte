@@ -121,23 +121,23 @@
   <main class="center">
     <ConnectionStatus connected={store.connected} onlineCount={store.onlineCount} error={store.connectionError} />
 
-    <header class="chat-header">
+    <header class="chat-header" data-testid="chat-header">
       <div class="header-icon">#</div>
-      <span class="header-name">{store.activeChannel}</span>
+      <span class="header-name" data-testid="header-channel-name">{store.activeChannel}</span>
       <span class="header-sep"></span>
       <span class="header-topic">{store.activeChannelMeta?.topic || ''}</span>
-      <button class="header-members" type="button">
+      <button class="header-members" type="button" data-testid="header-members-count">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="4.5" cy="4" r="2.5"/><path d="M0 11.5c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/><circle cx="8.5" cy="4" r="2" opacity=".5"/></svg>
         {store.onlineCount + store.offlineParticipants.length}
       </button>
       <div class="header-actions">
-        <button class="header-btn" title="Search" onclick={() => { showSearchPanel = !showSearchPanel; showThreadPanel = false; }}>
+        <button class="header-btn" title="Search" onclick={() => { showSearchPanel = !showSearchPanel; showThreadPanel = false; }} data-testid="header-search-btn">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="14.5" y2="14.5"/></svg>
         </button>
-        <button class="header-btn" title="Pinned messages" onclick={() => showPinnedPanel = !showPinnedPanel}>
+        <button class="header-btn" title="Pinned messages" onclick={() => showPinnedPanel = !showPinnedPanel} data-testid="header-pin-btn">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 2l5 5-3 3-1 4-4-4-4 1 3-3z"/></svg>
         </button>
-        <button class="header-btn" title="Settings">
+        <button class="header-btn" title="Settings" data-testid="header-settings-btn">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3m10 0h1.5M3.1 3.1l1 1m7.8 7.8l1 1M12.9 3.1l-1 1M4.1 11.9l-1 1"/></svg>
         </button>
       </div>
@@ -274,7 +274,7 @@
     align-items: center;
     gap: 12px;
     position: relative;
-    z-index: 2;
+    z-index: 51;
     background: rgba(17,17,19,0.8);
     backdrop-filter: blur(16px) saturate(1.2);
   }

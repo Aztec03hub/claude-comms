@@ -3,17 +3,17 @@
 </script>
 
 {#if connected}
-  <div class="connection-banner connected">
+  <div class="connection-banner connected" data-testid="connection-status">
     <div class="connection-dot"></div>
     Connected &mdash; {onlineCount} agent{onlineCount !== 1 ? 's' : ''} online
   </div>
 {:else if error}
-  <div class="connection-banner error">
+  <div class="connection-banner error" data-testid="connection-status">
     <div class="connection-dot error-dot"></div>
     {error}
   </div>
 {:else}
-  <div class="connection-banner connecting">
+  <div class="connection-banner connecting" data-testid="connection-status">
     <div class="connection-dot connecting-dot"></div>
     Connecting...
   </div>

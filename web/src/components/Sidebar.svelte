@@ -14,7 +14,7 @@
   }
 </script>
 
-<aside class="sidebar-left">
+<aside class="sidebar-left" data-testid="sidebar">
   <div class="sidebar-brand">
     <div class="brand-icon">CC</div>
     <h1>Claude Comms</h1>
@@ -22,14 +22,14 @@
   </div>
 
   <div class="search-wrap">
-    <input class="search-input" type="text" placeholder="Search conversations...">
+    <input class="search-input" type="text" placeholder="Search conversations..." data-testid="sidebar-search">
     <span class="search-kbd">\u2318K</span>
   </div>
 
   {#if store.starredChannels.length > 0}
-    <div class="section-label" class:collapsed={starredCollapsed}>
+    <div class="section-label" class:collapsed={starredCollapsed} data-testid="sidebar-starred-section">
       <span class="star">\u2605</span> Starred
-      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred">\u25BE</button>
+      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle">\u25BE</button>
     </div>
     {#if !starredCollapsed}
       <div class="channel-list" style="flex: none;">
@@ -42,6 +42,7 @@
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
             role="button"
             tabindex="0"
+            data-testid="channel-item-{channel.id}"
           >
             <div class="ch-icon">
               <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2v12M12 2v12M2 6h12M2 10h12"/></svg>
@@ -65,7 +66,7 @@
 
   <div class="section-label" class:collapsed={convoCollapsed}>
     Conversations
-    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations">\u25BE</button>
+    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle">\u25BE</button>
   </div>
   {#if !convoCollapsed}
     <div class="channel-list">
@@ -78,6 +79,7 @@
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
           role="button"
           tabindex="0"
+          data-testid="channel-item-{channel.id}"
         >
           <div class="ch-icon">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 2v12M12 2v12M2 6h12M2 10h12"/></svg>
@@ -101,12 +103,12 @@
     </div>
   {/if}
 
-  <button class="create-channel" onclick={onCreateChannel}>
+  <button class="create-channel" onclick={onCreateChannel} data-testid="sidebar-create-channel">
     <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v10 M1 6h10"/></svg>
     New Conversation
   </button>
 
-  <div class="user-profile">
+  <div class="user-profile" data-testid="sidebar-user-profile">
     <div
       class="user-avatar-wrap"
       onclick={() => onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' })}

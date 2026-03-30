@@ -14,14 +14,14 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="profile-backdrop" onclick={handleBackdrop}>
-  <div class="profile-card">
+<div class="profile-backdrop" onclick={handleBackdrop} data-testid="profile-card-close">
+  <div class="profile-card" data-testid="profile-card">
     <div class="profile-card-banner"></div>
     <div class="profile-card-avatar" style="background: {color.gradient}">
       {getInitials(participant.name)}
     </div>
     <div class="profile-card-body">
-      <div class="profile-card-name">{participant.name}</div>
+      <div class="profile-card-name" data-testid="profile-card-name">{participant.name}</div>
       <div class="profile-card-handle">@{participant.name}</div>
       <div class="profile-card-divider"></div>
       <div class="profile-card-section">Role</div>

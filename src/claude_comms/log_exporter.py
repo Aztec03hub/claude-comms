@@ -118,15 +118,31 @@ def format_log_entry(msg: dict[str, Any]) -> str:
     -------
     str
         The formatted entry (no trailing newline).
+
+    Raises
+    ------
+    KeyError
+        If required fields (``ts``, ``sender``, ``body``) are missing.
     """
-    dt = _parse_ts(msg["ts"])
-    ts_full = _format_ts_full(dt)
-    sender = msg["sender"]
-    sender_name = sender["name"]
-    sender_key = sender["key"]
+    if not msg:
+        return "[EMPTY MESSAGE]"
+
+    ts_str = msg.get("ts", "")
+    if not ts_str:
+        ts_full = "UNKNOWN TIME"
+    else:
+        try:
+            dt = _parse_ts(ts_str)
+            ts_full = _format_ts_full(dt)
+        except (ValueError, TypeError):
+            ts_full = ts_str
+
+    sender = msg.get("sender", {})
+    sender_name = sender.get("name", "unknown") if isinstance(sender, dict) else "unknown"
+    sender_key = sender.get("key", "????????") if isinstance(sender, dict) else "????????"
 
     # Indent every line of the body with 4 spaces
-    body = msg["body"]
+    body = msg.get("body", "")
     indented_lines = []
     for line in body.split("\n"):
         indented_lines.append(f"    {line}")
@@ -136,8 +152,8 @@ def format_log_entry(msg: dict[str, Any]) -> str:
 
 
 def format_presence_event(
-    name: str,
-    key: str,
+    name: str | None,
+    key: str | None,
     event: Literal["joined", "left"],
     ts_str: str | None = None,
 ) -> str:
@@ -150,9 +166,9 @@ def format_presence_event(
     Parameters
     ----------
     name:
-        Participant display name.
+        Participant display name.  Falls back to ``"unknown"`` if *None*.
     key:
-        Participant 8-hex-char key.
+        Participant 8-hex-char key.  Falls back to ``"????????"`` if *None*.
     event:
         ``"joined"`` or ``"left"``.
     ts_str:
@@ -163,10 +179,16 @@ def format_presence_event(
     str
         The formatted presence line (no trailing newline).
     """
+    name = name or "unknown"
+    key = key or "????????"
+
     if ts_str is None:
         dt = datetime.now(timezone.utc).astimezone()
     else:
-        dt = _parse_ts(ts_str)
+        try:
+            dt = _parse_ts(ts_str)
+        except (ValueError, TypeError):
+            dt = datetime.now(timezone.utc).astimezone()
     ts_short = _format_ts_short(dt)
 
     return f"--- {name} ({key}) {event} the conversation [{ts_short}] ---"
