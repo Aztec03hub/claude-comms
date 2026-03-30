@@ -624,6 +624,7 @@ export class MqttChatStore {
     console.debug('[claude-comms] MQTT ←', topic, msg?.id || '(no id)');
 
     if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
+      console.log('[claude-comms] ROUTING to handleChatMessage, channel:', topicParts[1], 'id:', msg.id, 'seenBefore:', this.#seenIds.has(msg.id));
       this.#handleChatMessage(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'presence') {
       this.#handlePresence(msg);
