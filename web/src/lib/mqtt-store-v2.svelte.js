@@ -225,8 +225,6 @@ function handleChatMessage(channel, msg) {
   // IMMUTABLE reassignment — this is the key to module-level $state reactivity
   messages = [...messages, message];
 
-  console.log('[V2 handleChatMessage] channel:', channel, 'activeChannel:', activeChannel, 'match:', channel === activeChannel, 'messages.length:', messages.length, 'activeMessages.length:', activeMessages.length);
-
   // Update unread count if not active channel
   if (channel !== activeChannel) {
     const ch = channels.find(c => c.id === channel);
