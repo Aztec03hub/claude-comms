@@ -314,12 +314,18 @@ def start(
                 get_channel_messages,
                 get_channel_participants,
             )
+            from claude_comms.message import validate_conv_id
 
             cors_origin = f"http://localhost:{web_port}"
 
             async def _api_messages(request: Request) -> JSONResponse:
                 """GET /api/messages/{channel}?count=50 — return recent history."""
                 channel = request.path_params["channel"]
+                if not validate_conv_id(channel):
+                    return JSONResponse(
+                        {"error": "Invalid channel ID"},
+                        status_code=400,
+                    )
                 try:
                     count = int(request.query_params.get("count", "50"))
                 except (ValueError, TypeError):
@@ -376,6 +382,11 @@ def start(
             async def _api_participants(request: Request) -> JSONResponse:
                 """GET /api/participants/{channel} — return participant list."""
                 channel = request.path_params["channel"]
+                if not validate_conv_id(channel):
+                    return JSONResponse(
+                        {"error": "Invalid channel ID"},
+                        status_code=400,
+                    )
                 participants = get_channel_participants(channel)
                 return JSONResponse(
                     {"channel": channel, "participants": participants},
