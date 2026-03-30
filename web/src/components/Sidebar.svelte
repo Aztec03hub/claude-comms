@@ -493,6 +493,12 @@
     align-items: center;
     gap: 10px;
     background: linear-gradient(180deg, transparent, rgba(0,0,0,0.15));
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .user-profile:hover {
+    background: linear-gradient(180deg, rgba(245,158,11,0.05), rgba(0,0,0,0.2));
   }
 
   .user-avatar-wrap { position: relative; cursor: pointer; }
