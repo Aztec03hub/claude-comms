@@ -81,8 +81,31 @@ All 4 high-priority items from the placeholder audit were addressed overnight:
 
 ## What Phil Should Know
 
-1. **Everything builds and all tests pass.** Zero failures across 714 Python tests and a clean Vite production build.
+1. **Everything builds and all tests pass.** Zero failures across 746 Python tests and a clean Vite production build.
 2. **The placeholder audit high-priority items are all resolved.** The daemon wires up MCP, web server, and broker in one command.
 3. **The remaining 11 items are medium/low priority** and mostly involve MQTT-level sync for features that work locally (read receipts, link previews, file sharing).
 4. **The Vite bundle is 795 kB** -- the chunk size warning is expected for a single-page app; code splitting can be added later if needed.
 5. **5 Svelte a11y warnings remain** (EmojiPicker, ProfileCard, SettingsPanel) -- all cosmetic, no functional impact.
+
+---
+
+## Post-Fix Update (2026-03-30)
+
+**Svelte 5 Reactivity Bug -- FIXED and VERIFIED**
+
+The core bug was that messages were being added to the `$state` array but `$derived` never recalculated in the class-based store (`MqttChatStore`). The fix used `$derived.by()` with explicit dependency reads and synchronous immutable reassignment in `#handleChatMessage()`.
+
+### Verification Results
+- Sent 3 messages in `#general` -- all rendered as bubbles immediately
+- Switched to `#random` -- messages correctly isolated to their channels
+- Sent message with `@Phil` mention -- highlighted with `.mention` class
+- Victory screenshot saved: `web/e2e/victory-reactivity-fixed.png`
+- **Python tests:** 746 passed
+- **Vite build:** clean success
+
+### Cleanup Completed
+- Removed 11 debug screenshots (`*.png`) from `web/`
+- Removed 5 diagnostic test scripts (`*.mjs`) from `web/`
+- Removed `debug-reactivity.spec.js` from `web/e2e/`
+- Removed debug `console.log` from `mqtt-store-v2.svelte.js`
+- No remaining debug artifacts in source
