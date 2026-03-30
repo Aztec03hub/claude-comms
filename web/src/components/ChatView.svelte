@@ -111,9 +111,12 @@
   // Uses IntersectionObserver to mark messages as read when they scroll into view.
   // This feeds the ReadReceipt component with meaningful read_by counts.
   let seenObserver = $state(null);
+  let observedIds = new Set();
 
   $effect(() => {
     if (!messagesEl || !store) return;
+
+    observedIds = new Set();
 
     seenObserver = new IntersectionObserver(
       (entries) => {
@@ -129,19 +132,24 @@
 
     return () => {
       seenObserver?.disconnect();
+      observedIds = new Set();
     };
   });
 
-  // Observe new message elements as they appear
+  // Observe only NEW message elements as they appear
   $effect(() => {
     if (!messagesEl || !seenObserver) return;
-    // Re-observe whenever messages change
+    // Trigger reactivity on messages.length
     const _len = messages.length;
     requestAnimationFrame(() => {
       if (!messagesEl) return;
       const msgEls = messagesEl.querySelectorAll('[data-message-id]');
       for (const el of msgEls) {
-        seenObserver.observe(el);
+        const msgId = el.dataset.messageId;
+        if (msgId && !observedIds.has(msgId)) {
+          observedIds.add(msgId);
+          seenObserver.observe(el);
+        }
       }
     });
   });
