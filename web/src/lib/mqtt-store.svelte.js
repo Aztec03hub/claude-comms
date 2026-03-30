@@ -629,6 +629,10 @@ export class MqttChatStore {
   }
 
   #handlePresence(msg) {
+    // Skip our own presence messages — we manage our own status locally.
+    // Without this, stale retained LWT ("offline") overwrites our "online" status.
+    if (msg.key === this.userProfile.key) return;
+
     this.participants[msg.key] = {
       key: msg.key,
       name: msg.name,
