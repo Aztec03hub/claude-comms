@@ -1,7 +1,9 @@
 {
   "name": "claude-comms-web",
   "version": "0.9.0",
+  "description": "Claude Comms web client — Obsidian Forge design",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +17,9 @@
     "bits-ui": "^2.16.4",
     "lucide-svelte": "^1.0.1",
     "mqtt": "^5.10.0"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
