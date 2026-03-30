@@ -69,6 +69,7 @@ export class MqttChatStore {
   #seenMessageIds = new Set();
   #failureCount = 0;
   #backoffActive = false;
+  #backoffTimer = null;
   #participantPollTimer = null;
 
   /**
@@ -386,6 +387,26 @@ export class MqttChatStore {
    */
   disconnect() {
     this.#stopParticipantPolling();
+
+    // Clear our own typing timer
+    if (this.#myTypingTimer) {
+      clearTimeout(this.#myTypingTimer);
+      this.#myTypingTimer = null;
+    }
+
+    // Clear all remote typing expiry timers
+    for (const key of Object.keys(this.#typingTimers)) {
+      clearTimeout(this.#typingTimers[key]);
+    }
+    this.#typingTimers = {};
+
+    // Clear backoff reconnect timer
+    if (this.#backoffTimer) {
+      clearTimeout(this.#backoffTimer);
+      this.#backoffTimer = null;
+      this.#backoffActive = false;
+    }
+
     if (this.#client) {
       this.#publishPresence('offline');
       this.#client.end();
@@ -955,7 +976,8 @@ export class MqttChatStore {
     this.connectionError = 'Broker unreachable after ' + this.#failureCount +
       ' attempts — retrying in ' + delaySec + 's. App works in local-only mode.';
 
-    setTimeout(() => {
+    this.#backoffTimer = setTimeout(() => {
+      this.#backoffTimer = null;
       this.#backoffActive = false;
       if (this.#client) {
         // Re-enable reconnect and trigger one attempt
