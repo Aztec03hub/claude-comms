@@ -8,7 +8,7 @@
   @prop {Function} onOpenSettings - Callback invoked to open the settings panel.
 -->
 <script>
-  import { Hash, VolumeX, Plus, Settings } from 'lucide-svelte';
+  import { Hash, VolumeX, Plus, Settings, Star, ChevronDown, Command } from 'lucide-svelte';
 
   let { store, onCreateChannel, onShowProfile, onMuteChannel, onOpenSettings } = $props();
 
@@ -49,13 +49,13 @@
 
   <div class="search-wrap">
     <input class="search-input" type="text" placeholder="Search conversations..." bind:value={searchQuery} data-testid="sidebar-search">
-    <span class="search-kbd">⌘K</span>
+    <span class="search-kbd"><Command size={11} strokeWidth={2.5} />K</span>
   </div>
 
   {#if filteredStarred.length > 0}
     <div class="section-label" class:collapsed={starredCollapsed} data-testid="sidebar-starred-section">
-      <span class="star">★</span> Starred
-      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle">▾</button>
+      <Star size={12} strokeWidth={2.5} class="star-icon" /> Starred
+      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle"><ChevronDown size={14} strokeWidth={2.5} /></button>
     </div>
     {#if !starredCollapsed}
       <div class="channel-list" style="flex: none;">
@@ -101,7 +101,7 @@
 
   <div class="section-label" class:collapsed={convoCollapsed} data-testid="sidebar-conversations-section">
     Conversations
-    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle">▾</button>
+    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle"><ChevronDown size={14} strokeWidth={2.5} /></button>
   </div>
   {#if !convoCollapsed}
     <div class="channel-list">
@@ -302,10 +302,13 @@
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 1px 6px;
+    padding: 2px 6px;
     font-family: 'SF Mono', Consolas, monospace;
-    line-height: 1.4;
+    line-height: 1;
     pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
 
   .section-label {
@@ -320,20 +323,23 @@
     text-transform: uppercase;
   }
 
-  .section-label .star { color: var(--ember-500); font-size: 11px; }
+  .section-label :global(.star-icon) { color: var(--ember-500); flex-shrink: 0; }
 
   .section-label .arrow {
-    font-size: 8px;
     color: var(--text-faint);
     margin-left: auto;
-    transition: var(--transition-fast);
+    transition: transform 0.2s ease;
     cursor: pointer;
     user-select: none;
     background: none;
     border: none;
-    padding: 2px 4px;
-    font-family: inherit;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
+
+  .section-label .arrow:hover { color: var(--text-secondary); }
 
   .section-label.collapsed .arrow { transform: rotate(-90deg); }
 
@@ -346,7 +352,7 @@
 
   .channel-item {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 10px;
     padding: 9px 10px;
     margin: 1px 0;
