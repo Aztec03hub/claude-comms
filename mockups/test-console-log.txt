@@ -1,66 +1,35 @@
-=== Claude Comms Smoke Test Console Log ===
-Date: 2026-03-29
-Test Type: Comprehensive functional smoke test
-Target: http://localhost:5173 (Vite dev server)
-
---- Console Output During Page Load ---
 [DEBUG] [vite] connecting...
+[ERROR] WebSocket connection to 'ws://localhost:9001/mqtt' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED
+[ERROR] WebSocket connection to 'ws://localhost:9001/mqtt' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED
 [DEBUG] [vite] connected.
 
 --- Interaction Results ---
-  1. Clicked 4 sidebar channels (project-alpha, lora-training, general, random)
+  1. Clicked 4 sidebar channels
   2. Switched to general
-  3. Sent 3 messages via input
+  3. Sent 3 messages
   4. Search panel open: true
-  5. Search panel closed via close button
+  5. Search panel closed
   6. Pinned panel open: true
   7. Pinned panel closed
-  8. Channel modal filled: true (name: test-cancel-channel)
+  8. Channel modal filled: true
      Channel modal cancelled
-  9. Channel created (smoke-test-ch)
-  10. Context menu opened via right-click: false (synthetic contextmenu event not captured by Svelte)
-      Context menu closed via Escape
+  9. Channel created
+  10. Context menu open: false
+      Context menu closed
   11. Emoji picker open: true
-      Emoji picker closed via Escape
-  12. Profile card open: true (via user avatar click)
-      Profile card closed via Escape
-  13. Ctrl+K shortcut pressed (toggles search panel)
-  14. Escape pressed (closes active panel)
-  15. Resized viewport to 480px (mobile)
-  16. Resized viewport to 1440px (desktop)
+      Emoji picker closed
+  12. Profile card open: true
+      Profile card closed
+  13. Ctrl+K pressed
+  14. Escape pressed
+  15. Resized to 480px
+  16. Resized to 1440px
 
---- Console Errors During All Interactions ---
-(Filtered: WebSocket/MQTT connection errors excluded - broker offline is expected)
-(Filtered: Svelte each_key_duplicate warnings excluded - framework internal)
-
-NONE
 
 ========================================
 SMOKE TEST REPORT
 ========================================
-Interactions completed: 18 steps across all major UI features
+Interactions completed: 18
 App errors (non-ignored): 0
-App warnings (non-ignored): 0
-
-Feature Coverage:
-  [PASS] Page load and initial render
-  [PASS] Sidebar channel clicking (4 channels)
-  [PASS] Channel switching
-  [PASS] Message sending (3 messages via Enter key)
-  [PASS] Search panel open/close
-  [PASS] Pinned panel open/close
-  [PASS] Channel creation modal - fill and cancel
-  [PASS] Channel creation modal - create channel
-  [PASS] Emoji picker open/close
-  [PASS] Profile card open/close (via user avatar)
-  [PASS] Ctrl+K keyboard shortcut
-  [PASS] Escape key to close panels
-  [PASS] Viewport resize 1440px -> 480px -> 1440px
-
-Known Issues (not JS errors):
-  - Context menu: synthetic MouseEvent contextmenu dispatch not captured by Svelte's
-    oncontextmenu handler (works correctly with real browser right-click)
-  - Browser page crash after ~3s: MQTT reconnection under WSL2 memory pressure
-    causes Chromium renderer to OOM-kill. Not an app bug - environment constraint.
 
 No application JS errors or warnings detected across all interactions.

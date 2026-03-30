@@ -87,7 +87,7 @@
 <style>
   .search-panel {
     position: absolute;
-    top: 56px;
+    top: 82px;
     right: 0;
     bottom: 0;
     width: 380px;

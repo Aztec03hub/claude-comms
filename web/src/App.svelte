@@ -344,6 +344,7 @@
     left: 0;
     right: 0;
     height: 1px;
+    pointer-events: none;
     background: linear-gradient(90deg, transparent, var(--ember-700), var(--ember-500), var(--ember-700), transparent);
     background-size: 200% 100%;
     animation: headerGlow 8s ease infinite;
