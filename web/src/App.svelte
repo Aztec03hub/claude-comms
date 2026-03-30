@@ -118,14 +118,17 @@
         tag: last.id
       });
 
-      // In-app toast
+      // In-app toast (skip if toasts disabled or channel is muted)
       if (last.channel !== store.activeChannel || document.hidden) {
-        addToast({
-          id: last.id,
-          sender: last.sender,
-          channel: last.channel,
-          text: last.body.slice(0, 120)
-        });
+        const ch = store.channels.find(c => c.id === last.channel);
+        if (store.inAppToasts && !(ch && ch.muted)) {
+          addToast({
+            id: last.id,
+            sender: last.sender,
+            channel: last.channel,
+            text: last.body.slice(0, 120)
+          });
+        }
       }
     }
   });

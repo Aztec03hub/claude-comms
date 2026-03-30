@@ -5,7 +5,7 @@
 
   let displayName = $state(store?.userProfile?.name || 'Anonymous');
   let desktopNotifications = $state(Notification?.permission === 'granted');
-  let inAppToasts = $state(true);
+  let inAppToasts = $state(store?.inAppToasts ?? true);
 
   function handleNameChange(e) {
     displayName = e.target.value;
@@ -29,6 +29,7 @@
 
   function toggleInAppToasts() {
     inAppToasts = !inAppToasts;
+    if (store) store.inAppToasts = inAppToasts;
   }
 </script>
 

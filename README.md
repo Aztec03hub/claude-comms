@@ -535,11 +535,16 @@ The web UI uses the **"Obsidian Forge"** design language (evolved from "Phantom 
 - Participant list with presence indicators, toggle visibility, and member search
 - Settings panel with profile editing, notification toggles, and connection status
 - Context menu with full action wiring (reply, forward, pin, copy, react, mark unread, delete)
+- Forward picker modal for forwarding messages to other channels
+- User profile view panel (separate from Settings) for viewing other participants' info
 - Confirmation dialogs for destructive actions
-- Browser notifications (when tab is unfocused)
+- Browser notifications (when tab is unfocused) with optional notification sound toggle
 - Code block syntax highlighting
 - File attachment handling and download
 - Format help popover and code snippet insertion
+- Sidebar channel search (filters channels by name)
+- Search panel with functional filter tabs (All, Messages, Files, Code, Links)
+- Polished DateSeparator, ReadReceipt, and LinkPreview components
 - Responsive layout
 
 **Accessing the web UI:**
@@ -734,7 +739,7 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **661+ total tests**: **504 Python tests** across 12 test files (~0.5s) plus **43 TUI tests** (Textual `run_test()`) plus **114+ Playwright browser E2E tests** across 19 spec files with 120+ test screenshots:
+The test suite includes **668+ total tests**: **504 Python tests** across 12 test files (~0.5s) plus **43 TUI tests** (Textual `run_test()`) plus **121+ Playwright browser E2E tests** across 20 spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -753,7 +758,7 @@ The test suite includes **661+ total tests**: **504 Python tests** across 12 tes
 
 ### Playwright E2E Tests
 
-The web UI has **114+ browser-level E2E tests** across **19 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
+The web UI has **121+ browser-level E2E tests** across **20 spec files**, running against headless Chromium. These were authored by **10 parallel testing agents** (plus overnight agents) who collectively found and fixed **12 bugs** during comprehensive functional coverage:
 
 ```bash
 cd web
@@ -783,6 +788,7 @@ npx playwright test --headed # Visible browser
 | `overnight-comprehensive.spec.js` | 60 | 9-round comprehensive sweep: sidebar, header, input, messages, panels, modals, member list, theme/responsive, keyboard |
 | `overnight-members-theme.spec.js` | 19 | Member list, profile card (7 tests), theme toggle (3), responsive at 5 viewports (5) |
 | `a11y-keyboard.spec.js` | 10 | Tab focus, focus-visible rings, Enter activation, Escape handling, ARIA roles, sr-only class |
+| `user-stories.spec.js` | 7 | E2E user stories: first experience, team discussion, channel management, reactions/interactions, search/navigation, customization/settings, mobile user |
 
 **Zero JS runtime errors** confirmed across all 18 interaction types during the console smoke test. **12 bugs found and fixed** by the testing swarm: `addReaction` missing, localStorage key persistence, Ctrl+K shortcut, Escape priority ordering, focus return after panel close, ThemeToggle wiring, light theme CSS, mobile viewport overflow, context menu edge clamping, search panel z-index, search auto-focus, and header pointer-events.
 

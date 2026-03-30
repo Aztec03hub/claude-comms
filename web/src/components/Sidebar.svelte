@@ -35,7 +35,7 @@
   <div class="sidebar-brand">
     <div class="brand-icon">CC</div>
     <h1>Claude Comms</h1>
-    <span class="brand-version">v0.9</span>
+    <span class="brand-version">v0.1.0</span>
   </div>
 
   <div class="search-wrap">

@@ -336,7 +336,22 @@ export class MqttChatStore {
    * @param {string} messageId - The ID of the message to remove.
    */
   deleteMessage(messageId) {
+    const msg = this.messages.find(m => m.id === messageId);
+    const channel = msg?.channel || msg?.conv || this.activeChannel;
     this.messages = this.messages.filter(m => m.id !== messageId);
+
+    // Broadcast deletion to other clients
+    if (this.#client && this.connected) {
+      const topic = TOPIC_PREFIX + '/conv/' + channel + '/deletions';
+      this.#client.publish(topic, JSON.stringify({
+        message_id: messageId,
+        sender: {
+          key: this.userProfile.key,
+          name: this.userProfile.name,
+          type: this.userProfile.type
+        }
+      }), { qos: 1 });
+    }
   }
 
   /**
@@ -425,8 +440,27 @@ export class MqttChatStore {
       msg.reactions.push({ emoji, count: 1, active: true });
     }
 
+    // Determine action for broadcast
+    const action = existing && !existing.active ? 'remove' : 'add';
+
     // Trigger reactivity by reassigning
     this.messages = [...this.messages];
+
+    // Broadcast reaction to other clients
+    if (this.#client && this.connected) {
+      const channel = msg.channel || msg.conv || this.activeChannel;
+      const topic = TOPIC_PREFIX + '/conv/' + channel + '/reactions';
+      this.#client.publish(topic, JSON.stringify({
+        message_id: messageId,
+        emoji,
+        action,
+        sender: {
+          key: this.userProfile.key,
+          name: this.userProfile.name,
+          type: this.userProfile.type
+        }
+      }), { qos: 1 });
+    }
   }
 
   /**
@@ -436,10 +470,28 @@ export class MqttChatStore {
    */
   togglePin(message) {
     const idx = this.pinnedMessages.findIndex(m => m.id === message.id);
+    const channel = message.channel || message.conv || this.activeChannel;
+    let action;
     if (idx >= 0) {
       this.pinnedMessages.splice(idx, 1);
+      action = 'unpin';
     } else {
-      this.pinnedMessages.push({ ...message, channel: message.conv || this.activeChannel });
+      this.pinnedMessages.push({ ...message, channel });
+      action = 'pin';
+    }
+
+    // Broadcast pin/unpin to other clients
+    if (this.#client && this.connected) {
+      const topic = TOPIC_PREFIX + '/conv/' + channel + '/pins';
+      this.#client.publish(topic, JSON.stringify({
+        message_id: message.id,
+        action,
+        sender: {
+          key: this.userProfile.key,
+          name: this.userProfile.name,
+          type: this.userProfile.type
+        }
+      }), { qos: 1 });
     }
   }
 
