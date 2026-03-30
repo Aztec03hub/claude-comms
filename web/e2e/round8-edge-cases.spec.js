@@ -76,7 +76,9 @@ test.describe('Round 8: Edge Cases', () => {
 
   // --- Very long message wraps correctly ---
   test('long message (500+ chars) wraps correctly', async ({ page }) => {
-    const longText = 'A'.repeat(200) + ' ' + 'B'.repeat(200) + ' ' + 'C'.repeat(150);
+    // Test with a realistic long message with words
+    const words = 'The quick brown fox jumps over the lazy dog. ';
+    const longText = words.repeat(12); // ~540 chars
     await sendMessage(longText);
     await delay(300);
 
@@ -86,11 +88,15 @@ test.describe('Round 8: Edge Cases', () => {
       const rect = b.getBoundingClientRect();
       const chatView = document.querySelector('[data-testid="chat-view"]');
       const chatRect = chatView?.getBoundingClientRect();
+      const msgRow = b.closest('.msg-row');
+      const msgRect = msgRow?.getBoundingClientRect();
       return {
         bubbleWidth: rect.width,
+        msgRowWidth: msgRect?.width || 0,
         chatWidth: chatRect?.width || 0,
         text: b.textContent?.length || 0,
-        overflows: rect.right > (chatRect?.right || window.innerWidth)
+        overflows: rect.right > (chatRect?.right || window.innerWidth),
+        multiLine: rect.height > 60
       };
     })()`);
 
@@ -98,10 +104,38 @@ test.describe('Round 8: Edge Cases', () => {
     expect(bubbleInfo.text).toBeGreaterThanOrEqual(500);
     // Bubble should not overflow the chat view
     expect(bubbleInfo.overflows).toBe(false);
-    // Bubble width should be constrained (max-width: 72%)
-    expect(bubbleInfo.bubbleWidth).toBeLessThan(bubbleInfo.chatWidth);
+    // Bubble should wrap to multiple lines
+    expect(bubbleInfo.multiLine).toBe(true);
 
     await cdpScreenshot('overnight-r8-01-long-message');
+  });
+
+  // --- Very long continuous string wraps ---
+  test('long continuous string (no spaces) wraps', async ({ page }) => {
+    const longUrl = 'https://example.com/' + 'a'.repeat(500);
+    await sendMessage(longUrl);
+    await delay(300);
+
+    const bubbleInfo = await ce(`(() => {
+      const bubbles = document.querySelectorAll('.bubble');
+      const b = bubbles[bubbles.length - 1]; // last bubble
+      if (!b) return null;
+      const rect = b.getBoundingClientRect();
+      const chatView = document.querySelector('[data-testid="chat-view"]');
+      const chatRect = chatView?.getBoundingClientRect();
+      return {
+        bubbleWidth: rect.width,
+        chatWidth: chatRect?.width || 0,
+        overflows: rect.right > (chatRect?.right || window.innerWidth) + 1,
+        multiLine: rect.height > 40
+      };
+    })()`);
+
+    expect(bubbleInfo).not.toBeNull();
+    // After the fix, continuous strings should wrap too
+    expect(bubbleInfo.overflows).toBe(false);
+
+    await cdpScreenshot('overnight-r8-01b-long-url');
   });
 
   // --- Message with @mentions highlighted ---

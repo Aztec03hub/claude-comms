@@ -117,6 +117,7 @@
     gap: 10px;
     max-width: 72%;
     width: fit-content;
+    min-width: 0;
     transition: background var(--transition-fast);
     padding: 5px 10px;
     border-radius: var(--radius);
@@ -202,6 +203,7 @@
     font-size: 14px;
     line-height: 1.65;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
     position: relative;
   }
 
