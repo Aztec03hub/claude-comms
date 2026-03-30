@@ -14,7 +14,7 @@ from typing import Any
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, Header, Input, Label, Static
+from textual.widgets import Footer, Header, Input, Label, Static, RichLog
 from textual.worker import Worker, get_current_worker
 from textual import work
 
@@ -28,6 +28,7 @@ from claude_comms.tui.channel_list import ChannelList, ChannelSelected
 from claude_comms.tui.chat_view import ChatView
 from claude_comms.tui.message_input import MessageInput, MessageSubmitted
 from claude_comms.tui.participant_list import ParticipantList, PresenceState
+from claude_comms.tui.status_bar import StatusBar
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class ClaudeCommsApp(App):
                 yield ChatView(id="chat-view")
                 yield MessageInput(id="message-input-area")
             yield ParticipantList(id="participant-sidebar")
+        yield StatusBar(id="status-bar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -118,6 +120,13 @@ class ClaudeCommsApp(App):
             participant_type=self._type,
             presence=PresenceState.ONLINE,
         )
+
+        # Initialize status bar
+        status_bar = self.query_one("#status-bar", StatusBar)
+        status_bar.active_channel = self._active_conv
+        status_bar.user_name = self._name
+        status_bar.user_key = self._key
+        status_bar.participant_count = len(participant_list.get_names())
 
         # Focus the input
         msg_input.focus_input()
@@ -160,6 +169,11 @@ class ClaudeCommsApp(App):
                 await self._publish_presence(client, "online")
 
                 self._show_system(f"Connected as {self._name} ({self._key})")
+                try:
+                    status_bar = self.query_one("#status-bar", StatusBar)
+                    status_bar.connected = True
+                except Exception:
+                    pass
 
                 # Message receive loop
                 async for mqtt_msg in client.messages:
@@ -175,7 +189,7 @@ class ClaudeCommsApp(App):
                         elif "/presence/" in topic:
                             await self._handle_presence(topic, payload)
                         elif "/typing/" in topic:
-                            pass  # typing indicators — future enhancement
+                            await self._handle_typing(topic, payload)
                     except Exception as exc:
                         logger.debug("Error handling MQTT message: %s", exc)
 
@@ -263,6 +277,32 @@ class ClaudeCommsApp(App):
             presence=state,
         )
 
+        # Update participant count in status bar
+        try:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.participant_count = len(participant_list.get_names())
+        except Exception:
+            pass
+
+    async def _handle_typing(self, topic: str, payload: bytes) -> None:
+        """Process a typing indicator from MQTT."""
+        try:
+            data = json.loads(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+
+        name = data.get("name", "")
+        is_typing = data.get("typing", False)
+
+        if not name or name == self._name:
+            return  # Don't show our own typing
+
+        try:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.typing_who = name if is_typing else ""
+        except Exception:
+            pass
+
     # -- Message sending -------------------------------------------------------
 
     def on_message_submitted(self, event: MessageSubmitted) -> None:
@@ -326,6 +366,14 @@ class ClaudeCommsApp(App):
         # Switch chat view
         chat_view = self.query_one("#chat-view", ChatView)
         chat_view.switch_conversation(conv_id)
+
+        # Update status bar
+        try:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.active_channel = conv_id
+            status_bar.typing_who = ""  # Clear typing on channel switch
+        except Exception:
+            pass
 
         # Resubscribe to new conversation topics
         self._resubscribe_conversation(old_conv, conv_id)
