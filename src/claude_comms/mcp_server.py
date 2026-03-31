@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -32,15 +33,30 @@ from claude_comms.participant import CONNECTION_TYPES, ConnectionInfo
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     PublishFn,
+    tool_comms_artifact_create,
+    tool_comms_artifact_update,
+    tool_comms_artifact_get,
+    tool_comms_artifact_list,
+    tool_comms_artifact_delete,
     tool_comms_check,
+    tool_comms_conversation_create,
+    tool_comms_conversation_update,
     tool_comms_conversations,
     tool_comms_history,
+    tool_comms_invite,
     tool_comms_join,
     tool_comms_leave,
     tool_comms_members,
     tool_comms_read,
     tool_comms_send,
     tool_comms_update_name,
+)
+from claude_comms.conversation import (
+    LastActivityTracker,
+    backfill_missing_metadata,
+    ensure_general_exists,
+    list_all_conversations,
+    load_meta,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +70,10 @@ _store: MessageStore | None = None
 _deduplicator: MessageDeduplicator | None = None
 _publish_fn: PublishFn | None = None
 _config: dict[str, Any] | None = None
+_data_dir: Path | None = None
+_conv_data_dir: Path | None = None
+_activity_tracker: LastActivityTracker | None = None
+_topic_rate_limit: dict[str, float] = {}  # conversation -> last system msg monotonic time
 
 
 def _get_registry() -> ParticipantRegistry:
@@ -72,6 +92,18 @@ def _get_store() -> MessageStore:
             "MCP server not initialised. Call create_server() before using tools."
         )
     return _store
+
+
+def _get_data_dir() -> Path:
+    if _data_dir is None:
+        raise RuntimeError("MCP server not initialised.")
+    return _data_dir
+
+
+def _get_conv_data_dir() -> Path:
+    if _conv_data_dir is None:
+        raise RuntimeError("MCP server not initialised.")
+    return _conv_data_dir
 
 
 def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
@@ -110,6 +142,80 @@ def get_channel_participants(channel: str) -> list[dict]:
         }
         for m in members
     ]
+
+
+def get_conversation_artifacts(conversation: str) -> list[dict]:
+    """Return artifact summaries for a conversation (backing REST endpoint)."""
+    if _data_dir is None:
+        return []
+    from claude_comms.artifact import list_artifacts
+    return list_artifacts(conversation, _data_dir)
+
+
+def get_artifact(conversation: str, name: str, version: int | None = None) -> dict | None:
+    """Return artifact data for REST endpoint. Latest version content + version metadata."""
+    if _data_dir is None:
+        return None
+    from claude_comms.artifact import load_artifact, DEFAULT_GET_CHUNK_SIZE
+    artifact = load_artifact(conversation, name, _data_dir)
+    if artifact is None:
+        return None
+
+    # Select version
+    if version is not None:
+        selected = None
+        for v in artifact.versions:
+            if v.version == version:
+                selected = v
+                break
+        if selected is None:
+            return None
+    else:
+        selected = artifact.versions[-1] if artifact.versions else None
+
+    if selected is None:
+        return None
+
+    # Version metadata list (no content)
+    version_meta = [
+        {"version": v.version, "author": v.author.model_dump(), "timestamp": v.timestamp, "summary": v.summary}
+        for v in artifact.versions
+    ]
+
+    return {
+        "name": artifact.name,
+        "title": artifact.title,
+        "type": artifact.type,
+        "version": selected.version,
+        "content": selected.content,
+        "versions": version_meta,
+    }
+
+
+def get_all_conversations(key: str | None = None) -> list[dict]:
+    """Return all conversations with metadata for REST API."""
+    if _conv_data_dir is None:
+        return []
+    metas = list_all_conversations(_conv_data_dir)
+    result = []
+    for meta in metas:
+        entry = {
+            "name": meta.name,
+            "topic": meta.topic,
+            "last_activity": _activity_tracker.get(meta.name) if _activity_tracker else meta.last_activity,
+            "created_by": meta.created_by,
+            "created_at": meta.created_at,
+        }
+        if _registry:
+            members = _registry.members(meta.name)
+            entry["member_count"] = len(members)
+            if key:
+                convs = _registry.conversations_for(key)
+                entry["joined"] = meta.name in convs
+        if _store:
+            entry["message_count"] = len(_store.get(meta.name))
+        result.append(entry)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +285,9 @@ async def _mqtt_subscriber(
                             if deduplicator.is_duplicate(msg_id):
                                 continue
                             store.add(conv_id, data)
+                            if _activity_tracker is not None:
+                                _activity_tracker.update(conv_id, data.get("ts", ""))
+                                _activity_tracker.flush_if_due(_conv_data_dir)
                             # Persist to disk for replay on restart
                             if log_exporter is not None:
                                 try:
@@ -326,11 +435,23 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     FastMCP
         The configured server instance (not yet running).
     """
-    global _registry, _store, _deduplicator, _publish_fn, _config
+    global _registry, _store, _deduplicator, _publish_fn, _config, _data_dir, _conv_data_dir, _activity_tracker
 
     if config is None:
         config = load_config()
     _config = config
+
+    _data_dir = Path(config.get("artifacts", {}).get("data_dir", "~/.claude-comms/artifacts")).expanduser()
+    _data_dir.mkdir(parents=True, exist_ok=True)
+
+    _conv_data_dir = Path(config.get("conversations", {}).get("data_dir", "~/.claude-comms/conversations")).expanduser()
+    _conv_data_dir.mkdir(parents=True, exist_ok=True)
+    _activity_tracker = LastActivityTracker()
+
+    # Bootstrap "general" and backfill missing metadata
+    ensure_general_exists(_conv_data_dir)
+    log_dir = Path(config.get("logging", {}).get("dir", "~/.claude-comms/logs")).expanduser()
+    backfill_missing_metadata(_conv_data_dir, log_dir)
 
     mcp_cfg = config.get("mcp", {})
     host = mcp_cfg.get("host", "127.0.0.1")
@@ -344,8 +465,6 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # Replay JSONL logs
     logging_cfg = config.get("logging", {})
     log_dir = logging_cfg.get("dir", "~/.claude-comms/logs")
-    from pathlib import Path
-
     log_path = Path(log_dir).expanduser()
     replay_jsonl_logs(
         log_dir=log_path,
@@ -375,7 +494,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    def comms_join(
+    async def comms_join(
         key: Annotated[
             str | None,
             Field(description="Your participant key (omit on first call)"),
@@ -390,8 +509,10 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Join a conversation. Returns your participant key. Call with name on first use; key on subsequent calls."""
-        result = tool_comms_join(
-            _get_registry(), key=key, conversation=conversation, name=name
+        result = await tool_comms_join(
+            _get_registry(), key=key, conversation=conversation, name=name,
+            publish_fn=_publish_fn,
+            conv_data_dir=_get_conv_data_dir(),
         )
         # Publish presence so TUI/web clients see this participant.
         # Publishes to both conv-scoped and system-scoped topics to
@@ -502,9 +623,13 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     @mcp.tool()
     def comms_conversations(
         key: Annotated[str, Field(description="Your participant key")],
+        all: Annotated[bool, Field(description="If true, list ALL conversations (not just joined)")] = False,
     ) -> dict[str, Any]:
-        """List all conversations you have joined with unread counts."""
-        return tool_comms_conversations(_get_registry(), _get_store(), key=key)
+        """List all conversations you have joined with unread counts. Use all=true to discover all conversations."""
+        return tool_comms_conversations(
+            _get_registry(), _get_store(), key=key,
+            all=all, conv_data_dir=_get_conv_data_dir(),
+        )
 
     @mcp.tool()
     def comms_update_name(
@@ -534,6 +659,149 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             conversation=conversation,
             query=query,
             count=count,
+        )
+
+    @mcp.tool()
+    async def comms_artifact_create(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Target conversation")],
+        name: Annotated[str, Field(description="Artifact slug (lowercase, hyphens, e.g. 'backend-plan')")],
+        title: Annotated[str, Field(description="Human-readable title")],
+        type: Annotated[str, Field(description="Artifact type: plan, doc, or code")],
+        content: Annotated[str, Field(description="Initial content (markdown, code, etc.)")],
+    ) -> dict[str, Any]:
+        """Create a new collaborative artifact in a conversation. Returns artifact metadata."""
+        assert _publish_fn is not None, "Publish function not initialised"
+        return await tool_comms_artifact_create(
+            _get_registry(),
+            _publish_fn,
+            key=key,
+            conversation=conversation,
+            name=name,
+            title=title,
+            type=type,
+            content=content,
+            data_dir=_get_data_dir(),
+        )
+
+    @mcp.tool()
+    async def comms_artifact_update(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Target conversation")],
+        name: Annotated[str, Field(description="Artifact slug to update")],
+        content: Annotated[str, Field(description="New content (full replacement)")],
+        summary: Annotated[str, Field(description="Brief description of changes")] = "",
+        base_version: Annotated[int | None, Field(description="Expected current version for concurrency check (optional)")] = None,
+    ) -> dict[str, Any]:
+        """Update an artifact with new content. Optionally check base_version for concurrency safety."""
+        assert _publish_fn is not None, "Publish function not initialised"
+        return await tool_comms_artifact_update(
+            _get_registry(),
+            _publish_fn,
+            key=key,
+            conversation=conversation,
+            name=name,
+            content=content,
+            summary=summary,
+            base_version=base_version,
+            data_dir=_get_data_dir(),
+        )
+
+    @mcp.tool()
+    async def comms_artifact_delete(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Target conversation")],
+        name: Annotated[str, Field(description="Artifact slug to delete")],
+    ) -> dict[str, Any]:
+        """Delete an artifact and all its versions from a conversation."""
+        assert _publish_fn is not None, "Publish function not initialised"
+        return await tool_comms_artifact_delete(
+            _get_registry(),
+            _publish_fn,
+            key=key,
+            conversation=conversation,
+            name=name,
+            data_dir=_get_data_dir(),
+        )
+
+    @mcp.tool()
+    def comms_artifact_get(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Target conversation")],
+        name: Annotated[str, Field(description="Artifact slug to read")],
+        version: Annotated[int | None, Field(description="Specific version number (default: latest)")] = None,
+        offset: Annotated[int, Field(description="Character offset for chunked reading (default: 0)")] = 0,
+        limit: Annotated[int | None, Field(description="Max characters to return (default: 50000)")] = None,
+    ) -> dict[str, Any]:
+        """Read an artifact's content with optional chunked pagination. Returns content chunk + version metadata."""
+        return tool_comms_artifact_get(
+            _get_registry(),
+            key=key,
+            conversation=conversation,
+            name=name,
+            version=version,
+            offset=offset,
+            limit=limit,
+            data_dir=_get_data_dir(),
+        )
+
+    @mcp.tool()
+    def comms_artifact_list(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Target conversation")],
+    ) -> dict[str, Any]:
+        """List all artifacts in a conversation with summary metadata (no content)."""
+        return tool_comms_artifact_list(
+            _get_registry(),
+            key=key,
+            conversation=conversation,
+            data_dir=_get_data_dir(),
+        )
+
+    # -- Conversation discovery tools --
+
+    @mcp.tool()
+    async def comms_conversation_create(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="New conversation slug (lowercase, hyphens)")],
+        topic: Annotated[str, Field(description="Conversation topic/description")] = "",
+    ) -> dict[str, Any]:
+        """Create a new conversation with optional topic. Auto-joins you and all human participants."""
+        assert _publish_fn is not None
+        return await tool_comms_conversation_create(
+            _get_registry(), _publish_fn,
+            key=key, conversation=conversation, topic=topic,
+            conv_data_dir=_get_conv_data_dir(),
+        )
+
+    @mcp.tool()
+    async def comms_conversation_update(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation to update")],
+        topic: Annotated[str, Field(description="New topic/description")],
+    ) -> dict[str, Any]:
+        """Update a conversation's topic. System message rate-limited to 1/min."""
+        assert _publish_fn is not None
+        return await tool_comms_conversation_update(
+            _get_registry(), _publish_fn,
+            key=key, conversation=conversation, topic=topic,
+            conv_data_dir=_get_conv_data_dir(),
+            rate_limit_state=_topic_rate_limit,
+        )
+
+    @mcp.tool()
+    async def comms_invite(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation to invite to")],
+        target_name: Annotated[str, Field(description="Name of participant to invite")],
+        message: Annotated[str, Field(description="Optional invite message")] = "",
+    ) -> dict[str, Any]:
+        """Invite a participant to a conversation. Posts invite notification in #general."""
+        assert _publish_fn is not None
+        return await tool_comms_invite(
+            _get_registry(), _publish_fn,
+            key=key, conversation=conversation, target_name=target_name, message=message,
+            conv_data_dir=_get_conv_data_dir(),
         )
 
     return mcp

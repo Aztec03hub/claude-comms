@@ -21,6 +21,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, Static
 from textual import work
 
+from claude_comms.artifact import (
+    list_artifacts,
+    load_artifact,
+    validate_artifact_name,
+    DEFAULT_GET_CHUNK_SIZE,
+)
+from claude_comms.conversation import (
+    list_all_conversations,
+    load_meta,
+)
 from claude_comms.broker import generate_client_id
 from claude_comms.config import load_config
 from claude_comms.mention import resolve_mentions
@@ -86,6 +96,13 @@ class ClaudeCommsApp(App):
         self._active_conv = self._config.get("default_conversation", "general")
         auto_join = self._config.get("mcp", {}).get("auto_join", ["general"])
         self._conversations: list[str] = list(auto_join) if auto_join else ["general"]
+
+        # Artifact data directory
+        self._artifact_dir = Path(
+            self._config.get("artifacts", {}).get(
+                "data_dir", "~/.claude-comms/artifacts"
+            )
+        ).expanduser()
 
         # MQTT client reference (set by worker)
         self._mqtt_client = None
@@ -373,7 +390,12 @@ class ClaudeCommsApp(App):
             return
 
         chat_view = self.query_one("#chat-view", ChatView)
-        chat_view.add_message(msg)
+
+        # Route system-type messages through the system message renderer
+        if msg.sender.type == "system":
+            chat_view.add_system_message(msg.body, conv=msg.conv)
+        else:
+            chat_view.add_message(msg)
 
         # Update channel list preview and unread
         channel_list = self.query_one("#channel-sidebar", ChannelList)
@@ -515,6 +537,16 @@ class ClaudeCommsApp(App):
         # Clear typing indicator on send
         self._last_typing_publish = 0.0
         self._publish_typing(False)
+
+        # Intercept slash commands before sending as a chat message
+        if event.body.startswith("/discover"):
+            self._handle_discover_command(event.body)
+            return
+
+        if event.body.startswith("/artifact"):
+            self._handle_artifact_command(event.body)
+            return
+
         self._send_message(event.body)
 
     @work(thread=False)
@@ -547,6 +579,146 @@ class ClaudeCommsApp(App):
         except Exception as exc:
             self._show_system(f"Send failed: {exc}")
             logger.exception("Failed to publish message")
+
+    # -- Artifact slash commands ------------------------------------------------
+
+    def _handle_artifact_command(self, body: str) -> None:
+        """Handle /artifact slash commands."""
+        parts = body.strip().split(None, 2)
+        subcommand = parts[1] if len(parts) > 1 else "list"
+
+        if subcommand == "list":
+            self._artifact_list()
+        elif subcommand == "view" and len(parts) > 2:
+            self._artifact_view(parts[2])
+        elif subcommand == "help":
+            self._artifact_help()
+        else:
+            self._artifact_help()
+
+    def _artifact_list(self) -> None:
+        """Display artifacts in the current conversation."""
+        artifacts = list_artifacts(self._active_conv, self._artifact_dir)
+        chat = self.query_one("#chat-view", ChatView)
+
+        if not artifacts:
+            chat.add_system_message("[dim]No artifacts in this conversation.[/dim]")
+            return
+
+        lines = ["[bold]Artifacts:[/bold]"]
+        for a in artifacts:
+            type_badge = {"plan": "\U0001f4cb", "doc": "\U0001f4c4", "code": "\U0001f4bb"}.get(
+                a["type"], "\U0001f4c4"
+            )
+            lines.append(
+                f"  {type_badge} [bold]{a['title']}[/bold] ({a['name']}) "
+                f"\u2014 v{a['version_count']}, by {a.get('author', {}).get('name', '?')}"
+            )
+        lines.append("[dim]Use /artifact view <name> to read an artifact[/dim]")
+        chat.add_system_message("\n".join(lines))
+
+    def _artifact_view(self, name: str) -> None:
+        """Display an artifact's content in the chat view."""
+        chat = self.query_one("#chat-view", ChatView)
+
+        if not validate_artifact_name(name):
+            chat.add_system_message(f"[red]Invalid artifact name: {name!r}[/red]")
+            return
+
+        artifact = load_artifact(self._active_conv, name, self._artifact_dir)
+
+        if artifact is None:
+            chat.add_system_message(f"[red]Artifact '{name}' not found.[/red]")
+            return
+
+        latest = artifact.versions[-1] if artifact.versions else None
+        if latest is None:
+            chat.add_system_message(f"[red]Artifact '{name}' has no versions.[/red]")
+            return
+
+        # Truncate content for display (Rich markup in terminal)
+        content = latest.content
+        if len(content) > DEFAULT_GET_CHUNK_SIZE:
+            content = (
+                content[:DEFAULT_GET_CHUNK_SIZE]
+                + f"\n\n[dim]... truncated ({len(latest.content)} chars total)[/dim]"
+            )
+
+        header = (
+            f"[bold]{artifact.title}[/bold] ({artifact.name}) \u2014 "
+            f"v{latest.version} by {latest.author.name}"
+        )
+        if latest.summary:
+            header += f"\n[dim]{latest.summary}[/dim]"
+
+        chat.add_system_message(f"{header}\n{'\u2500' * 40}\n{content}")
+
+    def _artifact_help(self) -> None:
+        """Show artifact command help."""
+        chat = self.query_one("#chat-view", ChatView)
+        chat.add_system_message(
+            "[bold]Artifact Commands:[/bold]\n"
+            "  /artifact list \u2014 List all artifacts\n"
+            "  /artifact view <name> \u2014 View an artifact\n"
+            "  /artifact help \u2014 Show this help"
+        )
+
+    # -- Discover slash commands ------------------------------------------------
+
+    def _handle_discover_command(self, body: str) -> None:
+        """Handle /discover slash command -- list all conversations."""
+        parts = body.strip().split(None, 1)
+        subcommand = parts[0] if parts else "/discover"
+
+        if subcommand == "/discover":
+            self._discover_list()
+        else:
+            self._discover_help()
+
+    def _discover_list(self) -> None:
+        """List all conversations with metadata."""
+        conv_data_dir = Path(
+            self._config.get("conversations", {}).get(
+                "data_dir", "~/.claude-comms/conversations"
+            )
+        ).expanduser()
+
+        conversations = list_all_conversations(conv_data_dir)
+        chat = self.query_one(ChatView)
+
+        if not conversations:
+            chat.add_system_message("[dim]No conversations found.[/dim]")
+            return
+
+        # Sort by last_activity (most recent first)
+        conversations.sort(key=lambda c: c.last_activity, reverse=True)
+
+        lines = ["[bold]All Conversations:[/bold]"]
+        for conv in conversations:
+            # Check membership
+            is_member = (
+                conv.name == self._active_conv
+                or conv.name in self._conversations
+            )
+            status = (
+                "[green]joined[/green]" if is_member else "[dim]not joined[/dim]"
+            )
+            topic_str = f" \u2014 {conv.topic}" if conv.topic else ""
+            lines.append(
+                f"  [bold]#{conv.name}[/bold]{topic_str} ({status})"
+                f"\n    Last activity: "
+                f"{conv.last_activity[:19] if conv.last_activity else 'never'}"
+            )
+        lines.append("\n[dim]Use Ctrl+N to join a conversation[/dim]")
+        chat.add_system_message("\n".join(lines))
+
+    def _discover_help(self) -> None:
+        """Show discover command help."""
+        chat = self.query_one("#chat-view", ChatView)
+        chat.add_system_message(
+            "[bold]Discover Commands:[/bold]\n"
+            "  /discover \u2014 Browse all conversations"
+        )
 
     # -- Channel switching -----------------------------------------------------
 
@@ -709,7 +881,7 @@ class HelpScreen(ModalScreen):
     }
     #help-dialog {
         width: 60;
-        height: 20;
+        height: 25;
         background: #1c1c1e;
         border: round #d97706;
         padding: 1 2;
@@ -743,4 +915,9 @@ class HelpScreen(ModalScreen):
             yield Label("  Shift+Tab   Navigate focus", classes="help-line")
             yield Label("  @name       Mention a participant", classes="help-line")
             yield Label("  ```lang     Code block (with syntax)", classes="help-line")
+            yield Label("", classes="help-line")
+            yield Label("  /artifact list       List artifacts", classes="help-line")
+            yield Label("  /artifact view <n>   View an artifact", classes="help-line")
+            yield Label("  /artifact help       Artifact help", classes="help-line")
+            yield Label("  /discover            Browse all conversations", classes="help-line")
             yield Label("Press Escape or F1 to close", classes="help-footer")

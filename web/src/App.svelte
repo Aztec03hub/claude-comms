@@ -16,10 +16,12 @@
   import SearchPanel from './components/SearchPanel.svelte';
   import ThreadPanel from './components/ThreadPanel.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
+  import ArtifactPanel from './components/ArtifactPanel.svelte';
+  import ConversationBrowser from './components/ConversationBrowser.svelte';
   import UserProfileView from './components/UserProfileView.svelte';
   import ForwardPicker from './components/ForwardPicker.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
-  import { Users, Search, Pin, Settings, Menu } from 'lucide-svelte';
+  import { Users, Search, Pin, Settings, Menu, FileText } from 'lucide-svelte';
 
   const store = new MqttChatStore();
 
@@ -43,12 +45,14 @@
   let emojiPickerTarget = $state(null);
   let showMemberList = $state(true);
   let showSettingsPanel = $state(false);
+  let showArtifactPanel = $state(false);
   let showDeleteConfirm = $state(false);
   let deleteTarget = $state(null);
   let showUserProfileView = $state(false);
   let userProfileTarget = $state(null);
   let showForwardPicker = $state(false);
   let forwardTarget = $state(null);
+  let showConversationBrowser = $state(false);
   let showMobileSidebar = $state(false);
 
   // Reactive bridges — poll store state to work around Svelte 5
@@ -116,6 +120,10 @@
         showPinnedPanel = false;
       } else if (showSettingsPanel) {
         showSettingsPanel = false;
+      } else if (showArtifactPanel) {
+        showArtifactPanel = false;
+      } else if (showConversationBrowser) {
+        showConversationBrowser = false;
       } else if (showSearchPanel) {
         showSearchPanel = false;
       } else if (showThreadPanel) {
@@ -254,6 +262,7 @@
     <Sidebar
       {store}
       onCreateChannel={() => showChannelModal = true}
+      onBrowseChannels={() => showConversationBrowser = !showConversationBrowser}
       onShowProfile={handleShowProfile}
       onMuteChannel={(channelId) => store.muteChannel(channelId)}
       onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
@@ -281,6 +290,9 @@
         </button>
         <button class="header-btn" title="Pinned messages" onclick={() => showPinnedPanel = !showPinnedPanel} data-testid="header-pin-btn">
           <Pin size={16} strokeWidth={2} />
+        </button>
+        <button class="header-btn" title="Artifacts" onclick={() => showArtifactPanel = !showArtifactPanel} data-testid="header-artifacts-btn">
+          <FileText size={16} strokeWidth={2} />
         </button>
         <ThemeToggle mode={theme} onToggle={toggleTheme} />
         <button class="header-btn" title="Settings" onclick={() => showSettingsPanel = !showSettingsPanel} data-testid="header-settings-btn">
@@ -331,6 +343,24 @@
         {theme}
         onClose={() => showSettingsPanel = false}
         onToggleTheme={toggleTheme}
+      />
+    {/if}
+
+    {#if showArtifactPanel}
+      <ArtifactPanel
+        {store}
+        onClose={() => showArtifactPanel = false}
+      />
+    {/if}
+
+    {#if showConversationBrowser}
+      <ConversationBrowser
+        {store}
+        onClose={() => showConversationBrowser = false}
+        onJoinChannel={(name) => {
+          store.switchChannel(name);
+          showConversationBrowser = false;
+        }}
       />
     {/if}
 

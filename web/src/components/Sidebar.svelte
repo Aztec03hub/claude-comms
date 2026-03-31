@@ -8,9 +8,9 @@
   @prop {Function} onOpenSettings - Callback invoked to open the settings panel.
 -->
 <script>
-  import { Hash, VolumeX, Plus, Settings, Star, ChevronDown, Command } from 'lucide-svelte';
+  import { Hash, VolumeX, Plus, Settings, Star, ChevronDown, Command, Compass } from 'lucide-svelte';
 
-  let { store, onCreateChannel, onShowProfile, onMuteChannel, onOpenSettings } = $props();
+  let { store, onCreateChannel, onBrowseChannels, onShowProfile, onMuteChannel, onOpenSettings } = $props();
 
   let starredCollapsed = $state(false);
   let convoCollapsed = $state(false);
@@ -145,6 +145,11 @@
   <button class="create-channel" onclick={onCreateChannel} data-testid="sidebar-create-channel">
     <Plus size={12} />
     New Conversation
+  </button>
+
+  <button class="browse-channels" onclick={onBrowseChannels} data-testid="sidebar-browse-channels">
+    <Compass size={12} />
+    Browse All
   </button>
 
   <div
@@ -509,6 +514,30 @@
   .create-channel:hover {
     border-color: var(--ember-700);
     border-style: solid;
+    color: var(--ember-400);
+    background: rgba(245,158,11,0.04);
+  }
+
+  .browse-channels {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0 8px 8px;
+    padding: 7px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(245,158,11,0.15);
+    background: none;
+    color: var(--text-faint);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    font-family: inherit;
+  }
+
+  .browse-channels:hover {
+    border-color: var(--ember-700);
     color: var(--ember-400);
     background: rgba(245,158,11,0.04);
   }

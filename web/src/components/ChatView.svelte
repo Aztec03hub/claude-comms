@@ -16,7 +16,7 @@
   import MessageGroup from './MessageGroup.svelte';
   import DateSeparator from './DateSeparator.svelte';
   import ScrollToBottom from './ScrollToBottom.svelte';
-  import { MessageSquare } from 'lucide-svelte';
+  import { MessageSquare, Info } from 'lucide-svelte';
   import { isSameDay } from '../lib/utils.js';
 
   let { messages: messagesProp = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, store = null } = $props();
@@ -68,6 +68,13 @@
 
       if (needDateSep) {
         groups.push({ type: 'date', ts: msg.ts });
+      }
+
+      // System messages get their own group type
+      if (msg.sender.type === 'system') {
+        currentGroup = { type: 'system', messages: [msg] };
+        groups.push(currentGroup);
+        continue;
       }
 
       if (currentGroup &&
@@ -183,6 +190,13 @@
     {#each groupedMessages as group, i}
       {#if group.type === 'date'}
         <DateSeparator ts={group.ts} />
+      {:else if group.type === 'system'}
+        {#each group.messages as msg (msg.id)}
+          <div class="system-message" data-message-id={msg.id} data-testid="system-message-{msg.id}">
+            <Info size={12} strokeWidth={2} />
+            <span class="system-message-text">{msg.body}</span>
+          </div>
+        {/each}
       {:else}
         <MessageGroup
           messages={group.messages}
@@ -280,5 +294,28 @@
   @keyframes emptyPulse {
     0%, 100% { transform: scale(1); opacity: 1; }
     50% { transform: scale(1.04); opacity: 0.85; }
+  }
+
+  /* ── System Messages ── */
+  .system-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 12px;
+    margin: 2px 0;
+    animation: msgAppear 0.3s ease-out both;
+  }
+
+  .system-message :global(svg) {
+    color: var(--text-faint);
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+
+  .system-message-text {
+    font-size: 12px;
+    color: var(--text-faint);
+    line-height: 1.5;
   }
 </style>

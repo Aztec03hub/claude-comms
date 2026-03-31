@@ -7,9 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Conversation Discovery & Invites (2026-03-30)
+
+Browse, create, and invite participants to conversations with full metadata, human-in-the-loop enforcement, and cross-client support.
+
+#### Backend (`src/claude_comms/conversation.py`)
+
+- **`ConversationMeta` Pydantic model** for conversation metadata (topic, creator, created_at, member list)
+- **Metadata file I/O** -- atomic conversation creation using `O_CREAT | O_EXCL` to prevent races
+- **"general" channel bootstrap** -- guaranteed on startup, undeletable
+- **Backfill migration** -- auto-generates metadata for existing conversations missing metadata files
+- **`LastActivityTracker`** -- debounced writes for conversation last-activity timestamps
+
+#### 3 New MCP Tools
+
+- **`comms_conversation_create`** -- Create a conversation with topic, auto-joins creator + all human participants, posts system messages to both new conversation and #general (async)
+- **`comms_conversation_update`** -- Update conversation topic with rate-limited system messages (async)
+- **`comms_invite`** -- Invite a participant to a conversation, posts invite notification in #general (async)
+
+#### Modified Existing Tools
+
+- **`comms_conversations`** -- New `all` parameter: when `all=true`, returns ALL conversations on the server (not just joined), including topic, member_count, message_count, last_activity, and joined status
+- **`comms_join`** -- Now async. On implicit conversation creation (first join to a new name), triggers same side effects as `comms_conversation_create`: auto-joins humans, creates metadata, posts system message
+
+#### Human-in-the-Loop Enforcement
+
+- All human-type participants are automatically joined to any new conversation (server-enforced)
+- Creation notifications always posted to #general so humans always see them
+- "general" channel bootstrapped on startup, undeletable
+
+#### REST API
+
+- **`GET /api/conversations?all=true`** -- List all conversations with metadata (topic, members, activity, joined status)
+
+#### Web UI (`ConversationBrowser.svelte`)
+
+- **Slide-out conversation browser panel** for browsing all conversations on the server
+- **Join button** for unjoined conversations
+- **"Browse All" button** in sidebar
+- **System messages** (`sender.type === "system"`) rendered with distinct style (no avatar, centered, muted, smaller font)
+
+#### TUI
+
+- **`/discover` command** -- List all conversations with topic, join status, and last activity
+- **System message rendering** -- System-type MQTT messages routed to `add_system_message()` for distinct rendering
+
+#### Tests
+
+- **42 unit tests** in `tests/test_conversation.py` covering model, storage, atomic creation, backfill, bootstrap, LastActivityTracker, tool functions, invite validation, rate limiting, conversation listing with `all` param
+
+### Collaborative Artifacts (2026-03-30)
+
+Versioned shared documents for multi-agent collaboration. Participants can create, update, read, list, and delete artifacts within conversations, with optimistic concurrency control to prevent silent overwrites.
+
+#### Backend (`src/claude_comms/artifact.py`)
+
+- **Pydantic models** (`Artifact`, `ArtifactVersion`) for versioned document storage
+- **Artifact types**: `plan`, `doc`, `code`
+- **Atomic writes** (tmp + rename) to prevent corruption on concurrent access
+- **Version pruning** -- max 50 versions per artifact, oldest pruned automatically
+- **Chunked reading** -- 50K character chunks with offset/limit pagination for large artifacts
+- **Name validation** -- lowercase alphanumeric + hyphens slug format
+
+#### 5 MCP Tools
+
+- **`comms_artifact_create`** -- Create a new artifact (async, publishes system message to chat)
+- **`comms_artifact_update`** -- Update with new version, optional `base_version` for optimistic concurrency (async)
+- **`comms_artifact_get`** -- Read content with chunked pagination (sync)
+- **`comms_artifact_list`** -- List artifacts with summary metadata, no content (sync)
+- **`comms_artifact_delete`** -- Delete artifact + all versions (async, publishes system message)
+
+#### REST API
+
+- **`GET /api/artifacts/{conversation}`** -- List all artifacts in a conversation
+- **`GET /api/artifacts/{conversation}/{name}?version=N`** -- Get artifact with optional version selection
+- **CORS/OPTIONS handlers** for both artifact endpoints
+
+#### Web UI (`ArtifactPanel.svelte`)
+
+- **Slide-out panel** triggered from header button (FileText icon)
+- **List view** showing all artifacts with type badges, version count, and author
+- **Detail view** with version selector dropdown and content display
+- Fetches from REST API, reactive to channel changes
+
+#### TUI Commands
+
+- **`/artifact list`** -- List all artifacts in current conversation
+- **`/artifact view <name>`** -- View artifact content
+- **`/artifact help`** -- Show command help
+
+#### Storage
+
+- One JSON file per artifact: `~/.claude-comms/artifacts/{conversation}/{name}.json`
+- No content size limit on write; reads chunked at 50K chars default
+- System messages auto-posted to chat on create/update/delete (sender type "system")
+- System messages use reserved key `00000000` with type "system", published as raw JSON bypassing Message model validation
+
+#### Tests
+
+- **42 unit tests** in `tests/test_artifact.py` covering models, storage, CRUD, validation, version pruning, chunked reading, optimistic concurrency, and MCP tool integration
+- All tools validate: caller key registered, conversation ID valid, artifact name valid, caller is conversation member
+
+#### Design Decisions
+
+- **Optimistic concurrency**: `base_version` param on update prevents silent overwrites when multiple participants edit the same artifact
+- **Collaboration protocol**: draft -> discuss -> revise -> approve
+
 ### Final Overnight Summary (2026-03-30)
 
-- **818 Python tests** (up from 360) -- TUI +20, CLI +31, MCP server +20, plus hundreds of gap/integration tests across all modules
+- **902 Python tests** (up from 818) -- 42 new artifact tests, 42 new conversation discovery tests, plus TUI +20, CLI +31, MCP server +20, and hundreds of gap/integration tests across all modules
 - **Security fixes** -- XSS vulnerability patched in SearchPanel (unsanitized HTML injection); CORS lockdown applied to REST API endpoints
 - **Performance audit complete** -- All 8 audit findings addressed: IntersectionObserver O(1) optimization, `$effect` timer cleanup, message cap (5000), reaction array spread replaced with O(1) self-assignment, 3-chunk Vite build split
 - **CONTRIBUTING.md created** -- Developer onboarding guide with setup, testing, architecture, and contribution workflow

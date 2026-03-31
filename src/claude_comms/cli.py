@@ -313,6 +313,9 @@ def start(
             from claude_comms.mcp_server import (
                 get_channel_messages,
                 get_channel_participants,
+                get_conversation_artifacts,
+                get_artifact,
+                get_all_conversations,
             )
             from claude_comms.message import validate_conv_id
 
@@ -458,6 +461,111 @@ def start(
                     },
                 )
 
+            async def _api_artifacts_list(request: Request) -> JSONResponse:
+                """GET /api/artifacts/{conversation} — list artifacts."""
+                conversation = request.path_params["conversation"]
+                if not validate_conv_id(conversation):
+                    return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
+                artifacts = get_conversation_artifacts(conversation)
+                return JSONResponse(
+                    {"conversation": conversation, "artifacts": artifacts, "count": len(artifacts)},
+                    headers={
+                        "Access-Control-Allow-Origin": next(
+                            (o for o in cors_origins if o in request.headers.get("origin", "")),
+                            cors_origins[0],
+                        ),
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_artifacts_get(request: Request) -> JSONResponse:
+                """GET /api/artifacts/{conversation}/{name}?version=N — get artifact."""
+                conversation = request.path_params["conversation"]
+                name = request.path_params["name"]
+                if not validate_conv_id(conversation):
+                    return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
+                version_param = request.query_params.get("version")
+                version = int(version_param) if version_param else None
+                artifact = get_artifact(conversation, name, version=version)
+                if artifact is None:
+                    return JSONResponse({"error": "Artifact not found"}, status_code=404)
+                return JSONResponse(
+                    artifact,
+                    headers={
+                        "Access-Control-Allow-Origin": next(
+                            (o for o in cors_origins if o in request.headers.get("origin", "")),
+                            cors_origins[0],
+                        ),
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_artifacts_options(request: Request) -> JSONResponse:
+                """OPTIONS preflight for /api/artifacts/{conversation}."""
+                return JSONResponse(
+                    {},
+                    headers={
+                        "Access-Control-Allow-Origin": next(
+                            (o for o in cors_origins if o in request.headers.get("origin", "")),
+                            cors_origins[0],
+                        ),
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_artifacts_name_options(request: Request) -> JSONResponse:
+                """OPTIONS preflight for /api/artifacts/{conversation}/{name}."""
+                return JSONResponse(
+                    {},
+                    headers={
+                        "Access-Control-Allow-Origin": next(
+                            (o for o in cors_origins if o in request.headers.get("origin", "")),
+                            cors_origins[0],
+                        ),
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_conversations(request: Request) -> JSONResponse:
+                """GET /api/conversations?all=true — list conversations."""
+                all_param = request.query_params.get("all", "false").lower() in ("true", "1", "yes")
+                # Get identity key for "joined" status
+                identity = config.get("identity", {})
+                identity_key = identity.get("key", "")
+                if all_param:
+                    conversations = get_all_conversations(key=identity_key)
+                else:
+                    conversations = get_all_conversations(key=identity_key)  # REST always returns all for now
+                return JSONResponse(
+                    {"conversations": conversations, "count": len(conversations)},
+                    headers={
+                        "Access-Control-Allow-Origin": next(
+                            (o for o in cors_origins if o in request.headers.get("origin", "")),
+                            cors_origins[0],
+                        ),
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
+            async def _api_conversations_options(request: Request) -> JSONResponse:
+                """OPTIONS preflight for /api/conversations."""
+                return JSONResponse(
+                    {},
+                    headers={
+                        "Access-Control-Allow-Origin": next(
+                            (o for o in cors_origins if o in request.headers.get("origin", "")),
+                            cors_origins[0],
+                        ),
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                    },
+                )
+
             # Prepend API routes so they take priority over MCP catch-all
             starlette_app.routes.insert(
                 0, Route("/api/messages/{channel}", _api_messages, methods=["GET"])
@@ -489,6 +597,24 @@ def start(
                     _api_participants_options,
                     methods=["OPTIONS"],
                 ),
+            )
+            starlette_app.routes.insert(
+                6, Route("/api/artifacts/{conversation}", _api_artifacts_list, methods=["GET"])
+            )
+            starlette_app.routes.insert(
+                7, Route("/api/artifacts/{conversation}", _api_artifacts_options, methods=["OPTIONS"])
+            )
+            starlette_app.routes.insert(
+                8, Route("/api/artifacts/{conversation}/{name}", _api_artifacts_get, methods=["GET"])
+            )
+            starlette_app.routes.insert(
+                9, Route("/api/artifacts/{conversation}/{name}", _api_artifacts_name_options, methods=["OPTIONS"])
+            )
+            starlette_app.routes.insert(
+                10, Route("/api/conversations", _api_conversations, methods=["GET"])
+            )
+            starlette_app.routes.insert(
+                11, Route("/api/conversations", _api_conversations_options, methods=["OPTIONS"])
             )
 
             import uvicorn
@@ -612,6 +738,9 @@ def start(
             _logging.getLogger("uvicorn").setLevel(_logging.CRITICAL)
 
             mcp_uvi_server.should_exit = True
+            # Flush last_activity timestamps before shutting down
+            if _mcp_mod._activity_tracker is not None and _mcp_mod._conv_data_dir is not None:
+                _mcp_mod._activity_tracker.flush_all(_mcp_mod._conv_data_dir)
             mqtt_sub_task.cancel()
             await pub_client.__aexit__(None, None, None)
             if web_task is not None and web_uvi_server is not None:

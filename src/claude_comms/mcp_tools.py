@@ -11,14 +11,37 @@ server uses ``stateless_http=True`` -- each request is independent).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
+import time
+from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
+from claude_comms.conversation import (
+    RESERVED_CONVERSATION_NAMES,
+    create_conversation_atomic,
+    list_all_conversations,
+    load_meta,
+    save_meta,
+)
+
+from claude_comms.artifact import (
+    Artifact,
+    ArtifactVersion,
+    DEFAULT_GET_CHUNK_SIZE,
+    MAX_VERSIONS,
+    delete_artifact,
+    list_artifacts,
+    load_artifact,
+    save_artifact,
+    validate_artifact_name,
+)
 from claude_comms.broker import MessageStore
 from claude_comms.mention import build_mention_prefix
-from claude_comms.message import Message, validate_conv_id
+from claude_comms.message import Message, Sender, now_iso, validate_conv_id
 from claude_comms.participant import (
     Participant,
     ParticipantType,
@@ -245,12 +268,26 @@ def _validate_key_registered(
     return p
 
 
-def tool_comms_join(
+def _auto_join_humans(registry: ParticipantRegistry, conversation: str) -> list[str]:
+    """Auto-join all human-type participants to a conversation. Returns list of auto-joined keys."""
+    joined_keys: list[str] = []
+    # Use members of "general" as proxy (all humans are in general)
+    general_members = registry.members("general")
+    for member in general_members:
+        if member.type == "human":
+            registry.join(member.name, conversation, key=member.key, participant_type="human")
+            joined_keys.append(member.key)
+    return joined_keys
+
+
+async def tool_comms_join(
     registry: ParticipantRegistry,
     *,
     key: str | None = None,
     conversation: str = "general",
     name: str | None = None,
+    publish_fn: PublishFn | None = None,
+    conv_data_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Join a conversation.  Returns participant info including key."""
     if not validate_conv_id(conversation):
@@ -268,6 +305,29 @@ def tool_comms_join(
             p = registry.join(
                 existing.name, conversation, key=key, participant_type=existing.type
             )
+
+            # Implicit creation: if conv_data_dir provided, try atomic create
+            if conv_data_dir is not None:
+                meta = create_conversation_atomic(
+                    conversation, topic="", created_by=existing.name, data_dir=conv_data_dir
+                )
+                if meta is not None:
+                    # New conversation was created — run side effects
+                    _auto_join_humans(registry, conversation)
+                    if publish_fn is not None:
+                        body = f"[system] {existing.name} created #{conversation}"
+                        system_msg = {
+                            "id": str(uuid4()),
+                            "ts": now_iso(),
+                            "sender": {"key": "00000000", "name": "system", "type": "system"},
+                            "body": body,
+                            "conv": "general",
+                            "recipients": None,
+                            "reply_to": None,
+                        }
+                        topic = "claude-comms/conv/general/messages"
+                        await publish_fn(topic, json.dumps(system_msg).encode())
+
             return {
                 "key": p.key,
                 "name": p.name,
@@ -285,6 +345,29 @@ def tool_comms_join(
         )
 
     p = registry.join(name, conversation)
+
+    # Implicit creation: if conv_data_dir provided, try atomic create
+    if conv_data_dir is not None:
+        meta = create_conversation_atomic(
+            conversation, topic="", created_by=p.name, data_dir=conv_data_dir
+        )
+        if meta is not None:
+            # New conversation was created — run side effects
+            _auto_join_humans(registry, conversation)
+            if publish_fn is not None:
+                body = f"[system] {p.name} created #{conversation}"
+                system_msg = {
+                    "id": str(uuid4()),
+                    "ts": now_iso(),
+                    "sender": {"key": "00000000", "name": "system", "type": "system"},
+                    "body": body,
+                    "conv": "general",
+                    "recipients": None,
+                    "reply_to": None,
+                }
+                topic = "claude-comms/conv/general/messages"
+                await publish_fn(topic, json.dumps(system_msg).encode())
+
     return {
         "key": p.key,
         "name": p.name,
@@ -528,8 +611,14 @@ def tool_comms_conversations(
     store: MessageStore,
     *,
     key: str,
+    all: bool = False,
+    conv_data_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """List conversations the participant has joined, with unread counts."""
+    """List conversations the participant has joined, with unread counts.
+
+    When *all* is True and *conv_data_dir* is provided, also returns all
+    known conversations (including ones the caller hasn't joined).
+    """
     result = _validate_key_registered(registry, key)
     if isinstance(result, dict):
         return result
@@ -552,7 +641,28 @@ def tool_comms_conversations(
             }
         )
 
-    return {"conversations": conv_list}
+    response: dict[str, Any] = {"conversations": conv_list}
+
+    if all and conv_data_dir is not None:
+        joined_set = set(convs)
+        all_metas = list_all_conversations(conv_data_dir)
+        all_convs: list[dict[str, Any]] = []
+        for meta in all_metas:
+            members = registry.members(meta.name)
+            msgs = store.get(meta.name)
+            all_convs.append(
+                {
+                    "name": meta.name,
+                    "topic": meta.topic,
+                    "member_count": len(members),
+                    "message_count": len(msgs),
+                    "last_activity": meta.last_activity,
+                    "joined": meta.name in joined_set,
+                }
+            )
+        response["all_conversations"] = all_convs
+
+    return response
 
 
 def tool_comms_update_name(
@@ -629,3 +739,527 @@ def tool_comms_history(
         "count": len(formatted),
         "has_more": has_more,
     }
+
+
+# ---------------------------------------------------------------------------
+# Artifact tool implementations
+# ---------------------------------------------------------------------------
+
+
+async def tool_comms_artifact_create(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    name: str,
+    title: str,
+    type: str,
+    content: str,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Create a new shared artifact in a conversation."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if not validate_artifact_name(name):
+        return _error(
+            f"Invalid artifact name {name!r}. "
+            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
+        )
+
+    if type not in ("plan", "doc", "code"):
+        return _error(
+            f"Invalid artifact type {type!r}. Must be one of: plan, doc, code."
+        )
+
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    # Check if artifact already exists
+    existing = load_artifact(conversation, name, data_dir)
+    if existing is not None:
+        return _error(
+            f"Artifact {name!r} already exists in conversation {conversation!r}. "
+            "Use comms_artifact_update to modify it."
+        )
+
+    sender = Sender(key=participant.key, name=participant.name, type=participant.type)
+    version = ArtifactVersion(
+        version=1,
+        content=content,
+        author=sender,
+        timestamp=now_iso(),
+        summary="Initial version",
+    )
+    artifact = Artifact(
+        id=str(uuid4()),
+        name=name,
+        title=title,
+        type=type,
+        conversation_id=conversation,
+        created_by=sender,
+        versions=[version],
+    )
+    save_artifact(artifact, data_dir)
+
+    # Publish system message
+    system_msg = {
+        "id": str(uuid4()),
+        "ts": now_iso(),
+        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "body": f"[artifact] {participant.name} created '{title}' (v1)",
+        "conv": conversation,
+        "recipients": None,
+        "reply_to": None,
+        "artifact_ref": name,
+    }
+    topic = f"claude-comms/conv/{conversation}/messages"
+    await publish_fn(topic, json.dumps(system_msg).encode())
+
+    return {"status": "created", "name": name, "title": title, "version": 1}
+
+
+async def tool_comms_artifact_update(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    name: str,
+    content: str,
+    summary: str = "",
+    base_version: int | None = None,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Update an existing artifact with a new version."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if not validate_artifact_name(name):
+        return _error(
+            f"Invalid artifact name {name!r}. "
+            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
+        )
+
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    artifact = load_artifact(conversation, name, data_dir)
+    if artifact is None:
+        return _error(
+            f"Artifact {name!r} not found in conversation {conversation!r}."
+        )
+
+    # Optimistic concurrency check
+    current_version = len(artifact.versions)
+    if base_version is not None and base_version != current_version:
+        return _error(
+            f"Version conflict: you based your edit on v{base_version}, "
+            f"but current version is v{current_version}. "
+            "Re-read the artifact and try again."
+        )
+
+    sender = Sender(key=participant.key, name=participant.name, type=participant.type)
+    new_version = current_version + 1
+    version = ArtifactVersion(
+        version=new_version,
+        content=content,
+        author=sender,
+        timestamp=now_iso(),
+        summary=summary,
+    )
+    artifact.versions.append(version)
+
+    # Prune if versions exceed MAX_VERSIONS (keep newest)
+    if len(artifact.versions) > MAX_VERSIONS:
+        artifact.versions = artifact.versions[-MAX_VERSIONS:]
+
+    save_artifact(artifact, data_dir)
+
+    # Publish system message
+    body = f"[artifact] {participant.name} updated '{artifact.title}' to v{new_version}"
+    if summary:
+        body += f": {summary}"
+    system_msg = {
+        "id": str(uuid4()),
+        "ts": now_iso(),
+        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "body": body,
+        "conv": conversation,
+        "recipients": None,
+        "reply_to": None,
+        "artifact_ref": name,
+    }
+    topic = f"claude-comms/conv/{conversation}/messages"
+    await publish_fn(topic, json.dumps(system_msg).encode())
+
+    return {"status": "updated", "name": name, "version": new_version}
+
+
+def tool_comms_artifact_get(
+    registry: ParticipantRegistry,
+    *,
+    key: str,
+    conversation: str,
+    name: str,
+    version: int | None = None,
+    offset: int = 0,
+    limit: int | None = None,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Read an artifact's content with chunked pagination."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if not validate_artifact_name(name):
+        return _error(
+            f"Invalid artifact name {name!r}. "
+            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
+        )
+
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    artifact = load_artifact(conversation, name, data_dir)
+    if artifact is None:
+        return _error(
+            f"Artifact {name!r} not found in conversation {conversation!r}."
+        )
+
+    # Select version
+    if version is not None:
+        selected_version = None
+        for v in artifact.versions:
+            if v.version == version:
+                selected_version = v
+                break
+        if selected_version is None:
+            return _error(
+                f"Version {version} not found for artifact {name!r}. "
+                f"Available versions: {[v.version for v in artifact.versions]}."
+            )
+    else:
+        selected_version = artifact.versions[-1]
+
+    # Chunked content retrieval
+    if limit is None:
+        limit = DEFAULT_GET_CHUNK_SIZE
+    full_content = selected_version.content
+    total_chars = len(full_content)
+    chunk = full_content[offset : offset + limit]
+    has_more = (offset + limit) < total_chars
+    next_offset = offset + limit if has_more else None
+
+    # Version metadata (all versions, no content)
+    version_metadata = [
+        {
+            "version": v.version,
+            "author": v.author.model_dump(),
+            "timestamp": v.timestamp,
+            "summary": v.summary,
+        }
+        for v in artifact.versions
+    ]
+
+    return {
+        "name": artifact.name,
+        "title": artifact.title,
+        "type": artifact.type,
+        "version": selected_version.version,
+        "content": chunk,
+        "total_chars": total_chars,
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": next_offset,
+        "versions": version_metadata,
+    }
+
+
+def tool_comms_artifact_list(
+    registry: ParticipantRegistry,
+    *,
+    key: str,
+    conversation: str,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """List all artifacts in a conversation."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    artifacts = list_artifacts(conversation, data_dir)
+    return {
+        "conversation": conversation,
+        "artifacts": artifacts,
+        "count": len(artifacts),
+    }
+
+
+async def tool_comms_artifact_delete(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    name: str,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Delete an artifact from a conversation."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if not validate_artifact_name(name):
+        return _error(
+            f"Invalid artifact name {name!r}. "
+            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
+        )
+
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    # Load first to get title for the system message
+    artifact = load_artifact(conversation, name, data_dir)
+    if artifact is None:
+        return _error(
+            f"Artifact {name!r} not found in conversation {conversation!r}."
+        )
+    title = artifact.title
+
+    deleted = delete_artifact(conversation, name, data_dir)
+    if not deleted:
+        return _error(f"Failed to delete artifact {name!r}.")
+
+    # Publish system message
+    system_msg = {
+        "id": str(uuid4()),
+        "ts": now_iso(),
+        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "body": f"[artifact] {participant.name} deleted '{title}'",
+        "conv": conversation,
+        "recipients": None,
+        "reply_to": None,
+        "artifact_ref": name,
+    }
+    topic = f"claude-comms/conv/{conversation}/messages"
+    await publish_fn(topic, json.dumps(system_msg).encode())
+
+    return {"status": "deleted", "name": name}
+
+
+# ---------------------------------------------------------------------------
+# Conversation discovery tool implementations
+# ---------------------------------------------------------------------------
+
+
+async def tool_comms_conversation_create(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    topic: str = "",
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Create a new named conversation with optional topic."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(
+            f"Invalid conversation ID {conversation!r}. "
+            "Use lowercase alphanumeric + hyphens, 1-64 chars."
+        )
+
+    if conversation in RESERVED_CONVERSATION_NAMES:
+        return _error(
+            f"Conversation name {conversation!r} is reserved and cannot be created explicitly."
+        )
+
+    meta = create_conversation_atomic(
+        conversation, topic=topic, created_by=participant.name, data_dir=conv_data_dir
+    )
+    if meta is None:
+        return _error(
+            f"Conversation {conversation!r} already exists. "
+            "Use comms_join to join it, or comms_conversation_update to change its topic."
+        )
+
+    # Auto-join creator
+    registry.join(participant.name, conversation, key=key, participant_type=participant.type)
+
+    # Auto-join humans
+    _auto_join_humans(registry, conversation)
+
+    # Publish system message to both the new conversation and "general"
+    body = f"[system] {participant.name} created #{conversation}"
+    if topic:
+        body += f": '{topic}'"
+
+    system_msg_base = {
+        "ts": now_iso(),
+        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "body": body,
+        "recipients": None,
+        "reply_to": None,
+    }
+
+    for target_conv in (conversation, "general"):
+        msg = {**system_msg_base, "id": str(uuid4()), "conv": target_conv}
+        mqtt_topic = f"claude-comms/conv/{target_conv}/messages"
+        await publish_fn(mqtt_topic, json.dumps(msg).encode())
+
+    return {"status": "created", "conversation": conversation, "topic": topic}
+
+
+async def tool_comms_conversation_update(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    topic: str,
+    conv_data_dir: Path,
+    rate_limit_state: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Update a conversation's topic."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    # Check caller is a member
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    meta = load_meta(conversation, conv_data_dir)
+    if meta is None:
+        return _error(f"Conversation {conversation!r} not found.")
+
+    # Update topic and save
+    meta.topic = topic
+    save_meta(meta, conv_data_dir)
+
+    # Rate limiting for system messages
+    system_message_status = "sent"
+    now = time.monotonic()
+    rate_limited = False
+    if rate_limit_state is not None:
+        last_time = rate_limit_state.get(conversation, 0.0)
+        if (now - last_time) < 60.0:
+            rate_limited = True
+            system_message_status = "suppressed (rate limited)"
+
+    if not rate_limited:
+        body = f"[system] {participant.name} updated #{conversation} topic: '{topic}'"
+        system_msg = {
+            "id": str(uuid4()),
+            "ts": now_iso(),
+            "sender": {"key": "00000000", "name": "system", "type": "system"},
+            "body": body,
+            "conv": "general",
+            "recipients": None,
+            "reply_to": None,
+        }
+        mqtt_topic = "claude-comms/conv/general/messages"
+        await publish_fn(mqtt_topic, json.dumps(system_msg).encode())
+        if rate_limit_state is not None:
+            rate_limit_state[conversation] = now
+
+    return {
+        "status": "updated",
+        "conversation": conversation,
+        "topic": topic,
+        "system_message": system_message_status,
+    }
+
+
+async def tool_comms_invite(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    target_name: str,
+    message: str = "",
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Invite a participant to a conversation."""
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    # Validate caller is a member
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    # Validate conversation exists
+    meta = load_meta(conversation, conv_data_dir)
+    if meta is None:
+        return _error(f"Conversation {conversation!r} not found.")
+
+    # Resolve target
+    target_key = registry.resolve_name(target_name)
+    if target_key is None:
+        return _error(f"Unknown participant '{target_name}'.")
+
+    # Check if target is already a member
+    target_convs = registry.conversations_for(target_key)
+    if conversation in target_convs:
+        return {"status": "already_member"}
+
+    # Post system message to "general"
+    body = f"[system] {participant.name} invited {target_name} to #{conversation}"
+    if message:
+        body += f': "{message}"'
+    system_msg = {
+        "id": str(uuid4()),
+        "ts": now_iso(),
+        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "body": body,
+        "conv": "general",
+        "recipients": None,
+        "reply_to": None,
+    }
+    mqtt_topic = "claude-comms/conv/general/messages"
+    await publish_fn(mqtt_topic, json.dumps(system_msg).encode())
+
+    return {"status": "invited"}
