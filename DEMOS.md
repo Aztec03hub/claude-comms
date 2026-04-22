@@ -17,7 +17,7 @@ What NOT to show: terminal windows full of logs, raw JSON, agent internals, erro
 ## Quick Answers
 
 - **Use OBS Studio?** Yes — free, industry standard, WSL-friendly (you record the Windows side). Perfect for 720p/1080p MP4s.
-- **GIFs?** Use **ScreenToGif** (Windows-native, free, dead simple). Alternative: record in OBS and convert with ffmpeg. Skip online GIF converters — they wreck quality.
+- **GIFs?** Use **n-Studio** (Nicke Manarin's paid successor to ScreenToGif — you already own it). Same capture + editor flow as ScreenToGif, refreshed Win11-style UI, full editor is Pro-gated. Alternative: record in OBS and convert with ffmpeg. Skip online GIF converters — they wreck quality.
 - **How long?** Main hero video: **60 seconds max**. Supporting GIFs: **5–15 seconds each, looping**. LinkedIn caps video at 10 minutes but recruiter attention caps at 30 seconds.
 - **How many demos?** One hero video (60s) + 3 focused GIFs (each 10–15s) is the right target. Don't overshoot.
 
@@ -30,9 +30,12 @@ Install these on the Windows side (not WSL) since you're recording your screen:
 | Tool | What for | Link |
 |---|---|---|
 | **OBS Studio** | Video recording | obsproject.com |
-| **ScreenToGif** | GIF capture | screentogif.com |
-| **ffmpeg** | Optional: MP4 → high-quality GIF, compression | via `winget install ffmpeg` |
+| **n-Studio** | GIF capture + editor (Pro license required for the editor) | nicke.tech/n-studio |
+| **ffmpeg** | Optional: MP4 → high-quality GIF, compression, also used by n-Studio's FFmpeg encoder | via `winget install ffmpeg` |
+| **Gifski** | Optional: high-quality GIF encoder that plugs into n-Studio's export | gif.ski |
 | **HandBrake** | Optional: Final MP4 compression for LinkedIn/Twitter | handbrake.fr |
+
+> n-Studio is Windows-only. Installer and portable builds at `nicke.tech/n-studio/downloads`. If the portable zip gets flagged by Windows Defender on first launch, that's a known false-positive on new unsigned exes — grab the installer instead. Pricing: **$36 one-time (all 1.x updates)** or **$3/month (all future updates)**; the recorder + basic exporter are free, the full editor (trim, overlays, captions, frame ops) is behind the Pro paywall, which you'll want for recruiter-facing polish.
 
 Your existing Windows Terminal + VSCode + Chrome are enough for the terminal/browser side.
 
@@ -176,12 +179,54 @@ The tightest possible hook for LinkedIn/Twitter thumbnails.
 
 **Recording format:** MKV (crash-safe) → remux to MP4 after via OBS's built-in remuxer.
 
-### ScreenToGif (for the GIFs)
+### n-Studio (for the GIFs)
 
-- **Frame rate**: 30 fps (GIFs over 30fps rarely pay off for file size)
-- **Area**: Capture the exact region — don't crop in post, it re-encodes and degrades.
-- **Encoder**: Use Gifski (built in), not the default .NET encoder — much better dithering and smaller files.
-- **Target file size**: Under 8 MB for LinkedIn, under 5 MB for Twitter. Tune frame rate (drop to 15fps) and color depth (256 → 128 colors) if needed.
+n-Studio opens with a "how should I start" prompt (record / select region / open editor). Set the default to **New Recording** in Options so you're one click from rolling.
+
+**Capture:**
+
+- **Mode**: Region capture. Drag the recorder over the browser viewport, then use the "Snap to Window" handle to lock onto the Chrome frame — keeps the crop identical across retakes so your three GIFs share a consistent frame.
+- **Frame rate**: **30 fps** for the real-time chat GIFs (smooth cursor / scroll). Drop to **20 fps** for GIF 2 (artifact history) since the motion is click-driven, not animated — saves ~30% file size with no perceived loss.
+- **Capture region size**: Keep it tight. For an 8 MB LinkedIn cap at 30 fps × 10s, you want roughly **1280×720 or smaller**. Oversized capture = big file, and LinkedIn downscales it anyway.
+- **Hotkeys** (inherited from ScreenToGif; confirm in n-Studio's Options → Shortcuts on your install): **F7** start, **F8** pause, **F9** stop. Bind a Start Recording global hotkey so you don't capture the mouse dropping into the recorder window.
+- **Cursor**: Enable "capture cursor" and "highlight clicks" — the click ripple sells the interactivity in GIF 2.
+
+**Editor (Pro):**
+
+- Trim dead space at head and tail frame-by-frame. Target: first frame already shows something interesting (avatar, typing indicator), last frame lands on a complete message so the loop reads as a satisfying beat.
+- For GIF 1, add a subtle caption overlay ("3 agents, real-time") near the end — n-Studio's caption tool bakes it into frames so it survives GitHub's re-encode.
+- Use **Remove Duplicate Frames** (Editor → Reduce Frame Count) before export — for a chat UI with lots of static frames between messages, this can cut file size 40–60% with zero visible change.
+
+**Export:**
+
+n-Studio's GIF exporter inherits ScreenToGif's encoder lineup. Pick based on what the GIF is for:
+
+| Encoder | Use for | Notes |
+|---|---|---|
+| **Gifski** | GIF 1 and GIF 3 (motion-heavy, recruiter-facing) | Highest quality, breaks the 256-color wall via temporal dithering. Quality slider at **~85–90**, not 100 — the top 10% of the slider doubles file size for almost no visible gain. Requires Gifski installed (or bundled — check Tools tab). |
+| **FFmpeg** | Fallback when Gifski output is too big | Smallest files at decent quality. Default command uses a two-pass `palettegen`/`paletteuse` with `stats_mode=diff` — it's good; don't override unless you know what you're doing. |
+| **KGySoft** | GIF 2 (mostly-static UI clicks) | Best for low-motion content with flat colors — the dark Obsidian Forge theme quantizes cleanly. Start with Octree quantizer + Floyd-Steinberg dithering. |
+| **ScreenToGif / System** | Skip | Banding on dark UIs; not recruiter-grade. |
+
+- **Loop**: endless.
+- **Color depth**: leave at the encoder default first. Only drop to 128 colors if you're still over the size cap after the Reduce Frame Count pass.
+- **Target file size**: under **8 MB** for LinkedIn, under **5 MB** for Twitter/X, under **10 MB** for GitHub README embeds (GitHub is forgiving, but renders large GIFs sluggishly on mobile).
+
+**If the GIF is still too big (in this order):**
+
+1. Reduce duplicate frames (Editor → Reduce Frame Count).
+2. Drop frame rate 30 → 20 → 15.
+3. Drop color depth 256 → 128.
+4. Crop tighter (in n-Studio's editor, not in post).
+5. Last resort: shrink resolution. A sharp 960×540 beats a blurry 1280×720 every time.
+
+**Quirks to know:**
+
+- n-Studio is **v1.x and new as of April 2026** — expect occasional rough edges in the editor. Save the project file (File → Save) after every substantive edit so you can re-export without re-recording.
+- Most of the editor/export behavior above is **carried over from ScreenToGif** (the encoder lineup, quality ranges, Gifski/FFmpeg pipeline). I haven't independently verified every setting in n-Studio yet — n-Studio's marketing pages don't enumerate export details. If a menu name or toggle doesn't match, look for the ScreenToGif equivalent; Nicke keeps these apps close behaviorally.
+- Menu/hotkey names may have shifted; if a shortcut listed above doesn't fire, check Options → Shortcuts.
+- The UI is Win11-ish and uses more chrome than ScreenToGif did — leave yourself a bit more monitor real-estate when positioning the recorder.
+- No German localization at launch (not relevant for you — flagging because it's an indicator of how early v1 is).
 
 ---
 
@@ -205,7 +250,7 @@ The tightest possible hook for LinkedIn/Twitter thumbnails.
 1. OBS: start recording.
 2. Run the hero demo. Don't stop for small flubs — do full takes.
 3. Record 3–5 takes. You'll use the best one.
-4. Separately, record the GIFs with ScreenToGif. Each GIF is its own focused take — don't try to extract them from the hero video (resolution and framing will be wrong).
+4. Separately, record the GIFs with n-Studio. Each GIF is its own focused take — don't try to extract them from the hero video (resolution and framing will be wrong).
 
 ### Step 4: Post-production (30 min)
 
@@ -215,8 +260,8 @@ The tightest possible hook for LinkedIn/Twitter thumbnails.
 - Export H.264 MP4, 1080p, 8–12 Mbps target bitrate. File should be under 50 MB.
 
 **GIFs:**
-- In ScreenToGif, trim dead frames, loop-match the first and last frame (important — a clean loop looks much more polished).
-- Export with Gifski encoder, quality 90, max 256 colors.
+- In n-Studio's editor, trim dead frames, loop-match the first and last frame (important — a clean loop looks much more polished).
+- Export with Gifski encoder, quality ~85–90. Color depth can stay at encoder default; only drop to 128 if you're over the size cap.
 
 **Captions:**
 - Add them in post (DaVinci / ClipChamp) rather than recording them as screen overlays. More flexible.
