@@ -143,10 +143,13 @@
   }
 
   // Notify on new messages (when not focused)
+  let lastNotifiedId = $state(null);
   $effect(() => {
     const msgs = store.messages;
     if (msgs.length === 0) return;
     const last = msgs[msgs.length - 1];
+    if (last.id === lastNotifiedId) return;
+    lastNotifiedId = last.id;
     if (last.sender.key !== store.userProfile.key) {
       sendNotification(last.sender.name, {
         body: last.body.slice(0, 100),

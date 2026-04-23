@@ -25,6 +25,12 @@ export default defineConfig({
         manualChunks: {
           'vendor-mqtt': ['mqtt'],
           'vendor-ui': ['bits-ui', 'lucide-svelte'],
+          // Batch 4M: explicit chunks so the CI bundle-size check can
+          // measure markdown and diff vendor surface against documented
+          // ceilings (see scripts/check-bundle-size.mjs and
+          // CONTRIBUTING.md "Bundle size" section).
+          'vendor-markdown': ['marked', 'marked-highlight', 'dompurify', 'shiki'],
+          'vendor-diff': ['diff'],
         }
       }
     }

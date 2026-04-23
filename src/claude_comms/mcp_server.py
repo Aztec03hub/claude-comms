@@ -27,6 +27,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from claude_comms.artifact import migrate_artifact_names_to_nfc
 from claude_comms.broker import MessageDeduplicator, MessageStore, replay_jsonl_logs
 from claude_comms.config import load_config
 from claude_comms.participant import CONNECTION_TYPES, ConnectionInfo
@@ -58,6 +59,7 @@ from claude_comms.conversation import (
     list_all_conversations,
     load_meta,
 )
+from claude_comms.presence import PresenceManager
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,7 @@ _config: dict[str, Any] | None = None
 _data_dir: Path | None = None
 _conv_data_dir: Path | None = None
 _activity_tracker: LastActivityTracker | None = None
+_presence: PresenceManager | None = None
 _topic_rate_limit: dict[str, float] = {}  # conversation -> last system msg monotonic time
 
 
@@ -104,6 +107,25 @@ def _get_conv_data_dir() -> Path:
     if _conv_data_dir is None:
         raise RuntimeError("MCP server not initialised.")
     return _conv_data_dir
+
+
+def _get_presence() -> PresenceManager | None:
+    """Return the presence manager, or None if not initialised.
+
+    Returns None rather than raising — presence is best-effort and tools
+    must continue to work even if the manager hasn't been wired yet.
+    """
+    return _presence
+
+
+def _touch(key: str | None) -> None:
+    """Best-effort refresh of a participant's last_seen timestamp."""
+    if not key or _presence is None:
+        return
+    try:
+        _presence.touch(key)
+    except Exception:
+        logger.exception("Presence touch failed for key %s", key)
 
 
 def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
@@ -296,6 +318,13 @@ async def _mqtt_subscriber(
                                     logger.warning(
                                         "Failed to write message to log", exc_info=True
                                     )
+                            # Refresh presence for message sender (keeps
+                            # CLI/raw-MQTT publishers alive without HTTP).
+                            try:
+                                sender = data.get("sender") or {}
+                                _touch(sender.get("key"))
+                            except Exception:
+                                logger.exception("Presence touch for sender failed")
 
                         # Handle NEW presence topic
                         # Topic: claude-comms/presence/{key}/{client}-{instanceId}
@@ -335,6 +364,8 @@ async def _mqtt_subscriber(
                                         else (ts or ""),
                                         last_seen=ts or "",
                                     )
+                                # Refresh presence — heartbeat from web/TUI
+                                _touch(key)
                             elif status == "offline" and _registry:
                                 p = _registry.get(key)
                                 if p:
@@ -393,6 +424,8 @@ async def _mqtt_subscriber(
                                             else (ts or ""),
                                             last_seen=ts or "",
                                         )
+                                # Refresh presence — heartbeat from web/TUI
+                                _touch(key)
                             elif key and status == "offline" and _registry:
                                 existing = _registry.get(key)
                                 if existing:
@@ -435,7 +468,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     FastMCP
         The configured server instance (not yet running).
     """
-    global _registry, _store, _deduplicator, _publish_fn, _config, _data_dir, _conv_data_dir, _activity_tracker
+    global _registry, _store, _deduplicator, _publish_fn, _config, _data_dir, _conv_data_dir, _activity_tracker, _presence
 
     if config is None:
         config = load_config()
@@ -443,6 +476,17 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
 
     _data_dir = Path(config.get("artifacts", {}).get("data_dir", "~/.claude-comms/artifacts")).expanduser()
     _data_dir.mkdir(parents=True, exist_ok=True)
+
+    # R5-3 / R6-2: one-time NFC migration for pre-existing NFD artifact files
+    # (e.g. from macOS HFS+ fresh installs). Quarantines collisions rather
+    # than leaving split-brain NFD/NFC twins. Runs BEFORE the MQTT subscriber
+    # starts and before any tools are registered.
+    renamed, quarantined = migrate_artifact_names_to_nfc(_data_dir)
+    if renamed or quarantined:
+        logger.warning(
+            "Artifact NFC migration complete: %d renamed, %d quarantined",
+            renamed, quarantined,
+        )
 
     _conv_data_dir = Path(config.get("conversations", {}).get("data_dir", "~/.claude-comms/conversations")).expanduser()
     _conv_data_dir.mkdir(parents=True, exist_ok=True)
@@ -461,6 +505,18 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     _registry = ParticipantRegistry()
     _deduplicator = MessageDeduplicator()
     _store = MessageStore()
+
+    # Presence manager (TTL-based cleanup of stale connections)
+    presence_cfg = config.get("presence", {})
+    ttl = presence_cfg.get("connection_ttl_seconds", 180)
+    sweep = presence_cfg.get("sweep_interval_seconds", 30)
+
+    _presence = PresenceManager(
+        registry=_registry,
+        publish_fn=None,  # wired later once aiomqtt client is up
+        ttl_seconds=ttl,
+        sweep_interval_seconds=sweep,
+    )
 
     # Replay JSONL logs
     logging_cfg = config.get("logging", {})
@@ -543,6 +599,8 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 loop.create_task(_publish_fn(system_topic, presence_payload))
             except Exception:
                 pass  # Non-critical — presence is best-effort
+        if not result.get("error"):
+            _touch(result.get("key"))
         return result
 
     @mcp.tool()
@@ -564,6 +622,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Send a message to a conversation. Optionally target specific recipients by name or key."""
+        _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
         return await tool_comms_send(
             _get_registry(),
@@ -587,6 +646,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Read recent messages from a conversation. Supports pagination via 'since' parameter."""
+        _touch(key)
         return tool_comms_read(
             _get_registry(),
             _get_store(),
@@ -605,6 +665,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Check for unread messages across conversations."""
+        _touch(key)
         return tool_comms_check(
             _get_registry(),
             _get_store(),
@@ -618,6 +679,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         conversation: Annotated[str, Field(description="Conversation to list")],
     ) -> dict[str, Any]:
         """List current participants in a conversation."""
+        _touch(key)
         return tool_comms_members(_get_registry(), key=key, conversation=conversation)
 
     @mcp.tool()
@@ -626,6 +688,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         all: Annotated[bool, Field(description="If true, list ALL conversations (not just joined)")] = False,
     ) -> dict[str, Any]:
         """List all conversations you have joined with unread counts. Use all=true to discover all conversations."""
+        _touch(key)
         return tool_comms_conversations(
             _get_registry(), _get_store(), key=key,
             all=all, conv_data_dir=_get_conv_data_dir(),
@@ -637,6 +700,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         new_name: Annotated[str, Field(description="New display name")],
     ) -> dict[str, Any]:
         """Change your display name. Your key remains the same."""
+        _touch(key)
         return tool_comms_update_name(_get_registry(), key=key, new_name=new_name)
 
     @mcp.tool()
@@ -652,6 +716,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ] = 50,
     ) -> dict[str, Any]:
         """Search message history by text content or sender name."""
+        _touch(key)
         return tool_comms_history(
             _get_registry(),
             _get_store(),
@@ -671,6 +736,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         content: Annotated[str, Field(description="Initial content (markdown, code, etc.)")],
     ) -> dict[str, Any]:
         """Create a new collaborative artifact in a conversation. Returns artifact metadata."""
+        _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
         return await tool_comms_artifact_create(
             _get_registry(),
@@ -694,6 +760,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         base_version: Annotated[int | None, Field(description="Expected current version for concurrency check (optional)")] = None,
     ) -> dict[str, Any]:
         """Update an artifact with new content. Optionally check base_version for concurrency safety."""
+        _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
         return await tool_comms_artifact_update(
             _get_registry(),
@@ -714,6 +781,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         name: Annotated[str, Field(description="Artifact slug to delete")],
     ) -> dict[str, Any]:
         """Delete an artifact and all its versions from a conversation."""
+        _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
         return await tool_comms_artifact_delete(
             _get_registry(),
@@ -734,6 +802,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         limit: Annotated[int | None, Field(description="Max characters to return (default: 50000)")] = None,
     ) -> dict[str, Any]:
         """Read an artifact's content with optional chunked pagination. Returns content chunk + version metadata."""
+        _touch(key)
         return tool_comms_artifact_get(
             _get_registry(),
             key=key,
@@ -751,6 +820,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         conversation: Annotated[str, Field(description="Target conversation")],
     ) -> dict[str, Any]:
         """List all artifacts in a conversation with summary metadata (no content)."""
+        _touch(key)
         return tool_comms_artifact_list(
             _get_registry(),
             key=key,
@@ -767,6 +837,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         topic: Annotated[str, Field(description="Conversation topic/description")] = "",
     ) -> dict[str, Any]:
         """Create a new conversation with optional topic. Auto-joins you and all human participants."""
+        _touch(key)
         assert _publish_fn is not None
         return await tool_comms_conversation_create(
             _get_registry(), _publish_fn,
@@ -781,6 +852,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         topic: Annotated[str, Field(description="New topic/description")],
     ) -> dict[str, Any]:
         """Update a conversation's topic. System message rate-limited to 1/min."""
+        _touch(key)
         assert _publish_fn is not None
         return await tool_comms_conversation_update(
             _get_registry(), _publish_fn,
@@ -797,6 +869,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         message: Annotated[str, Field(description="Optional invite message")] = "",
     ) -> dict[str, Any]:
         """Invite a participant to a conversation. Posts invite notification in #general."""
+        _touch(key)
         assert _publish_fn is not None
         return await tool_comms_invite(
             _get_registry(), _publish_fn,
@@ -851,11 +924,17 @@ def start_server(config: dict[str, Any] | None = None) -> None:
                 identifier=pub_client_id,
             ) as pub_client:
 
-                async def _do_publish(topic: str, payload: bytes) -> None:
-                    await pub_client.publish(topic, payload, qos=1)
+                async def _do_publish(topic: str, payload: bytes, retain: bool = False) -> None:
+                    await pub_client.publish(topic, payload, qos=1, retain=retain)
 
                 _publish_fn = _do_publish
                 logger.info("MCP publish client connected to broker")
+
+                # Wire publish_fn into the presence manager and start the sweep loop
+                if _presence is not None:
+                    _presence.set_publish_fn(_do_publish)
+                    _presence.start()
+                    logger.info("Presence manager started")
 
                 # Run the MCP server (blocks until shutdown)
                 mcp_cfg = config.get("mcp", {})

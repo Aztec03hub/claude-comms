@@ -8,6 +8,7 @@
 <script>
   import { Compass, X, Users, Clock, Hash, LogIn } from 'lucide-svelte';
   import { formatTime } from '../lib/utils.js';
+  import { API_BASE } from '../lib/api.js';
 
   let { store, onClose, onJoinChannel } = $props();
 
@@ -22,7 +23,7 @@
     loading = true;
     error = null;
     try {
-      const res = await fetch('/api/conversations?all=true');
+      const res = await fetch(`${API_BASE}/api/conversations?all=true`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       // Sort by last_activity descending (most recent first)

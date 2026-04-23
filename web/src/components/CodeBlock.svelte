@@ -1,70 +1,59 @@
 <!--
   @component CodeBlock
-  @description Renders a syntax-highlighted code block with line numbers, language label, and a copy-to-clipboard button. Uses a keyword-based highlighter tuned to the Carbon Ember color palette.
+  @description Renders a syntax-highlighted code block with line numbers, language label, and a copy-to-clipboard button. Highlighting is delegated to Shiki via `lib/markdown.js`'s `highlightCode` export — one grammar engine, one theme, across chat code blocks, markdown fences, and artifact `code` bodies.
   @prop {string} language - The programming language label displayed in the header (default: 'code').
   @prop {string} code - Raw code string (used if lines is empty).
   @prop {Array<string>} lines - Pre-split array of code lines (takes precedence over code).
 -->
 <script>
   import { Copy, Check } from 'lucide-svelte';
+  import { highlightCode } from '../lib/markdown.js';
 
   let { language = '', code = '', lines = [] } = $props();
 
   let copied = $state(false);
 
-  function copyCode() {
-    const text = lines.length ? lines.join('\n') : code;
-    navigator.clipboard.writeText(text);
-    copied = true;
-    setTimeout(() => { copied = false; }, 2000);
-  }
-
+  let codeText = $derived(lines.length ? lines.join('\n') : code);
   let codeLines = $derived(
     lines.length ? lines : code.split('\n')
   );
 
-  /* Simple keyword-based syntax highlighting tokens for Carbon Ember palette */
-  const kwSet = new Set([
-    'const','let','var','function','return','if','else','for','while','do',
-    'switch','case','break','continue','class','extends','import','export',
-    'from','default','new','this','typeof','instanceof','in','of','try',
-    'catch','finally','throw','async','await','yield','void','delete',
-    'true','false','null','undefined','def','self','print','elif','pass',
-    'lambda','with','as','raise','except','None','True','False'
-  ]);
+  // Shiki-powered highlighted HTML lines. Populated asynchronously by the
+  // effect below; until the first resolution lands, we render the raw code
+  // lines so the block is never empty on mount.
+  let highlightedLines = $state([]);
 
-  function highlightLine(text) {
-    // Tokenize with a regex that captures strings, comments, numbers, and words
-    return text.replace(
-      /(\/\/.*$|#.*$)|(["'`])(?:(?!\2|\\).|\\.)*\2|(\b\d+(?:\.\d+)?\b)|(\b[a-zA-Z_]\w*\b)/gm,
-      (match, comment, _q, num, word) => {
-        if (comment) return `<span class="hl-comment">${match}</span>`;
-        if (_q) return `<span class="hl-string">${match}</span>`;
-        if (num) return `<span class="hl-number">${match}</span>`;
-        if (word && kwSet.has(word)) return `<span class="hl-keyword">${match}</span>`;
-        if (word && /^[A-Z]/.test(word)) return `<span class="hl-type">${match}</span>`;
-        return match;
-      }
-    );
+  // Monotonic render token (Pattern A from the "Svelte 5 conventions" section).
+  // Every effect run snapshots a fresh token and only applies the awaited
+  // result if the snapshot still matches. Guards against stale resolution if
+  // `codeText` or `language` change faster than Shiki finishes.
+  let renderToken = 0;
+
+  $effect(() => {
+    const t = ++renderToken;
+    const src = codeText;
+    const lang = language;
+    highlightCode(src, lang).then((htmlLines) => {
+      if (t === renderToken) highlightedLines = htmlLines;
+    });
+  });
+
+  function copyCode() {
+    navigator.clipboard.writeText(codeText);
+    copied = true;
+    setTimeout(() => { copied = false; }, 2000);
   }
-
-  function escapeHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  let highlightedLines = $derived(
-    codeLines.map(line => highlightLine(escapeHtml(line)))
-  );
 </script>
 
-<div class="code-block-wrap">
+<div class="code-block-wrap" data-testid="code-block">
   <div class="code-block-header">
-    <span class="code-lang">{language || 'code'}</span>
+    <span class="code-lang" data-testid="code-block-lang">{language || 'code'}</span>
     <button
       class="code-copy-btn"
       class:copied
       onclick={copyCode}
       aria-label={copied ? 'Copied to clipboard' : 'Copy code to clipboard'}
+      data-testid="code-block-copy"
     >
       {#if copied}
         <span class="copy-icon copied-icon"><Check size={12} strokeWidth={2.5} /></span>
@@ -75,7 +64,7 @@
       {/if}
     </button>
   </div>
-  <pre class="code-block">{#each highlightedLines as html, i}<span class="line"><span class="line-num">{i + 1}</span><span class="line-code">{@html html}</span>
+  <pre class="code-block" data-testid="code-block-pre">{#each (highlightedLines.length ? highlightedLines : codeLines) as html, i (i)}<span class="line"><span class="line-num">{i + 1}</span><!-- eslint-disable-next-line svelte/no-at-html-tags --><span class="line-code">{@html html}</span>
 </span>{/each}</pre>
 </div>
 
@@ -248,49 +237,5 @@
     flex: 1;
     min-width: 0;
     white-space: pre;
-  }
-
-  /* ── Syntax Highlighting: Carbon Ember Palette ── */
-  .code-block :global(.hl-keyword) {
-    color: var(--ember-400, #f59e0b);
-    font-weight: 600;
-  }
-
-  .code-block :global(.hl-string) {
-    color: #34d399;
-  }
-
-  .code-block :global(.hl-comment) {
-    color: #4a4540;
-    font-style: italic;
-  }
-
-  .code-block :global(.hl-number) {
-    color: #c084fc;
-  }
-
-  .code-block :global(.hl-type) {
-    color: #67e8f9;
-  }
-
-  /* Light theme syntax overrides */
-  :global(:root[data-theme="light"]) .code-block :global(.hl-keyword) {
-    color: var(--ember-600, #b45309);
-  }
-
-  :global(:root[data-theme="light"]) .code-block :global(.hl-string) {
-    color: #059669;
-  }
-
-  :global(:root[data-theme="light"]) .code-block :global(.hl-comment) {
-    color: #b5b0a8;
-  }
-
-  :global(:root[data-theme="light"]) .code-block :global(.hl-number) {
-    color: #9333ea;
-  }
-
-  :global(:root[data-theme="light"]) .code-block :global(.hl-type) {
-    color: #0891b2;
   }
 </style>

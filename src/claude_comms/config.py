@@ -48,12 +48,44 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,
         "host": "127.0.0.1",
         "port": 9921,
+        # R3-1: reverse-proxy / Tailscale Funnel support. If set, UI uses
+        # this as the API origin. Daemon enters "reverse-proxy mode" which
+        # also disables the edit-in-place POST route.
+        "api_base": None,
+        # R3-6 kill-switch: feature flag for POST /api/artifacts (edit-in-place).
+        # Default off; opt in after reviewing the threat model.
+        "allow_remote_edits": False,
+        # R3-1: explicit WebSocket URL. If null, derived from api_base or
+        # defaults to ws://127.0.0.1:<broker.ws_port>.
+        "ws_url": None,
+        # R6-4 kill-switch: extra origins to merge into CSP connect-src.
+        "csp_extra_connect_src": [],
+        # R6-4 rollback escape hatch for CORS exact-match. Default true
+        # enforces exact-match; set false to re-enable the legacy
+        # substring-match behavior (with a deprecation warning).
+        "strict_cors": True,
+        # R6-4 NFC migration kill-switch.
+        "migrate_nfc_on_startup": True,
+        # R6-4 Shiki rollback: fall back to the legacy keyword-based
+        # code-block highlighter.
+        "use_legacy_codeblock_highlighter": False,
+        # R6-4 markdown rendering escape hatch. When false,
+        # renderMarkdown() returns escaped plain text.
+        "markdown_render_enabled": True,
     },
     "notifications": {
         "hook_enabled": True,
         # sound_enabled is read by the web UI only (SettingsPanel toggle).
         # The Python backend does not use this value.
         "sound_enabled": False,
+    },
+    "presence": {
+        # TTL for MCP connections — if a participant hasn't touched the server
+        # (tool call, message publish, presence heartbeat) within this window,
+        # their connection is removed and offline presence is published.
+        "connection_ttl_seconds": 180,
+        # How often the TTL sweep runs.
+        "sweep_interval_seconds": 30,
     },
     "logging": {
         "dir": "~/.claude-comms/logs",
@@ -68,6 +100,25 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 _ENV_PASSWORD_VAR = "CLAUDE_COMMS_PASSWORD"
+_ENV_REVERSE_PROXY_VAR = "REVERSE_PROXY"
+
+
+def is_reverse_proxy_mode(config: dict[str, Any]) -> bool:
+    """Return True when the daemon should treat itself as being behind a reverse proxy.
+
+    Triggers:
+    - ``web.api_base`` is truthy in the config, OR
+    - the ``REVERSE_PROXY=1`` env var is set.
+
+    In this mode ``request.client.host`` is unreliable (always appears to be
+    loopback), so the POST edit-in-place route must not be registered and the
+    UI must be told (via ``/api/capabilities``) that writes are disabled.
+    """
+    api_base = config.get("web", {}).get("api_base")
+    if api_base:
+        return True
+    env_val = os.environ.get(_ENV_REVERSE_PROXY_VAR, "")
+    return env_val.strip() in ("1", "true", "yes", "on")
 
 
 def get_config_path() -> Path:

@@ -1,15 +1,23 @@
 <!--
   @component ArtifactPanel
-  @description Slide-out panel that displays artifacts for the current conversation. Shows a list view of all artifacts with type badges, version counts, and timestamps. Clicking an artifact opens a detail view with version selector and content display.
+  @description Slide-out panel that displays artifacts for the current conversation. Orchestrates the list + detail views via subcomponents.
+  Owns the shared fetch state (artifacts, artifactCount, loading, error, selectedArtifact, selectedVersion, detailLoading, detailError) and passes it down via props.
   @prop {object} store - The ChatStore instance (uses store.activeChannel for fetching).
   @prop {Function} onClose - Callback invoked to close the artifact panel.
 -->
 <script>
-  import { FileText, Code, ClipboardList, X, ChevronLeft, ChevronDown, Clock, User } from 'lucide-svelte';
-  import { formatTime } from '../lib/utils.js';
+  import { X, Clock } from 'lucide-svelte';
+  import { untrack } from 'svelte';
+  import { API_BASE, apiGet, apiPost } from '../lib/api.js';
+  import ArtifactList from './ArtifactList.svelte';
+  import ArtifactDetailHeader from './ArtifactDetailHeader.svelte';
+  import ArtifactDetailBody from './ArtifactDetailBody.svelte';
+  import RemoteUpdateBanner from './RemoteUpdateBanner.svelte';
+  import ArtifactEditor from './ArtifactEditor.svelte';
 
   let { store, onClose } = $props();
 
+  // Shared fetch state (list view)
   let artifacts = $state([]);
   let artifactCount = $state(0);
   let loading = $state(false);
@@ -22,22 +30,84 @@
   let detailError = $state(null);
   let showVersionDropdown = $state(false);
 
-  const TYPE_CONFIG = {
-    plan: { icon: ClipboardList, label: 'Plan', cssClass: 'type-plan' },
-    doc:  { icon: FileText,      label: 'Doc',  cssClass: 'type-doc' },
-    code: { icon: Code,          label: 'Code', cssClass: 'type-code' },
-  };
+  // Batch 3J additions: view-mode + compare-version + capabilities + copy toast.
+  /** @type {'content'|'diff'} */
+  let viewMode = $state('content');
+  /** @type {number|null} */
+  let compareVersion = $state(null);
+  /** @type {{ writable: boolean } | null} */
+  let capabilities = $state(null);
+  /** @type {string|null} */
+  let toastMessage = $state(null);
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let toastTimer = null;
 
-  function getTypeConfig(type) {
-    return TYPE_CONFIG[type] || TYPE_CONFIG.doc;
+  // Batch 3K: edit-in-place + remote-update banner state (plan §§1, 4).
+  let isEditing = $state(false);
+  /** Dirty flag fed by `ArtifactEditor` via its `onDirtyChange` callback. */
+  let dirtyEdit = $state(false);
+
+  // Remote-update banner state. All three reset together when the banner
+  // is hidden; `bannerSender` / `bannerVersion` drive the banner copy.
+  let remoteBannerVisible = $state(false);
+  let remoteBannerSender = $state('');
+  let remoteBannerVersion = $state(0);
+
+  // Captured textarea state taken right before programmatic focus moves
+  // into the banner. Restored on the preserving exit paths (Keep editing /
+  // X / Esc / auto-dismiss) per plan §1 R5-4.
+  /** @type {{ selectionStart: number, selectionEnd: number, scrollTop: number } | null} */
+  let preBannerState = $state(null);
+
+  /** @type {HTMLTextAreaElement | null} */
+  let editorTextareaEl = null;
+
+  /** Last epoch of `store.latestArtifactRefNotification` we reacted to. */
+  let lastNotificationEpoch = 0;
+
+  function showToast(msg) {
+    toastMessage = msg;
+    if (toastTimer != null) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastMessage = null;
+      toastTimer = null;
+    }, 2000);
   }
 
+  // Fetch capabilities once on mount. `apiGet('/api/capabilities')` is
+  // token-free per lib/api.js. On failure we leave `capabilities = null`,
+  // which causes the Edit button to stay hidden — the safe default.
+  $effect(() => {
+    (async () => {
+      try {
+        const caps = await apiGet('/api/capabilities');
+        capabilities = caps ?? null;
+      } catch (e) {
+        // Daemon may not yet expose /api/capabilities — degrade silently.
+        capabilities = null;
+      }
+    })();
+  });
+
+  // Clean up the toast timer on unmount.
+  $effect(() => {
+    return () => {
+      if (toastTimer != null) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+    };
+  });
+
   async function fetchArtifacts(channel) {
+    // Reset detail view whenever a fresh list fetch starts (channel change or manual refresh)
+    selectedArtifact = null;
+    selectedVersion = null;
     if (!channel) return;
     loading = true;
     error = null;
     try {
-      const res = await fetch(`/api/artifacts/${channel}`);
+      const res = await fetch(`${API_BASE}/api/artifacts/${channel}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       artifacts = data.artifacts || [];
@@ -58,13 +128,25 @@
     detailError = null;
     try {
       const url = version != null
-        ? `/api/artifacts/${channel}/${name}?version=${version}`
-        : `/api/artifacts/${channel}/${name}`;
+        ? `${API_BASE}/api/artifacts/${channel}/${name}?version=${version}`
+        : `${API_BASE}/api/artifacts/${channel}/${name}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      // Tag the detail with its channel so the body component can issue
+      // per-version chunked reads without re-reading store.activeChannel
+      // (which may tick during an async switch).
+      if (!data.channel) data.channel = channel;
       selectedArtifact = data;
       selectedVersion = data.version;
+      // Initialise the compare slot to v(N-1) when multiple versions exist;
+      // otherwise leave null so the Diff toggle is disabled.
+      const versions = data.versions ?? [];
+      if (versions.length > 1 && data.version != null) {
+        compareVersion = data.version - 1;
+      } else {
+        compareVersion = null;
+      }
     } catch (e) {
       detailError = e.message;
     } finally {
@@ -73,14 +155,29 @@
   }
 
   function handleSelectArtifact(artifact) {
+    // Entering detail always starts in 'content' mode (plan §2 default).
+    viewMode = 'content';
     fetchArtifactDetail(artifact.name);
   }
 
   function handleBack() {
+    // Guard against losing unsaved edits when navigating away (plan §4
+    // "Dirty-state protection").
+    if (isEditing && dirtyEdit) {
+      const ok = typeof window !== 'undefined'
+        ? window.confirm('Discard unsaved changes?')
+        : true;
+      if (!ok) return;
+    }
+    isEditing = false;
+    dirtyEdit = false;
+    dismissBanner();
     selectedArtifact = null;
     selectedVersion = null;
     detailError = null;
     showVersionDropdown = false;
+    viewMode = 'content';
+    compareVersion = null;
   }
 
   function handleVersionSelect(v) {
@@ -90,70 +187,390 @@
     }
   }
 
-  // Fetch on mount and when activeChannel changes
+  function toggleVersionDropdown() {
+    showVersionDropdown = !showVersionDropdown;
+  }
+
+  /**
+   * Handle the `[Content | Diff]` segmented toggle. Accepts 'content' or
+   * 'diff'; guards against meaningless diff requests (only one version).
+   */
+  function handleSetViewMode(mode) {
+    if (mode !== 'content' && mode !== 'diff') return;
+    const versions = selectedArtifact?.versions ?? [];
+    if (mode === 'diff' && versions.length < 2) return;
+    viewMode = mode;
+  }
+
+  /** Handle the "Compare:" dropdown selection. */
+  function handleSetCompareVersion(v) {
+    compareVersion = v;
+  }
+
+  /**
+   * Copy the currently-selected version's content to the clipboard and
+   * surface a transient "Copied!" toast.
+   */
+  async function handleCopy() {
+    const text = selectedArtifact?.content ?? '';
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+      }
+      showToast('Copied!');
+    } catch (e) {
+      showToast('Copy failed');
+    }
+  }
+
+  /** File-extension mapping for the Download button (§7). */
+  function extForType(type) {
+    if (type === 'plan' || type === 'doc') return 'md';
+    return 'txt';
+  }
+
+  /**
+   * Trigger a browser download of the currently-selected version's content
+   * as `${name}-v${version}.${ext}`. Uses a transient Blob + anchor element
+   * that we append, click, and remove synchronously.
+   */
+  function handleDownload() {
+    if (!selectedArtifact) return;
+    const text = selectedArtifact.content ?? '';
+    const ext = extForType(selectedArtifact.type);
+    const name = selectedArtifact.name ?? 'artifact';
+    const version = selectedArtifact.version ?? 1;
+    const filename = `${name}-v${version}.${ext}`;
+    const mime = ext === 'md' ? 'text/markdown' : 'text/plain';
+    const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Revoke the object URL after a tick so the browser has time to consume it.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  // Fetch on mount and when activeChannel changes. The fetch function itself
+  // owns any state it mutates; this effect only reads `store.activeChannel`
+  // to register the dependency and delegates the work.
   $effect(() => {
-    const channel = store.activeChannel;
-    // Reset detail view on channel change
-    selectedArtifact = null;
-    selectedVersion = null;
-    fetchArtifacts(channel);
+    fetchArtifacts(store.activeChannel);
   });
+
+  // Real-time refresh (plan §1): when the store's artifactsDirty counter
+  // ticks (driven by incoming chat messages with artifact_ref), debounce
+  // by 150ms to coalesce bursts, then re-fetch the list. Reads the counter
+  // unconditionally so Svelte tracks the dependency.
+  let refreshDebounceTimer = null;
+  $effect(() => {
+    const tick = store.artifactsDirty;
+    // Skip initial run (tick === 0) — the activeChannel effect handles first fetch.
+    if (tick === 0) return;
+    if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+    refreshDebounceTimer = setTimeout(() => {
+      refreshDebounceTimer = null;
+      fetchArtifacts(store.activeChannel);
+      // Non-editing path: also refresh the detail if we're viewing the
+      // artifact that just changed. During edit, we route through the
+      // banner instead (see the notification effect below).
+      if (!isEditing && selectedArtifact) {
+        const n = store.latestArtifactRefNotification;
+        if (n && n.name === selectedArtifact.name) {
+          fetchArtifactDetail(selectedArtifact.name);
+        }
+      }
+    }, 150);
+    return () => {
+      if (refreshDebounceTimer) {
+        clearTimeout(refreshDebounceTimer);
+        refreshDebounceTimer = null;
+      }
+    };
+  });
+
+  // Remote-update banner trigger (plan §1): when the store reports a new
+  // artifact_ref notification, AND we're mid-edit on that same artifact,
+  // AND the incoming version is not one we just POSTed ourselves, show
+  // the banner. Self-updates (isOurRecentUpdate) skip the banner path —
+  // the counter tick above still drives list refresh.
+  $effect(() => {
+    const notice = store.latestArtifactRefNotification;
+    if (!notice || notice.epoch === lastNotificationEpoch) return;
+    untrack(() => {
+      lastNotificationEpoch = notice.epoch;
+      if (!isEditing || !selectedArtifact) return;
+      if (notice.name !== selectedArtifact.name) return;
+      // If this notification is the MQTT echo of our own save, drop it.
+      if (
+        notice.version != null
+        && store.isOurRecentUpdate(notice.name, notice.version)
+      ) {
+        return;
+      }
+      // Capture textarea state BEFORE the banner takes focus.
+      capturePreBannerState();
+      remoteBannerSender = notice.senderName || 'Someone';
+      remoteBannerVersion = notice.version ?? 0;
+      remoteBannerVisible = true;
+      // Programmatic focus into the banner (queueMicrotask so the DOM
+      // node exists). Axe / SR users need the "assertive" aria-live + a
+      // tabbable landing spot; the banner's outer <section> has tabindex=-1.
+      queueMicrotask(() => {
+        const el = document.querySelector(
+          '[data-testid="remote-update-banner"]',
+        );
+        if (el instanceof HTMLElement) el.focus();
+      });
+    });
+  });
+
+  // ── Edit flow wiring (plan §4) ────────────────────────────────────────
+
+  /**
+   * Open the in-place editor. The header's Edit button only fires this when
+   * the current view is the latest version AND capabilities.writable — both
+   * conditions are checked there (header) AND defensively here so a future
+   * caller can't bypass them.
+   */
+  function handleEnterEdit() {
+    if (!selectedArtifact) return;
+    if (!capabilities?.writable) return;
+    if (selectedVersion !== selectedArtifact.version) return; // latest only
+    isEditing = true;
+    dirtyEdit = false;
+    // Switching to edit mode forces content view (diff editing isn't a thing).
+    viewMode = 'content';
+  }
+
+  /**
+   * Close the editor without saving. Respects the dirty-state confirm: if
+   * the user has unsaved changes, ask before discarding.
+   */
+  function handleEditorCancel() {
+    if (dirtyEdit) {
+      const ok = typeof window !== 'undefined'
+        ? window.confirm('Discard unsaved changes?')
+        : true;
+      if (!ok) return;
+    }
+    exitEditMode();
+  }
+
+  /** Exit edit mode and clear draft/dirty/banner state (no confirm). */
+  function exitEditMode() {
+    isEditing = false;
+    dirtyEdit = false;
+    dismissBanner();
+  }
+
+  /**
+   * POST the edit and handle the four documented outcomes (plan §4):
+   *   - 2xx → markSelfUpdate + exit edit + refresh + toast
+   *   - 409 → show banner (conflict path)
+   *   - 401 → apiPost already retried once; message is "Session expired"
+   *   - 403/404 → writable disabled in deployment; exit edit mode + toast
+   */
+  async function handleEditorSave(newContent) {
+    if (!selectedArtifact) return;
+    const channel = store.activeChannel;
+    const name = selectedArtifact.name;
+    const baseVersion = selectedArtifact.version ?? null;
+    try {
+      const resp = await apiPost(
+        `/api/artifacts/${encodeURIComponent(channel)}/${encodeURIComponent(name)}`,
+        {
+          key: store.userProfile?.key ?? '',
+          content: newContent,
+          base_version: baseVersion,
+        },
+      );
+      const newVersion = resp?.version ?? (baseVersion != null ? baseVersion + 1 : null);
+      if (newVersion != null) {
+        store.markSelfUpdate(name, newVersion);
+      }
+      exitEditMode();
+      // Re-fetch detail so the panel reflects the new version / author /
+      // timestamp. The list refresh arrives via the MQTT echo → counter.
+      await fetchArtifactDetail(name);
+      showToast(newVersion != null ? `Saved as v${newVersion}` : 'Saved');
+    } catch (e) {
+      const status = /** @type {any} */ (e)?.status;
+      if (status === 409) {
+        // Conflict — the server already advanced past our base_version.
+        // Surface as the remote-update banner (it has the same 3-action UX).
+        capturePreBannerState();
+        const body = /** @type {any} */ (e)?.body ?? {};
+        remoteBannerSender = body.latest_author ?? 'Someone';
+        remoteBannerVersion = body.latest_version ?? 0;
+        remoteBannerVisible = true;
+        queueMicrotask(() => {
+          const el = document.querySelector(
+            '[data-testid="remote-update-banner"]',
+          );
+          if (el instanceof HTMLElement) el.focus();
+        });
+        return;
+      }
+      if (status === 403 || status === 404) {
+        exitEditMode();
+        showToast('Remote edits are disabled in this deployment.');
+        return;
+      }
+      if (status === 401) {
+        exitEditMode();
+        showToast('Session expired — reload the page.');
+        return;
+      }
+      showToast(`Save failed: ${e.message ?? 'unknown error'}`);
+    }
+  }
+
+  /** Track the draft's dirty state so the confirm dialog knows. */
+  function handleEditorDirtyChange(d) {
+    dirtyEdit = Boolean(d);
+  }
+
+  /** Capture the textarea element from the editor for focus management. */
+  function handleEditorTextareaMount(node) {
+    editorTextareaEl = node;
+  }
+
+  /**
+   * Capture textarea selection + scroll so we can restore them after the
+   * banner is dismissed via a preserving path. Captures at most once per
+   * banner lifecycle; never overwrites an existing snapshot.
+   */
+  function capturePreBannerState() {
+    if (!editorTextareaEl || preBannerState) return;
+    preBannerState = {
+      selectionStart: editorTextareaEl.selectionStart,
+      selectionEnd: editorTextareaEl.selectionEnd,
+      scrollTop: editorTextareaEl.scrollTop,
+    };
+  }
+
+  /**
+   * Restore textarea selection + scroll from `preBannerState` and focus it.
+   * No-ops if either the state or the textarea is unavailable.
+   */
+  function restorePreBannerState() {
+    const state = preBannerState;
+    const el = editorTextareaEl;
+    preBannerState = null;
+    if (!el || !state) {
+      if (el) el.focus();
+      return;
+    }
+    el.focus();
+    try {
+      el.setSelectionRange(state.selectionStart, state.selectionEnd);
+    } catch {
+      // Some browsers throw if the textarea isn't editable; ignore.
+    }
+    el.scrollTop = state.scrollTop;
+  }
+
+  function dismissBanner() {
+    remoteBannerVisible = false;
+    remoteBannerSender = '';
+    remoteBannerVersion = 0;
+    preBannerState = null;
+  }
+
+  // Banner action callbacks — preserving paths restore preBannerState,
+  // exit paths drop it (plan §1 R5-4).
+  function handleBannerViewChanges() {
+    const name = selectedArtifact?.name;
+    const proceed = dirtyEdit
+      ? (typeof window !== 'undefined'
+          ? window.confirm('Discard unsaved changes?')
+          : true)
+      : true;
+    if (!proceed) return;
+    // Explicit exit — do NOT restore preBannerState.
+    exitEditMode();
+    if (name) fetchArtifactDetail(name);
+  }
+
+  function handleBannerKeepEditing() {
+    remoteBannerVisible = false;
+    remoteBannerSender = '';
+    remoteBannerVersion = 0;
+    restorePreBannerState();
+  }
+
+  function handleBannerDiscardEdit() {
+    const name = selectedArtifact?.name;
+    // Explicit discard — do NOT restore preBannerState.
+    exitEditMode();
+    if (name) fetchArtifactDetail(name);
+  }
+
+  function handleBannerDismiss() {
+    // X / 30s auto-dismiss / Esc path — preserving.
+    remoteBannerVisible = false;
+    remoteBannerSender = '';
+    remoteBannerVersion = 0;
+    restorePreBannerState();
+  }
 </script>
 
 <div class="artifact-panel" data-testid="artifact-panel" role="complementary" aria-label="Artifacts">
   {#if selectedArtifact && !detailLoading}
     <!-- Detail View -->
-    <div class="artifact-header">
-      <div class="artifact-header-top">
-        <button class="artifact-back-btn" onclick={handleBack} title="Back to list" aria-label="Back to artifact list">
-          <ChevronLeft size={16} strokeWidth={2} />
-        </button>
-        <span class="artifact-header-title">{selectedArtifact.title || selectedArtifact.name}</span>
-        <span class="artifact-type-badge {getTypeConfig(selectedArtifact.type).cssClass}">{getTypeConfig(selectedArtifact.type).label}</span>
-        <button class="artifact-close-btn" onclick={onClose} data-testid="artifact-panel-close" title="Close" aria-label="Close artifacts panel">
-          <X size={16} strokeWidth={2} />
-        </button>
+    <ArtifactDetailHeader
+      artifact={selectedArtifact}
+      {selectedVersion}
+      {showVersionDropdown}
+      {viewMode}
+      {compareVersion}
+      {capabilities}
+      onBack={handleBack}
+      onVersionSelect={handleVersionSelect}
+      onToggleVersionDropdown={toggleVersionDropdown}
+      onSetViewMode={handleSetViewMode}
+      onSetCompareVersion={handleSetCompareVersion}
+      onCopy={handleCopy}
+      onDownload={handleDownload}
+      onEdit={selectedVersion === selectedArtifact.version ? handleEnterEdit : undefined}
+      {onClose}
+    />
+    <RemoteUpdateBanner
+      visible={remoteBannerVisible}
+      senderName={remoteBannerSender}
+      newVersion={remoteBannerVersion}
+      onViewChanges={handleBannerViewChanges}
+      onKeepEditing={handleBannerKeepEditing}
+      onDiscardEdit={handleBannerDiscardEdit}
+      onDismiss={handleBannerDismiss}
+    />
+    {#if isEditing}
+      <ArtifactEditor
+        visible={true}
+        artifact={selectedArtifact}
+        onSave={handleEditorSave}
+        onCancel={handleEditorCancel}
+        onDirtyChange={handleEditorDirtyChange}
+        onTextareaMount={handleEditorTextareaMount}
+      />
+    {:else}
+      <ArtifactDetailBody
+        artifact={selectedArtifact}
+        {detailError}
+        {viewMode}
+        {compareVersion}
+      />
+    {/if}
+    {#if toastMessage}
+      <div class="artifact-toast" role="status" aria-live="polite" data-testid="artifact-toast">
+        {toastMessage}
       </div>
-      {#if selectedArtifact.versions && selectedArtifact.versions.length > 1}
-        <div class="artifact-version-selector">
-          <button class="artifact-version-btn" onclick={() => showVersionDropdown = !showVersionDropdown} aria-expanded={showVersionDropdown}>
-            <span>v{selectedVersion}</span>
-            <ChevronDown size={14} strokeWidth={2} />
-          </button>
-          {#if showVersionDropdown}
-            <div class="artifact-version-dropdown">
-              {#each selectedArtifact.versions as v}
-                <button
-                  class="artifact-version-option"
-                  class:active={v.version === selectedVersion}
-                  onclick={() => handleVersionSelect(v.version)}
-                >
-                  <span class="version-label">v{v.version}</span>
-                  <span class="version-meta">
-                    {#if v.author}{v.author}{/if}
-                    {#if v.summary} — {v.summary}{/if}
-                  </span>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-      <div class="artifact-detail-meta">
-        <span class="artifact-meta-item"><User size={12} strokeWidth={2} /> {selectedArtifact.author || 'Unknown'}</span>
-        <span class="artifact-meta-item"><Clock size={12} strokeWidth={2} /> {selectedArtifact.timestamp ? formatTime(selectedArtifact.timestamp, 'relative') : ''}</span>
-        {#if selectedArtifact.summary}
-          <span class="artifact-meta-summary">Updated by {selectedArtifact.author || 'Unknown'} — {selectedArtifact.summary}</span>
-        {/if}
-      </div>
-    </div>
-    <div class="artifact-content-area">
-      {#if detailError}
-        <div class="artifact-error">{detailError}</div>
-      {:else}
-        <pre class="artifact-content">{selectedArtifact.content || ''}</pre>
-      {/if}
-    </div>
+    {/if}
   {:else}
     <!-- List View -->
     <div class="artifact-header">
@@ -167,54 +584,26 @@
         </button>
       </div>
     </div>
-    <div class="artifact-list">
-      {#if loading || detailLoading}
+    {#if detailLoading}
+      <div class="artifact-list">
         <div class="artifact-empty">
           <div class="artifact-empty-icon muted">
             <Clock size={24} strokeWidth={1.5} />
           </div>
           <div class="artifact-empty-title">Loading...</div>
         </div>
-      {:else if error}
-        <div class="artifact-empty">
-          <div class="artifact-empty-icon">
-            <FileText size={24} strokeWidth={1.5} />
-          </div>
-          <div class="artifact-empty-title">Error loading artifacts</div>
-          <div class="artifact-empty-hint">{error}</div>
-        </div>
-      {:else if artifacts.length === 0}
-        <div class="artifact-empty">
-          <div class="artifact-empty-icon muted">
-            <FileText size={24} strokeWidth={1.5} />
-          </div>
-          <div class="artifact-empty-title">No artifacts yet</div>
-          <div class="artifact-empty-hint">Artifacts created in this conversation will appear here.</div>
-        </div>
-      {:else}
-        {#each artifacts as artifact (artifact.name)}
-          {@const tc = getTypeConfig(artifact.type)}
-          <button class="artifact-item" onclick={() => handleSelectArtifact(artifact)} data-testid="artifact-item-{artifact.name}">
-            <div class="artifact-item-top">
-              <svelte:component this={tc.icon} size={14} strokeWidth={2} />
-              <span class="artifact-item-title">{artifact.title || artifact.name}</span>
-              <span class="artifact-type-badge {tc.cssClass}">{tc.label}</span>
-            </div>
-            <div class="artifact-item-bottom">
-              {#if artifact.version_count != null}
-                <span class="artifact-item-meta">{artifact.version_count} version{artifact.version_count !== 1 ? 's' : ''}</span>
-              {/if}
-              {#if artifact.latest_author}
-                <span class="artifact-item-meta">{artifact.latest_author}</span>
-              {/if}
-              {#if artifact.latest_timestamp}
-                <span class="artifact-item-meta">{formatTime(artifact.latest_timestamp, 'relative')}</span>
-              {/if}
-            </div>
-          </button>
-        {/each}
-      {/if}
-    </div>
+      </div>
+    {:else}
+      <ArtifactList
+        {artifacts}
+        {artifactCount}
+        {loading}
+        {error}
+        onSelectArtifact={handleSelectArtifact}
+        currentIdentityKey={store.userProfile.key}
+        conversation={store.activeChannel}
+      />
+    {/if}
   {/if}
 </div>
 
@@ -235,6 +624,7 @@
     animation: searchSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  /* ── List header (owned by orchestrator) ── */
   .artifact-header {
     padding: 16px;
     border-bottom: 1px solid var(--border);
@@ -267,8 +657,7 @@
     border-radius: 8px;
   }
 
-  .artifact-close-btn,
-  .artifact-back-btn {
+  .artifact-close-btn {
     width: 24px;
     height: 24px;
     border-radius: 6px;
@@ -281,112 +670,21 @@
     justify-content: center;
     transition: var(--transition-fast);
     flex-shrink: 0;
-  }
-
-  .artifact-close-btn {
     margin-left: auto;
   }
 
-  .artifact-close-btn:hover,
-  .artifact-back-btn:hover {
+  .artifact-close-btn:hover {
     background: var(--bg-surface);
     color: var(--text-primary);
   }
 
-  /* ── Type Badges ── */
-  .artifact-type-badge {
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 2px 7px;
-    border-radius: 6px;
-    flex-shrink: 0;
-  }
-
-  .artifact-type-badge.type-plan {
-    color: var(--ember-400);
-    background: rgba(245, 158, 11, 0.1);
-    border: 1px solid rgba(245, 158, 11, 0.15);
-  }
-
-  .artifact-type-badge.type-doc {
-    color: #60a5fa;
-    background: rgba(96, 165, 250, 0.1);
-    border: 1px solid rgba(96, 165, 250, 0.15);
-  }
-
-  .artifact-type-badge.type-code {
-    color: #34d399;
-    background: rgba(52, 211, 153, 0.1);
-    border: 1px solid rgba(52, 211, 153, 0.15);
-  }
-
-  /* ── List View ── */
+  /* ── Detail loading state (shown while fetchArtifactDetail is in-flight before selectedArtifact is set) ── */
   .artifact-list {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
   }
 
-  .artifact-item {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
-    padding: 10px 12px;
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-subtle);
-    margin-bottom: 6px;
-    cursor: pointer;
-    transition: var(--transition-fast);
-    text-align: left;
-    font-family: inherit;
-    color: inherit;
-  }
-
-  .artifact-item:last-child { margin-bottom: 0; }
-
-  .artifact-item:hover {
-    border-color: var(--ember-700);
-    background: var(--bg-elevated);
-  }
-
-  .artifact-item-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .artifact-item-top :global(svg) {
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .artifact-item-title {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text-primary);
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .artifact-item-bottom {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-left: 22px;
-  }
-
-  .artifact-item-meta {
-    font-size: 10px;
-    color: var(--text-faint);
-  }
-
-  /* ── Empty State ── */
   .artifact-empty {
     display: flex;
     flex-direction: column;
@@ -423,144 +721,30 @@
     color: var(--text-secondary);
   }
 
-  .artifact-empty-hint {
-    font-size: 12px;
-    color: var(--text-faint);
-    text-align: center;
-    line-height: 1.5;
-  }
-
-  .artifact-error {
-    padding: 16px;
-    font-size: 12px;
-    color: #f87171;
-  }
-
   @keyframes emptyFadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  /* ── Detail View ── */
-  .artifact-detail-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .artifact-meta-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .artifact-meta-item :global(svg) {
-    color: var(--text-faint);
-  }
-
-  .artifact-meta-summary {
-    width: 100%;
-    font-size: 11px;
-    color: var(--text-faint);
-    font-style: italic;
-  }
-
-  /* ── Version Selector ── */
-  .artifact-version-selector {
-    position: relative;
-  }
-
-  .artifact-version-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: var(--radius-xs);
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: var(--transition-fast);
-    font-family: inherit;
-  }
-
-  .artifact-version-btn:hover {
-    border-color: var(--ember-700);
-    color: var(--text-primary);
-  }
-
-  .artifact-version-dropdown {
+  /* ── Transient copy-success toast (Batch 3J §7) ── */
+  .artifact-toast {
     position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 4px;
-    width: 280px;
-    max-height: 200px;
-    overflow-y: auto;
+    bottom: 16px;
+    right: 16px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 14px;
     border-radius: var(--radius-sm);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    z-index: 10;
-    animation: panelIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  .artifact-version-option {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 12px;
-    background: none;
-    border: none;
-    font-size: 11px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: var(--transition-fast);
-    text-align: left;
-    font-family: inherit;
-  }
-
-  .artifact-version-option:hover {
-    background: var(--bg-surface);
-  }
-
-  .artifact-version-option.active {
-    color: var(--ember-400);
-  }
-
-  .version-label {
-    font-weight: 600;
-    flex-shrink: 0;
-  }
-
-  .version-meta {
-    color: var(--text-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ── Content Area ── */
-  .artifact-content-area {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-  }
-
-  .artifact-content {
-    font-family: 'SF Mono', Consolas, 'JetBrains Mono', 'Courier New', monospace;
     font-size: 12px;
-    line-height: 1.6;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    margin: 0;
-    background: none;
+    font-weight: 600;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    animation: toastIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+    z-index: 20;
+  }
+
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 </style>

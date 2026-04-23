@@ -100,12 +100,17 @@ def sample_participant(registry: ParticipantRegistry) -> dict[str, Any]:
     """A pre-registered participant in 'general'.
 
     Returns dict with ``key``, ``name``, ``type``, ``conversation``.
+    Uses the registry directly to avoid the async tool_comms_join
+    side-effects (MQTT publish etc.) that tests don't need.
     """
-    from claude_comms.mcp_tools import tool_comms_join
-
-    result = tool_comms_join(registry, name="test-claude", conversation="general")
-    assert "error" not in result
-    return result
+    p = registry.join("test-claude", "general")
+    return {
+        "key": p.key,
+        "name": p.name,
+        "type": p.type,
+        "conversation": "general",
+        "status": "joined",
+    }
 
 
 class PublishSpy:

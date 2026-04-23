@@ -141,8 +141,13 @@ class ParticipantRegistry:
                 self._memberships.setdefault(existing_key, set()).add(conversation)
                 return p
 
-            # New participant
-            p = Participant.create(name=name, participant_type=participant_type)
+            # New participant — honor provided key if valid, else generate.
+            # Honoring the caller's key keeps the server registry aligned with
+            # clients that derive their identity from config (web UI, CLI).
+            if key and validate_key(key):
+                p = Participant(key=key, name=name, type=participant_type)
+            else:
+                p = Participant.create(name=name, participant_type=participant_type)
             self._participants[p.key] = p
             self._name_index[name.lower()] = p.key
             self._memberships.setdefault(p.key, set()).add(conversation)
@@ -767,11 +772,9 @@ async def tool_comms_artifact_create(
     if not validate_conv_id(conversation):
         return _error(f"Invalid conversation ID {conversation!r}.")
 
-    if not validate_artifact_name(name):
-        return _error(
-            f"Invalid artifact name {name!r}. "
-            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
-        )
+    ok, err = validate_artifact_name(name)
+    if not ok:
+        return _error(f"Invalid artifact name {name!r}: {err}")
 
     if type not in ("plan", "doc", "code"):
         return _error(
@@ -781,6 +784,15 @@ async def tool_comms_artifact_create(
     convs = registry.conversations_for(key)
     if conversation not in convs:
         return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    # Case-collision protection (R1-6): NTFS / HFS+ treat `Foo` and `foo` as the
+    # same file. Reject a case-insensitive collision at create time so the
+    # second creator sees an error instead of silently clobbering.
+    existing_lower = {a["name"].lower() for a in list_artifacts(conversation, data_dir)}
+    if name.lower() in existing_lower:
+        return _error(
+            f"Artifact name {name!r} collides (case-insensitive) with an existing artifact."
+        )
 
     # Check if artifact already exists
     existing = load_artifact(conversation, name, data_dir)
@@ -847,11 +859,9 @@ async def tool_comms_artifact_update(
     if not validate_conv_id(conversation):
         return _error(f"Invalid conversation ID {conversation!r}.")
 
-    if not validate_artifact_name(name):
-        return _error(
-            f"Invalid artifact name {name!r}. "
-            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
-        )
+    ok, err = validate_artifact_name(name)
+    if not ok:
+        return _error(f"Invalid artifact name {name!r}: {err}")
 
     convs = registry.conversations_for(key)
     if conversation not in convs:
@@ -863,8 +873,12 @@ async def tool_comms_artifact_update(
             f"Artifact {name!r} not found in conversation {conversation!r}."
         )
 
-    # Optimistic concurrency check
-    current_version = len(artifact.versions)
+    # Optimistic concurrency check.
+    # R1-2 fix: use max(v.version) instead of len(versions). After the versions
+    # list is pruned past MAX_VERSIONS, len() stops advancing and every new
+    # update would re-use the same number, and the base_version check would
+    # report the wrong "current" version to clients.
+    current_version = max((v.version for v in artifact.versions), default=0)
     if base_version is not None and base_version != current_version:
         return _error(
             f"Version conflict: you based your edit on v{base_version}, "
@@ -928,11 +942,9 @@ def tool_comms_artifact_get(
     if not validate_conv_id(conversation):
         return _error(f"Invalid conversation ID {conversation!r}.")
 
-    if not validate_artifact_name(name):
-        return _error(
-            f"Invalid artifact name {name!r}. "
-            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
-        )
+    ok, err = validate_artifact_name(name)
+    if not ok:
+        return _error(f"Invalid artifact name {name!r}: {err}")
 
     convs = registry.conversations_for(key)
     if conversation not in convs:
@@ -1038,11 +1050,9 @@ async def tool_comms_artifact_delete(
     if not validate_conv_id(conversation):
         return _error(f"Invalid conversation ID {conversation!r}.")
 
-    if not validate_artifact_name(name):
-        return _error(
-            f"Invalid artifact name {name!r}. "
-            "Use lowercase alphanumeric, hyphens, underscores, dots (1-128 chars)."
-        )
+    ok, err = validate_artifact_name(name)
+    if not ok:
+        return _error(f"Invalid artifact name {name!r}: {err}")
 
     convs = registry.conversations_for(key)
     if conversation not in convs:

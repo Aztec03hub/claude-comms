@@ -1,15 +1,13 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
+import { API_BASE } from './api.js';
 
-// Derive URLs from the current page hostname.
-// API calls use relative paths (/api/...) so they work through Vite proxy
-// in dev mode and directly in production (same origin).
-// WebSocket must be absolute since it's a different port.
+// Derive the MQTT broker URL from the current page hostname.
+// API origin derivation now lives in lib/api.js (exported as API_BASE);
+// this file only handles the WebSocket side, which must be absolute since
+// it's a different port regardless of dev/prod.
 const _host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 const BROKER_URL = `ws://${_host}:9001/mqtt`;
-// In production (port 9921), API is on 9920. In dev (Vite proxy), /api/* is proxied.
-const _port = typeof window !== 'undefined' ? window.location.port : '9921';
-const MCP_API_URL = _port === '9921' ? `http://${_host}:9920` : '';
 const TOPIC_PREFIX = 'claude-comms';
 const TYPING_TTL_MS = 5000;
 const BASE_RECONNECT_MS = 3000;
@@ -78,6 +76,34 @@ export class MqttChatStore {
     type: 'human'
   });
 
+  /**
+   * Reactive tick counter bumped whenever a chat message carrying an
+   * `artifact_ref` lands in the active channel. Consumers (ArtifactPanel)
+   * watch this counter inside a `$effect` and debounce their refresh.
+   * Bumping here is a no-op coalesce — we do not track which artifact
+   * changed, only that *something* did.
+   */
+  artifactsDirty = $state(0);
+
+  /**
+   * Reactive payload mirroring the last `artifact_ref` chat message that
+   * landed in the active channel. Consumers (ArtifactPanel) watch this to
+   * decide whether to surface the remote-update banner during an edit.
+   *
+   *   `{ name: string, version: number | null, senderName: string,
+   *      epoch: number }`
+   *
+   * The `epoch` is a monotonically-increasing counter bumped on every
+   * notification so `$effect` subscribers re-fire even if two back-to-back
+   * notifications have the same `name` + `version` (unlikely but defensive
+   * against Svelte's deep-equality shortcut for object props).
+   *
+   * Version is best-effort parsed from the system-message body (see
+   * `#parseArtifactRefBody`); if we can't parse it out, it remains `null`
+   * and the panel will fall back to a re-fetch to discover the new version.
+   */
+  latestArtifactRefNotification = $state(null);
+
   /** @type {mqtt.MqttClient | null} */
   #client = null;
   #seenIds = new Set();
@@ -96,6 +122,18 @@ export class MqttChatStore {
   #ttlCleanupTimer = null;
 
   /**
+   * Map keyed by `"${artifactName}:${version}"` → expiry timestamp (ms since
+   * epoch). Populated by `markSelfUpdate()` when the panel POSTs a new
+   * artifact version; consumed by `isOurRecentUpdate()` so the incoming
+   * MQTT echo of our own write does not trigger a "remote update" banner.
+   * Entries auto-expire after 5 seconds. Owned here (not in the panel) so
+   * the MQTT message handler has authoritative access without a cross-
+   * component ref — see plan §1 R5-6.
+   * @type {Map<string, number>}
+   */
+  #recentlySelfUpdated = new Map();
+
+  /**
    * Fetch message history from the REST API for a given channel.
    * Messages are deduplicated against the seen-ID set so live MQTT
    * messages that arrived before the history response don't appear twice.
@@ -103,7 +141,7 @@ export class MqttChatStore {
    */
   async #fetchHistory(channel) {
     try {
-      const res = await fetch(`${MCP_API_URL}/api/messages/${encodeURIComponent(channel)}?count=50`);
+      const res = await fetch(`${API_BASE}/api/messages/${encodeURIComponent(channel)}?count=50`);
       if (!res.ok) return;
       const data = await res.json();
       if (!Array.isArray(data.messages)) return;
@@ -141,7 +179,7 @@ export class MqttChatStore {
    */
   async #fetchParticipants(channel) {
     try {
-      const res = await fetch(`${MCP_API_URL}/api/participants/${encodeURIComponent(channel)}`);
+      const res = await fetch(`${API_BASE}/api/participants/${encodeURIComponent(channel)}`);
       if (!res.ok) return;
       const data = await res.json();
       if (!Array.isArray(data.participants)) return;
@@ -305,7 +343,7 @@ export class MqttChatStore {
     // Fetch identity from the daemon config so web + TUI share the same key.
     // Falls back to localStorage if the daemon is not running.
     try {
-      const res = await fetch(MCP_API_URL + '/api/identity');
+      const res = await fetch(API_BASE + '/api/identity');
       if (res.ok) {
         const identity = await res.json();
         this.userProfile.key = identity.key;
@@ -313,7 +351,7 @@ export class MqttChatStore {
         this.userProfile.type = identity.type;
       }
     } catch {
-      console.error('[claude-comms] Failed to fetch identity from', MCP_API_URL + '/api/identity');
+      console.error('[claude-comms] Failed to fetch identity from', API_BASE + '/api/identity');
     }
 
     // If identity fetch failed (shouldn't happen — daemon serves this page),
@@ -918,6 +956,89 @@ export class MqttChatStore {
     if (channel !== this.activeChannel) {
       const ch = this.channels.find(c => c.id === channel);
       if (ch) ch.unread++;
+    }
+
+    // Real-time artifact panel refresh (plan §1): any chat message carrying
+    // an artifact_ref for the currently-viewed channel bumps the counter.
+    // The panel debounces 150ms and decides (via isOurRecentUpdate) whether
+    // to show the remote-update banner. Bumping on every message tick is
+    // fine — it's a coalescing signal, not a work unit.
+    if (msg.artifact_ref && channel === this.activeChannel) {
+      this.artifactsDirty++;
+      // Parse out the sender name + version from the system-message body
+      // so panel consumers can render the remote-update banner without
+      // refetching first. Format per mcp_tools.py:
+      //   create: "[artifact] {name} created '{title}' (v1)"
+      //   update: "[artifact] {name} updated '{title}' to v{N}[: summary]"
+      const parsed = this.#parseArtifactRefBody(msg.body ?? '');
+      this.latestArtifactRefNotification = {
+        name: msg.artifact_ref,
+        version: parsed.version,
+        senderName: parsed.senderName,
+        // Epoch counter so two back-to-back notifications with identical
+        // shape still re-fire subscriber effects.
+        epoch: (this.latestArtifactRefNotification?.epoch ?? 0) + 1,
+      };
+    }
+  }
+
+  /**
+   * Best-effort parse of an `[artifact] ...` system-message body into the
+   * `{ senderName, version }` fragment needed by the remote-update banner.
+   * Returns `{ senderName: '', version: null }` if the body does not match
+   * either of the known formats.
+   * @param {string} body
+   * @returns {{ senderName: string, version: number | null }}
+   */
+  #parseArtifactRefBody(body) {
+    // Update format takes precedence — more common post-v1.
+    //   [artifact] Phil updated 'Title' to v3: summary
+    //   [artifact] Phil updated 'Title' to v3
+    let m = body.match(/^\[artifact\]\s+(.+?)\s+updated\s+'.*?'\s+to\s+v(\d+)/);
+    if (m) {
+      return { senderName: m[1], version: Number(m[2]) };
+    }
+    // Create format:
+    //   [artifact] Phil created 'Title' (v1)
+    m = body.match(/^\[artifact\]\s+(.+?)\s+created\s+'.*?'\s+\(v(\d+)\)/);
+    if (m) {
+      return { senderName: m[1], version: Number(m[2]) };
+    }
+    return { senderName: '', version: null };
+  }
+
+  /**
+   * Record that the current user just POSTed a new version of `name` that
+   * became version `version`. The entry is kept for 5 seconds so the echoed
+   * MQTT message (which will land ~instantly) can be recognised and skip
+   * the remote-update banner trigger. Called by the panel editor's
+   * save-success handler, before the MQTT echo arrives.
+   * @param {string} name - Artifact name.
+   * @param {number|string} version - Version number returned by the POST response.
+   */
+  markSelfUpdate(name, version) {
+    this.#recentlySelfUpdated.set(`${name}:${version}`, Date.now() + 5000);
+    this.#pruneSelfUpdated();
+  }
+
+  /**
+   * Return true if a (name, version) pair was recorded by `markSelfUpdate`
+   * within the last 5 seconds. Prunes expired entries as a side-effect so
+   * the Map stays bounded.
+   * @param {string} name
+   * @param {number|string} version
+   * @returns {boolean}
+   */
+  isOurRecentUpdate(name, version) {
+    this.#pruneSelfUpdated();
+    return this.#recentlySelfUpdated.has(`${name}:${version}`);
+  }
+
+  /** Drop entries whose expiry timestamp has passed. */
+  #pruneSelfUpdated() {
+    const now = Date.now();
+    for (const [k, e] of this.#recentlySelfUpdated) {
+      if (e < now) this.#recentlySelfUpdated.delete(k);
     }
   }
 

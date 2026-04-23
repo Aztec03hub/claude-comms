@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* ── Carbon Ember Palette ── */
+  /* -- Carbon Ember Palette -- */
   --color-bg-deepest: #0a0a0c;
   --color-bg-base: #111113;
   --color-bg-sidebar: #131315;
@@ -39,7 +39,7 @@
   --font-mono: 'SF Mono', Consolas, 'JetBrains Mono', 'Courier New', monospace;
 }
 
-/* ── CSS Custom Properties (referenced in components) ── */
+/* -- CSS Custom Properties (referenced in components) -- */
 :root {
   --bg-deepest: #0a0a0c;
   --bg-base: #111113;
@@ -74,7 +74,44 @@
   --transition-slow: 0.35s ease;
 }
 
-/* ── Base Styles ── */
+/*
+ * -- Shiki cssVariables theme mapping (Batch 2H, plan §9, R4-6 fix) --
+ *
+ * These variables are consumed ONLY by Shiki-generated HTML (class-based
+ * `.shiki` output produced by createCssVariablesTheme in lib/markdown.js).
+ * They are namespaced (`--shiki-*`) so it is safe to declare them globally
+ * at `:root` - no other component reads these names. Scoping at `:root`
+ * (rather than `.artifact-md-body` or `.chat-code-block`) ensures every
+ * rendered code block picks them up via inheritance, regardless of which
+ * wrapper class its consumer uses.
+ *
+ * Values chosen to match the current CodeBlock.svelte Carbon Ember palette.
+ */
+:root {
+  --shiki-foreground: var(--text-primary);
+  --shiki-background: var(--bg-deepest);
+  --shiki-token-constant: #c084fc;        /* matches current hl-number purple */
+  --shiki-token-string: #34d399;          /* matches current hl-string green */
+  --shiki-token-comment: var(--text-faint); /* matches current hl-comment */
+  --shiki-token-keyword: var(--ember-400);  /* matches current hl-keyword ember */
+  --shiki-token-parameter: var(--text-primary);
+  --shiki-token-function: #67e8f9;        /* matches current hl-type cyan */
+  --shiki-token-string-expression: #34d399;
+  --shiki-token-punctuation: var(--text-muted);
+  --shiki-token-link: var(--ember-300);
+}
+
+:root[data-theme="light"] {
+  --shiki-foreground: #3d3530;
+  --shiki-background: #f8f6f3;
+  --shiki-token-constant: #9333ea;
+  --shiki-token-string: #059669;
+  --shiki-token-comment: #b5b0a8;
+  --shiki-token-keyword: var(--ember-600);
+  --shiki-token-function: #0891b2;
+}
+
+/* -- Base Styles -- */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -106,7 +143,7 @@ body {
   box-shadow: var(--focus-ring);
 }
 
-/* ── Screen Reader Only ── */
+/* -- Screen Reader Only -- */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -119,7 +156,7 @@ body {
   border: 0;
 }
 
-/* ── Enhanced Focus Styles ── */
+/* -- Enhanced Focus Styles -- */
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
@@ -132,13 +169,13 @@ textarea:focus-visible,
   transition: outline-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-/* ── Scrollbar ── */
+/* -- Scrollbar -- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(120, 53, 15, 0.4); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(180, 83, 9, 0.5); }
 
-/* ── Ambient Glow ── */
+/* -- Ambient Glow -- */
 body::before {
   content: '';
   position: fixed;
@@ -160,7 +197,7 @@ body::before {
   100% { transform: translate(1%, -2%) scale(1.01); }
 }
 
-/* ── Noise Texture Overlay ── */
+/* -- Noise Texture Overlay -- */
 body::after {
   content: '';
   position: fixed;
@@ -173,7 +210,7 @@ body::after {
   background-size: 256px 256px;
 }
 
-/* ── Keyframes ── */
+/* -- Keyframes -- */
 @keyframes msgAppear {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -284,7 +321,7 @@ body::after {
   to { opacity: 1; }
 }
 
-/* ── Light Theme ── */
+/* -- Light Theme -- */
 :root[data-theme="light"] {
   --bg-deepest: #f5f3f0;
   --bg-base: #faf9f7;
@@ -327,7 +364,7 @@ body::after {
   opacity: 0.008;
 }
 
-/* ── Responsive ── */
+/* -- Responsive -- */
 @media (max-width: 768px) {
   :root {
     --sidebar-w: 240px;

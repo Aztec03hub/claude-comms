@@ -82,24 +82,31 @@ async def _register_participant(
 
 
 class TestValidateArtifactName:
+    """Smoke tests for the legacy names that must still pass the new validator.
+
+    More extensive coverage lives in ``test_artifact_naming.py``.
+    """
+
     @pytest.mark.parametrize("name", ["a", "backend-plan", "my-api-spec", "abc123"])
     def test_valid_names(self, name: str):
-        assert validate_artifact_name(name) is True
+        ok, err = validate_artifact_name(name)
+        assert ok is True
+        assert err == ""
 
     @pytest.mark.parametrize(
         "name",
         [
-            "",
-            "-bad",
-            "bad-",
-            "BAD",
-            "has spaces",
-            "has.dots",
-            "a" * 100,
+            "",            # empty
+            "bad-",        # trailing hyphen
+            "has/slash",   # forbidden char
+            " leading",    # leading space
+            ".hidden",     # leading dot
+            "a" * 129,     # over length cap
         ],
     )
     def test_invalid_names(self, name: str):
-        assert validate_artifact_name(name) is False
+        ok, _err = validate_artifact_name(name)
+        assert ok is False
 
 
 # ===================================================================
@@ -390,7 +397,12 @@ class TestToolCommsArtifactCreate:
 
         result2 = await tool_comms_artifact_create(registry, spy, **kwargs)
         assert result2.get("error") is True
-        assert "already exists" in result2["message"]
+        # Either the case-insensitive collision check or the "already exists"
+        # check must fire; both are valid duplicate-name rejections.
+        assert (
+            "already exists" in result2["message"]
+            or "collides" in result2["message"]
+        )
 
 
 # ===================================================================

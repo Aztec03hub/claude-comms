@@ -189,5 +189,6 @@ class TestGetDefaultConfig:
             "notifications",
             "logging",
             "default_conversation",
+            "presence",
         }
         assert expected_keys == set(config.keys())

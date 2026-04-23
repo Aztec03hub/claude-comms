@@ -621,8 +621,9 @@ class ClaudeCommsApp(App):
         """Display an artifact's content in the chat view."""
         chat = self.query_one("#chat-view", ChatView)
 
-        if not validate_artifact_name(name):
-            chat.add_system_message(f"[red]Invalid artifact name: {name!r}[/red]")
+        ok, err = validate_artifact_name(name)
+        if not ok:
+            chat.add_system_message(f"[red]Invalid artifact name {name!r}: {err}[/red]")
             return
 
         artifact = load_artifact(self._active_conv, name, self._artifact_dir)

@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Artifact Improvements (2026-04-23)
+
+Ten-improvement upgrade to the artifact subsystem: real-time sync, diffing, in-browser editing, markdown rendering, starring, and a full security/accessibility/test overhaul. Implemented across 15 tasks in 4 batches.
+
+#### Web UI (`web/src/components/artifacts/`)
+
+- **Real-time panel refresh** -- `artifactsDirty` store counter with debounced fetch; panel auto-updates when create/update/delete events flow through chat, concurrency-safe against active editing
+- **VSCode-style diff view** -- side-by-side or unified diff between any two versions with line numbers, colored `+`/`-` gutters, and inline char-level highlighting via jsdiff (`diffLines` + `diffWords`). Non-color gutter glyphs for accessibility.
+- **Per-version author display** -- version dropdown now shows author name (participant-colored) + relative timestamp + summary
+- **Edit-in-place from the web UI** -- textarea replaces content area with autoresize attachment, Save/Cancel controls, Cmd+Enter / Esc shortcuts, dirty-state confirm, and a remote-update banner for collaborative conflict handling
+- **Markdown rendering** -- `plan`/`doc` types render as markdown via `marked` + DOMPurify (strict sanitize config + external-image interception) with Shiki syntax highlighting using a `cssVariables` theme mapped to the Carbon Ember palette
+- **Star/pin artifacts** -- hover-to-reveal star button, dedicated STARRED section, identity-scoped localStorage (`claude-comms:${identityKey}:starred-artifacts`), reconcile on mount, 500-entry cap
+- **Polished empty state** -- FileText icon, copy, and GitHub-hosted USAGE.md link
+- **Copy/Download buttons** -- icon-only Clipboard and Download lucide buttons in the detail header
+- **Shared `lib/api.js`** -- `API_BASE` derivation + `apiGet` / `apiPost` / `ensureToken` / `prefetchToken` helpers with bearer-token bootstrap and 401 retry
+- **Shiki unification** -- `CodeBlock.svelte` refactored to use Shiki via `highlightCode()` from `lib/markdown.js`; deleted the hardcoded keyword tokenizer, gaining proper grammar-based highlighting for 200+ languages across chat, artifact markdown, and artifact code
+- **Subcomponent extraction** -- `ArtifactPanel.svelte` split into orchestrator + `ArtifactList`, `ArtifactDetailHeader`, `ArtifactDetailBody`, `RemoteUpdateBanner`, `ArtifactEditor` for clean ownership boundaries (R6-1)
+
+#### Server (REST API + config)
+
+- **`POST /api/artifacts/{conv}/{name}`** -- edit-in-place endpoint with conditional registration, loopback-only binding, bearer-token auth, and participant registry authorization
+- **`GET /api/capabilities`** -- returns `writable` + feature flags for client feature detection
+- **`GET /api/web-token`** -- loopback-only bearer token fetch; regenerates on every daemon restart
+- **New config keys** -- `web.api_base`, `web.allow_remote_edits`, `web.ws_url`, `web.csp_extra_connect_src`, `web.strict_cors`, `web.migrate_nfc_on_startup`, `web.use_legacy_codeblock_highlighter`, `web.markdown_render_enabled`
+- **`REVERSE_PROXY` env var** -- reverse-proxy deployment flag; disables the POST edit route
+- **Windows-filesystem-compatible artifact naming** -- broader character set (spaces, most punctuation, Unicode), NFC normalization, reserved-name blocking, startup NFC migration with collision quarantine (R6-2)
+- **Version counter fix** -- post-pruning correctness via `max(v.version)` instead of `len()`
+
+#### Security
+
+- **Bearer-token auth** -- fresh on every daemon start, loopback-only fetch endpoint, per-request 401 retry, consistent `"Session expired"` error copy
+- **Loopback-only POST** -- never trusts `X-Forwarded-For`
+- **Feature flag default-off** -- `allow_remote_edits: false`; opt-in rollout
+- **Content-Security-Policy headers** -- `default-src 'self'`, strict `connect-src`, `X-Frame-Options: DENY`
+- **CORS exact-match** -- replaces the previous buggy substring match (was CVE-adjacent)
+- **Path-traversal defenses** -- symlink realpath check, NFC normalization, `.json`-suffix rejection, case-collision protection, fullwidth-char (U+FF00-U+FFEF) rejection
+- **DOMPurify strict sanitize config** + external-image placeholder interception
+
+#### Accessibility
+
+- **axe-core scan as blocking CI gate** -- 17 tests covering 6 panel states + reduced-motion variants
+- **21 keyboard-navigation tests** -- listbox ArrowUp/Down/Home/End/Enter/Space/Escape, focus management, Esc priority
+- **Non-color diff signaling** -- `+`/`-`/`=` gutter glyphs
+- **ARIA wiring** -- `aria-pressed` on star button, `aria-live="assertive"` on remote-update banner, dynamic `aria-label` throughout
+- **`prefers-reduced-motion`** -- disables banner slide animation
+- **`nested-interactive` fix** -- star button inside a row button in ArtifactList, converted to non-nested structure
+
+#### Tests
+
+- **117 Vitest tests** (new Vitest setup -- first JS tests in this repo) -- markdown XSS corpus (13 vectors), render race guard, diff chunked-fetch bounds, CodeBlock Shiki, starred-artifacts localStorage, store self-update TTL, detail view rendering, edit flow (autoresize, shortcuts, retry, dedup), axe a11y, keyboard a11y
+- **203 Python tests** -- 75+ new artifact-naming tests (30+ Unicode corpus), 37 server-plumbing tests (POST endpoint / token / CORS / conditional route registration / version counter)
+
+#### Operational
+
+- **CI bundle-size check** with hard ceilings: `index <= 180 KB gzipped`, `vendor-markdown <= 130 KB`, `vendor-diff <= 25 KB` -- all passing with headroom
+- **Rollback runbook** -- 7 kill-switch config flags documented
+- **Fallback ladder** -- documented in `CONTRIBUTING.md`
+- **Pinned exact dep versions** (no caret ranges) -- prevents silent sanitizer drift from transitive updates: `marked@18.0.2`, `dompurify@3.4.1`, `shiki@3.0.0`, `marked-highlight@2.2.4`, `diff@8.0.1`, `vitest@4.1.5`, `@vitest/ui@4.1.5`, `jsdom@29.0.2`, `axe-core@4.11.3`, `@testing-library/svelte@5.3.1`
+
+#### Plan
+
+- **`plans/artifact-improvements.md`** (1862 lines) -- 6 adversarial review rounds, 45 findings all accepted, Svelte 5 conventions audit, Svelte MCP tooling mandate
+
 ### Conversation Discovery & Invites (2026-03-30)
 
 Browse, create, and invite participants to conversations with full metadata, human-in-the-loop enforcement, and cross-client support.

@@ -153,6 +153,46 @@ See `.testing-context.md` for the full `data-testid` inventory, test template, a
 
 ---
 
+## Bundle size
+
+CI enforces these gzipped ceilings on web bundle chunks. The check lives at `web/scripts/check-bundle-size.mjs` and runs after every `npm run build:check`:
+
+| Chunk             | Ceiling (gzipped) |
+|-------------------|-------------------|
+| `vendor-markdown` | 130 KB            |
+| `vendor-diff`     | 25 KB             |
+| `index`           | 180 KB            |
+
+Run locally:
+
+```bash
+cd web
+npm run build:check      # build + bundle-size check
+# or separately
+npm run build
+npm run check:bundle-size
+```
+
+A failing check exits non-zero and prints which chunk(s) exceeded.
+
+### Fallback ladder
+
+If `vendor-markdown` exceeds its ceiling, apply this ladder (documented in the plan at §"Version pinning & CI size check"):
+
+1. **Drop eager-loaded Shiki langs one at a time**, starting with the least-used. Order: `python`, then `json`, then `bash`. Move the dropped lang to a dynamic `import()` inside the `markedHighlight()` `highlight` callback in `src/lib/markdown.js`, so it only loads when a code fence with that language is actually encountered.
+2. **Drop `typescript` or `javascript`** if truly necessary. Chat UX would suffer — consider this a last resort before (3).
+3. **Swap Shiki for `highlight.js` common bundle** (~40 KB gzipped) and accept reduced theme fidelity. Set the runtime fallback flag `web.use_legacy_codeblock_highlighter: true` in config so operators can opt in without redeploying.
+
+Raising a ceiling requires explicit review. Document the rationale in the PR description and link to the measurement output.
+
+### Related kill switches
+
+If the Shiki pipeline breaks in production, `getHighlighter()` in `src/lib/markdown.js` already falls back to escaped plain text automatically — no outage, just no colors. The `web.use_legacy_codeblock_highlighter` flag exists as a harder revert path. For markdown rendering problems that DOMPurify config changes cannot resolve, the escape hatch `web.markdown_render_enabled: false` causes `renderMarkdown()` to return escaped plain text (users see raw markdown source).
+
+CI gate override: in rare hotfix cases where the ship-critical work is orthogonal to bundle size, the check can be overridden by including an `allow-oversized-bundle` git-commit-trailer on the merge commit. Use sparingly and document why.
+
+---
+
 ## Component Conventions
 
 ### data-testid attributes
