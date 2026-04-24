@@ -82,17 +82,29 @@
 
   /** @type {HTMLDivElement | null} */
   let resizeHandleEl = $state(null);
+  /**
+   * Offset between the cursor's clientX and the panel's left edge at the
+   * moment drag started. Without this, the first pointermove would snap the
+   * left edge onto the cursor, causing a visible jump equal to the handle
+   * width (or further if the user clicked near the edge of the handle).
+   */
+  let dragOffsetX = 0;
 
   /**
    * pointerdown on the handle: capture the pointer so move/up fire on the
    * handle even if the cursor leaves the element. Flip into resizing mode
    * to suppress transitions and apply the body-level cursor override.
+   * Record the cursor-to-left-edge offset so subsequent pointermove events
+   * can preserve the grip position under the cursor (no jump).
    */
   function handleResizePointerDown(e) {
     // Ignore non-primary buttons to avoid right-click dragging.
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (!resizeHandleEl) return;
     e.preventDefault();
+    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
+    const panelLeftEdge = viewport - panelWidth;
+    dragOffsetX = e.clientX - panelLeftEdge;
     isResizing = true;
     try {
       resizeHandleEl.setPointerCapture(e.pointerId);
@@ -102,13 +114,15 @@
   }
 
   /**
-   * pointermove while dragging: new width is the distance from the right
-   * edge of the viewport to the pointer. Clamped to [MIN, MAX].
+   * pointermove while dragging: maintain the original cursor-to-left-edge
+   * offset captured on pointerdown so the handle tracks smoothly under the
+   * cursor instead of snapping to it. Clamped to [MIN, MAX].
    */
   function handleResizePointerMove(e) {
     if (!isResizing) return;
     const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const next = clampWidth(viewport - e.clientX);
+    const desiredLeftEdge = e.clientX - dragOffsetX;
+    const next = clampWidth(viewport - desiredLeftEdge);
     panelWidth = next;
   }
 
