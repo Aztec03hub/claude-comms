@@ -201,6 +201,14 @@
 <style>
   .artifact-content-area {
     flex: 1;
+    /*
+     * `min-height: 0` is required for `overflow-y: auto` to take effect on
+     * a flex child. Without it the flex item's default `min-height: auto`
+     * resolves to the intrinsic content height and the scrollbar never
+     * appears for large artifacts (e.g. a 2000-line plan). See
+     * https://www.w3.org/TR/css-flexbox-1/#min-size-auto for details.
+     */
+    min-height: 0;
     overflow-y: auto;
     padding: 16px;
   }

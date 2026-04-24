@@ -368,7 +368,7 @@
             onkeydown={handleCompareListboxKeydown}
           >
             {#each compareOptions as v, idx (v.version)}
-              {@const pc = getParticipantColor(v.author_key ?? v.author ?? '')}
+              {@const pc = getParticipantColor(v.author?.key ?? '')}
               <button
                 type="button"
                 id={optionId('compare', v.version)}
@@ -380,7 +380,7 @@
                 onclick={() => selectCompareVersion(v.version)}
               >
                 <span class="row-version">v{v.version}</span>
-                <span class="row-author" style="color: {pc.textColor}">{v.author ?? 'unknown'}</span>
+                <span class="row-author" style="color: {pc.textColor}">{v.author?.name ?? 'unknown'}</span>
                 <span class="row-meta">
                   {relTime(v.timestamp)}{#if v.summary} &middot; "{v.summary}"{/if}
                 </span>
@@ -405,7 +405,7 @@
       >
         <span class="version-btn-label">
           v{selectedVersion ?? '?'}{#if activeVersionEntry}
-            <span class="version-btn-author"> &middot; {activeVersionEntry.author ?? 'unknown'}</span>
+            <span class="version-btn-author"> &middot; {activeVersionEntry.author?.name ?? 'unknown'}</span>
             <span class="version-btn-time"> &middot; {relTime(activeVersionEntry.timestamp)}</span>
           {/if}
         </span>
@@ -422,7 +422,7 @@
           onkeydown={handlePrimaryListboxKeydown}
         >
           {#each versions as v, idx (v.version)}
-            {@const pc = getParticipantColor(v.author_key ?? v.author ?? '')}
+            {@const pc = getParticipantColor(v.author?.key ?? '')}
             <button
               type="button"
               id={optionId('primary', v.version)}
@@ -434,7 +434,7 @@
               onclick={() => onVersionSelect?.(v.version)}
             >
               <span class="row-version">v{v.version}</span>
-              <span class="row-author" style="color: {pc.textColor}">{v.author ?? 'unknown'}</span>
+              <span class="row-author" style="color: {pc.textColor}">{v.author?.name ?? 'unknown'}</span>
               <span class="row-meta">
                 {relTime(v.timestamp)}{#if v.summary} &middot; "{v.summary}"{/if}
               </span>
@@ -525,6 +525,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    /* Stay pinned at the top of the panel; body scrolls independently. */
+    flex-shrink: 0;
   }
 
   .artifact-header-top {

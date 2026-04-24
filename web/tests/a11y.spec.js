@@ -159,30 +159,33 @@ afterEach(() => {
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
+// Fixtures match the REST API shape: `author` is an object { key, name, type },
+// and the list endpoint returns top-level `author` / `timestamp` (not
+// `latest_author` / `latest_timestamp`).
 const THREE_ARTIFACTS = [
   {
     name: 'design-notes',
     type: 'doc',
     title: 'Design notes',
     version_count: 3,
-    latest_author: 'phil',
-    latest_timestamp: Date.now() / 1000 - 120,
+    author: { key: 'phil-key', name: 'phil', type: 'human' },
+    timestamp: Date.now() / 1000 - 120,
   },
   {
     name: 'migration-plan',
     type: 'plan',
     title: 'Migration plan',
     version_count: 1,
-    latest_author: 'claude',
-    latest_timestamp: Date.now() / 1000 - 3600,
+    author: { key: 'claude-key', name: 'claude', type: 'agent' },
+    timestamp: Date.now() / 1000 - 3600,
   },
   {
     name: 'server',
     type: 'code',
     title: 'server.py',
     version_count: 7,
-    latest_author: 'rob',
-    latest_timestamp: Date.now() / 1000 - 7200,
+    author: { key: 'rob-key', name: 'rob', type: 'human' },
+    timestamp: Date.now() / 1000 - 7200,
   },
 ];
 
@@ -201,8 +204,18 @@ const PLAN_ARTIFACT_DETAIL = {
     '3. Restore on the new host\n\n' +
     '> Always back up first.\n',
   versions: [
-    { version: 2, author: 'phil', author_key: 'phil-key', timestamp: Date.now() / 1000 - 120, summary: 'add restore step' },
-    { version: 1, author: 'phil', author_key: 'phil-key', timestamp: Date.now() / 1000 - 360, summary: 'initial draft' },
+    {
+      version: 2,
+      author: { key: 'phil-key', name: 'phil', type: 'human' },
+      timestamp: Date.now() / 1000 - 120,
+      summary: 'add restore step',
+    },
+    {
+      version: 1,
+      author: { key: 'phil-key', name: 'phil', type: 'human' },
+      timestamp: Date.now() / 1000 - 360,
+      summary: 'initial draft',
+    },
   ],
 };
 

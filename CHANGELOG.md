@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Artifact Panel Fixes (2026-04-24)
+
+Three post-ship fixes after first-run verification.
+
+- **`[object Object]` author bug fixed** -- version dropdown and artifact list rows now render `author.name` (with `author.key` for participant color) instead of stringifying the `{key, name, type}` object. 4 sites in `ArtifactDetailHeader.svelte` + 2 sites in `ArtifactList.svelte`. Added `web/tests/artifact-author-rendering.spec.js` (5 defensive tests).
+- **Resizable panel** -- drag the left edge to resize between 320 px and min(900 px, viewport - 200 px). Uses Pointer Events API (touch + pen friendly), ember-amber hover tint, `role="separator"` + `aria-orientation="vertical"` + `aria-valuenow/min/max` per WAI-ARIA "Window Splitter". Keyboard-accessible (Tab to handle, Left/Right nudges 16 px, Home/End jump to bounds). Width persists in `localStorage` key `claude-comms:artifact-panel-width`. Slide-in animation suppressed during drag for zero-latency tracking.
+- **Body scroll fixed** -- long artifacts now scroll within the body area while the header stays pinned. Root cause: the flex-child `min-height: auto` default was resolving to intrinsic content height, preventing `overflow-y: auto` from taking effect. Adding `min-height: 0` on `.artifact-content-area` + `flex-shrink: 0` on the header resolved it.
+
+Tests: 122 / 122 Vitest passing. Build clean.
+
 ### Artifact Improvements (2026-04-23)
 
 Ten-improvement upgrade to the artifact subsystem: real-time sync, diffing, in-browser editing, markdown rendering, starring, and a full security/accessibility/test overhaul. Implemented across 15 tasks in 4 batches.

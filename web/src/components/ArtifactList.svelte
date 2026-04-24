@@ -1,7 +1,7 @@
 <!--
   @component ArtifactList
   @description List view of artifacts for the current conversation. Shows a STARRED section at the top when any artifact is starred, followed by the rest. Star state is per-identity + per-conversation, persisted to localStorage. Pure presentational aside from star-state bookkeeping — fetch state is owned by the parent panel.
-  @prop {Array} artifacts - Array of artifact summary objects (name, type, title, version_count, latest_author, latest_timestamp).
+  @prop {Array} artifacts - Array of artifact summary objects (name, type, title, version_count, author: { key, name, type }, timestamp, summary).
   @prop {number} artifactCount - Total artifact count (may differ from artifacts.length if server paginates).
   @prop {boolean} loading - True while the list is being fetched.
   @prop {string|null} error - Error message if the fetch failed.
@@ -159,11 +159,11 @@
             {#if artifact.version_count != null}
               <span class="artifact-item-meta">{artifact.version_count} version{artifact.version_count !== 1 ? 's' : ''}</span>
             {/if}
-            {#if artifact.latest_author}
-              <span class="artifact-item-meta">{artifact.latest_author}</span>
+            {#if artifact.author?.name}
+              <span class="artifact-item-meta">{artifact.author.name}</span>
             {/if}
-            {#if artifact.latest_timestamp}
-              <span class="artifact-item-meta">{formatTime(artifact.latest_timestamp, 'relative')}</span>
+            {#if artifact.timestamp}
+              <span class="artifact-item-meta">{formatTime(artifact.timestamp, 'relative')}</span>
             {/if}
           </div>
         </div>
@@ -204,11 +204,11 @@
           {#if artifact.version_count != null}
             <span class="artifact-item-meta">{artifact.version_count} version{artifact.version_count !== 1 ? 's' : ''}</span>
           {/if}
-          {#if artifact.latest_author}
-            <span class="artifact-item-meta">{artifact.latest_author}</span>
+          {#if artifact.author?.name}
+            <span class="artifact-item-meta">{artifact.author.name}</span>
           {/if}
-          {#if artifact.latest_timestamp}
-            <span class="artifact-item-meta">{formatTime(artifact.latest_timestamp, 'relative')}</span>
+          {#if artifact.timestamp}
+            <span class="artifact-item-meta">{formatTime(artifact.timestamp, 'relative')}</span>
           {/if}
         </div>
       </div>
