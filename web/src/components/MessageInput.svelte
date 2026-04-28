@@ -1,6 +1,19 @@
 <!--
   @component MessageInput
-  @description The main message composition area with a text input, formatting toolbar (bold/italic/code helpers), code snippet insertion, file attachment button, emoji picker trigger, @mention autocomplete, typing indicator display, character counter (warns at 9000, max 10000), and send button.
+  @description The main message composition area: textarea, formatting
+    toolbar (bold/italic/code helpers), code snippet insertion, file
+    attachment button, emoji picker trigger, @mention autocomplete with
+    overlay-rendered confirmed mentions + ghost suggestions, typing
+    indicator display, character counter (warns at 9000, max 10000), and
+    send button.
+
+    The @mention layer is built per `plans/mention-autocomplete-revamp.md`:
+      - `lib/mentions.js` owns the pure parse/filter/commit helpers
+      - this component is the orchestrator: state, cursor tracking, key
+        handlers, debounced implicit-commit, recipient resolution at send
+      - `MentionDropdown.svelte` is presentational; we feed it the
+        candidate list and highlight index
+
   @prop {object} store - The ChatStore instance for sending messages, typing notifications, and participant data.
   @prop {string} channelName - The current channel name shown in the input placeholder.
   @prop {Array} typingUsers - Array of user objects currently typing in this channel.
@@ -9,48 +22,288 @@
 <script>
   import MentionDropdown from './MentionDropdown.svelte';
   import { Type, Code, Paperclip, Smile, SendHorizontal } from 'lucide-svelte';
+  import {
+    parseMentions,
+    filterCandidates,
+    findExactMatch,
+    commitMention,
+    renderSegments,
+    tokensToRecipients,
+    isWordTerminator,
+  } from '../lib/mentions.js';
 
   let { store, channelName, typingUsers = [], onOpenEmoji } = $props();
 
   const MAX_MESSAGE_LENGTH = 10000;
   const CHAR_WARN_THRESHOLD = 9000;
+  /** Idle delay before an exact-match suggestion is silently committed. */
+  const IMPLICIT_COMMIT_DEBOUNCE_MS = 200;
 
+  // ── Reactive state ───────────────────────────────────────────────────
   let inputValue = $state('');
-  let showMentionDropdown = $state(false);
   let showFormatHelp = $state(false);
   let attachNotice = $state('');
-  let mentionQuery = $state('');
   let inputEl = $state(null);
   let fileInputEl = $state(null);
+
+  /** @type {Array<{start:number,end:number,name:string,key:string}>} */
+  let mentionTokens = $state([]);
+  /** @type {{atIndex:number,query:string}|null} */
+  let activeSuggestion = $state(null);
+  let highlightIndex = $state(0);
+  let isComposing = $state(false);
+
+  // Non-reactive cursor tracking — we read these in the input handler to
+  // diff old↔new state for parseMentions. Kept off the reactivity graph
+  // because they update on every keystroke and don't need to drive UI.
+  let prevText = '';
+  let prevCursor = 0;
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let pendingCommitTimer = null;
 
   let charCount = $derived(inputValue.length);
   let showCharCounter = $derived(charCount >= CHAR_WARN_THRESHOLD);
   let overLimit = $derived(charCount > MAX_MESSAGE_LENGTH);
 
+  // Candidate list: filtered, sorted, capped per `lib/mentions.js`.
+  let candidates = $derived(
+    activeSuggestion
+      ? filterCandidates(store.participants, activeSuggestion.query, store.userProfile.key)
+      : [],
+  );
+
+  // The candidate currently highlighted in the dropdown. Defensive against
+  // out-of-range indices (e.g. when the candidate list shrinks under the
+  // user's feet).
+  let highlightedCandidate = $derived(
+    candidates.length > 0
+      ? candidates[Math.min(Math.max(highlightIndex, 0), candidates.length - 1)]
+      : null,
+  );
+
+  // Exact-match candidate for the active query — drives implicit commit
+  // and the ember-pending overlay coloring.
+  let exactMatch = $derived(
+    activeSuggestion ? findExactMatch(activeSuggestion.query, candidates) : null,
+  );
+
+  // Overlay segments for the mirrored layer.
+  let overlaySegments = $derived(
+    renderSegments(inputValue, mentionTokens, activeSuggestion, highlightedCandidate, exactMatch),
+  );
+
+  let showMentionDropdown = $derived(activeSuggestion !== null);
+
+  // ── Effects ──────────────────────────────────────────────────────────
+
+  // Debounce: when an exact match is present, schedule a silent commit
+  // after IMPLICIT_COMMIT_DEBOUNCE_MS of no further keystrokes. The
+  // effect's dependencies (inputValue, exactMatch, activeSuggestion)
+  // re-fire teardown → setup whenever the user types, which is exactly
+  // the cancel + reschedule shape we want. Mirrors the canonical Svelte 5
+  // teardown pattern (see $effect docs, Effect teardown example).
+  $effect(() => {
+    // Read inputValue so the effect re-runs on every edit. Tokens or
+    // suggestion changes already imply re-runs via exactMatch /
+    // activeSuggestion.
+    inputValue;
+
+    if (!(exactMatch && activeSuggestion)) return;
+    const captured = { match: exactMatch, suggestion: { ...activeSuggestion } };
+    const timer = setTimeout(() => {
+      // Re-validate: only commit if the suggestion + match are still the
+      // same shape. Otherwise the user has typed past the match.
+      if (
+        activeSuggestion
+        && activeSuggestion.atIndex === captured.suggestion.atIndex
+        && activeSuggestion.query.toLowerCase() === captured.match.name.toLowerCase()
+      ) {
+        commitCandidate(captured.match);
+      }
+    }, IMPLICIT_COMMIT_DEBOUNCE_MS);
+    pendingCommitTimer = timer;
+    return () => {
+      clearTimeout(timer);
+      if (pendingCommitTimer === timer) pendingCommitTimer = null;
+    };
+  });
+
+  // (Note: the "best match" is always candidates[0] thanks to the sort
+  // order in `filterCandidates` — online-first, alpha. We keep
+  // highlightIndex as a free state variable so arrow navigation works
+  // across re-derivations; `highlightedCandidate` clamps it. When the
+  // list shrinks under a stale highlight, the clamp picks a safe item.
+  // Resetting back to 0 on every list change would defeat hover, so we
+  // only clamp here.)
+
+  // Sync overlay scroll with textarea scroll so long messages line up.
+  function handleScroll() {
+    const overlay = inputEl?.parentElement?.querySelector('.input-overlay');
+    if (overlay && inputEl) {
+      overlay.scrollTop = inputEl.scrollTop;
+    }
+  }
+
+  // ── Parsing ──────────────────────────────────────────────────────────
+
+  /**
+   * Run the mention parser using the current textarea state. Updates
+   * mentionTokens + activeSuggestion. Skipped during IME composition so
+   * we don't thrash candidates while the user is mid-character.
+   */
+  function reparseMentions() {
+    if (isComposing) return;
+    const newText = inputValue;
+    const newCursor = inputEl ? inputEl.selectionStart : newText.length;
+    const r = parseMentions(newText, mentionTokens, prevText, prevCursor, newCursor);
+    mentionTokens = r.tokens;
+    activeSuggestion = r.activeSuggestion;
+    prevText = newText;
+    prevCursor = newCursor;
+  }
+
   function handleInput(e) {
     inputValue = e.target.value;
     autoResize(e.target);
     store.notifyTyping();
+    reparseMentions();
+  }
 
-    // Check for @ mention trigger
-    const cursorPos = e.target.selectionStart;
-    const textBeforeCursor = inputValue.slice(0, cursorPos);
-    const atMatch = textBeforeCursor.match(/@([\w-]*)$/);
+  function handleSelect() {
+    // selectionchange-equivalent for the textarea: cursor moved without
+    // a text edit. If we were holding a pending exact match and the
+    // cursor moved out of the prefix range, commit immediately.
+    if (!inputEl) return;
+    const cursor = inputEl.selectionStart;
+    if (exactMatch && activeSuggestion) {
+      const prefixEnd = activeSuggestion.atIndex + 1 + activeSuggestion.query.length;
+      if (cursor < activeSuggestion.atIndex || cursor > prefixEnd) {
+        commitCandidate(exactMatch);
+        return;
+      }
+    }
+    // Otherwise just refresh `prevCursor` so the next edit's diff is
+    // anchored correctly.
+    prevCursor = cursor;
+  }
 
-    if (atMatch) {
-      mentionQuery = atMatch[1];
-      showMentionDropdown = true;
-    } else {
-      showMentionDropdown = false;
+  function handleCompositionStart() {
+    isComposing = true;
+  }
+
+  function handleCompositionEnd() {
+    isComposing = false;
+    reparseMentions();
+  }
+
+  // ── Commit operations ────────────────────────────────────────────────
+
+  /**
+   * Commit a specific candidate at the current active suggestion.
+   * @param {{name:string,key:string}} candidate
+   */
+  function commitCandidate(candidate) {
+    if (!activeSuggestion) return;
+    const atIndex = activeSuggestion.atIndex;
+    const queryEnd = atIndex + 1 + activeSuggestion.query.length;
+    const r = commitMention(inputValue, mentionTokens, atIndex, queryEnd, candidate);
+    inputValue = r.text;
+    mentionTokens = r.tokens;
+    activeSuggestion = null;
+    if (pendingCommitTimer) {
+      clearTimeout(pendingCommitTimer);
+      pendingCommitTimer = null;
+    }
+    prevText = inputValue;
+    prevCursor = r.newCursor;
+    // Restore cursor + focus on the next tick so the textarea is updated
+    // before we move the caret.
+    queueMicrotask(() => {
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.setSelectionRange(r.newCursor, r.newCursor);
+      }
+    });
+  }
+
+  /**
+   * If a pending exact-match commit is queued, fire it synchronously and
+   * cancel the timer. Used by send-time forced commit.
+   */
+  function commitPendingIfMatch() {
+    if (pendingCommitTimer) {
+      clearTimeout(pendingCommitTimer);
+      pendingCommitTimer = null;
+    }
+    if (exactMatch && activeSuggestion) {
+      commitCandidate(exactMatch);
     }
   }
 
+  // ── Keyboard ─────────────────────────────────────────────────────────
+
   function handleKeydown(e) {
+    // Word-terminator → instant commit if exact match is queued. Must
+    // happen BEFORE the character is inserted so the terminator lands
+    // cleanly after the committed token.
+    if (
+      e.key.length === 1
+      && isWordTerminator(e.key)
+      && exactMatch
+      && activeSuggestion
+      && !isComposing
+    ) {
+      commitCandidate(exactMatch);
+      // Let the default insert proceed; reparseMentions() will fire on
+      // the input event that follows.
+      return;
+    }
+
+    if (activeSuggestion) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        if (highlightedCandidate) commitCandidate(highlightedCandidate);
+        return;
+      }
+      if (e.key === 'Enter') {
+        // Enter commits the highlighted candidate IF the dropdown is
+        // showing real candidates; otherwise falls through to send/newline.
+        if (highlightedCandidate && !e.shiftKey) {
+          e.preventDefault();
+          commitCandidate(highlightedCandidate);
+          return;
+        }
+      }
+      if (e.key === 'ArrowDown') {
+        if (candidates.length > 0) {
+          e.preventDefault();
+          highlightIndex = (highlightIndex + 1) % candidates.length;
+        }
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        if (candidates.length > 0) {
+          e.preventDefault();
+          highlightIndex = (highlightIndex - 1 + candidates.length) % candidates.length;
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        activeSuggestion = null;
+        if (pendingCommitTimer) {
+          clearTimeout(pendingCommitTimer);
+          pendingCommitTimer = null;
+        }
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-    // Shift+Enter inserts a newline (default textarea behavior, no preventDefault)
+    // Shift+Enter inserts a newline (default textarea behavior).
   }
 
   /** Auto-resize textarea to fit content, capped at 6 lines (~144px). */
@@ -60,13 +313,29 @@
     el.style.height = Math.min(el.scrollHeight, 144) + 'px';
   }
 
+  // ── Send ─────────────────────────────────────────────────────────────
+
   function sendMessage() {
+    // Force-commit any pending exact-match before reading recipients so
+    // what the user sees is what we send.
+    commitPendingIfMatch();
+
     if (!inputValue.trim()) return;
     if (inputValue.length > MAX_MESSAGE_LENGTH) return;
-    store.sendMessage(inputValue);
+
+    const recipients = tokensToRecipients(mentionTokens);
+    store.sendMessage(inputValue, null, recipients.length > 0 ? recipients : null);
+
     inputValue = '';
-    showMentionDropdown = false;
-    // Reset textarea height after clearing
+    mentionTokens = [];
+    activeSuggestion = null;
+    highlightIndex = 0;
+    prevText = '';
+    prevCursor = 0;
+    if (pendingCommitTimer) {
+      clearTimeout(pendingCommitTimer);
+      pendingCommitTimer = null;
+    }
     if (inputEl) {
       inputEl.style.height = 'auto';
     }
@@ -80,7 +349,9 @@
     const file = e.target.files?.[0];
     if (file) {
       attachNotice = `File sharing coming soon`;
-      setTimeout(() => { attachNotice = ''; }, 3000);
+      setTimeout(() => {
+        attachNotice = '';
+      }, 3000);
     }
     // Reset so the same file can be re-selected
     e.target.value = '';
@@ -91,33 +362,34 @@
   }
 
   function insertSnippet() {
-    const template = "```language\n// code here\n```";
+    const template = '```language\n// code here\n```';
     const cursorPos = inputEl?.selectionStart ?? inputValue.length;
     const before = inputValue.slice(0, cursorPos);
     const after = inputValue.slice(cursorPos);
     inputValue = before + template + after;
     showFormatHelp = false;
-    // Focus and place cursor after insertion
+    prevText = inputValue;
+    // Tokens with start >= cursorPos must shift by template.length.
+    mentionTokens = mentionTokens.map((t) =>
+      t.start >= cursorPos
+        ? { ...t, start: t.start + template.length, end: t.end + template.length }
+        : { ...t },
+    );
     setTimeout(() => {
       inputEl?.focus();
       const newPos = cursorPos + template.length;
       inputEl?.setSelectionRange(newPos, newPos);
+      prevCursor = newPos;
     }, 0);
   }
 
-  function handleMentionSelect(name) {
-    const cursorPos = inputEl?.selectionStart || inputValue.length;
-    const textBeforeCursor = inputValue.slice(0, cursorPos);
-    const textAfterCursor = inputValue.slice(cursorPos);
-    const beforeAt = textBeforeCursor.replace(/@[\w-]*$/, '');
-    inputValue = beforeAt + '@' + name + ' ' + textAfterCursor;
-    showMentionDropdown = false;
-    inputEl?.focus();
+  // Dropdown event handlers — pure callbacks for the presentational child.
+  function handleDropdownHover(i) {
+    highlightIndex = i;
   }
-
-  let participants = $derived(
-    Object.values(store.participants)
-  );
+  function handleDropdownCommit(candidate) {
+    commitCandidate(candidate);
+  }
 </script>
 
 <div class="input-area">
@@ -156,15 +428,41 @@
   </div>
 
   <div class="input-wrap">
-    <textarea
-      bind:this={inputEl}
-      rows="1"
-      placeholder="Message #{channelName}..."
-      bind:value={inputValue}
-      oninput={handleInput}
-      onkeydown={handleKeydown}
-      data-testid="message-input"
-    ></textarea>
+    <div class="textarea-wrap">
+      <div class="input-overlay" aria-hidden="true">
+        {#each overlaySegments as seg, i (i)}
+          {#if seg.type === 'mention-confirmed'}
+            <span class="mention-confirmed">{seg.text}</span>
+          {:else if seg.type === 'mention-pending'}
+            <span class="mention-pending">{seg.text}</span>
+          {:else if seg.type === 'ghost'}
+            <span class="ghost-suggestion">{seg.text}</span>
+          {:else}
+            {seg.text}
+          {/if}
+        {/each}
+        {#if inputValue.endsWith('\n')}<span class="overlay-trailing-newline"> </span>{/if}
+      </div>
+      <textarea
+        bind:this={inputEl}
+        rows="1"
+        placeholder="Message #{channelName}..."
+        bind:value={inputValue}
+        oninput={handleInput}
+        onkeydown={handleKeydown}
+        onkeyup={handleSelect}
+        onclick={handleSelect}
+        onscroll={handleScroll}
+        oncompositionstart={handleCompositionStart}
+        oncompositionend={handleCompositionEnd}
+        aria-controls={showMentionDropdown ? 'mention-listbox' : undefined}
+        aria-activedescendant={showMentionDropdown && highlightedCandidate
+          ? 'mention-listbox-opt-' + highlightedCandidate.key
+          : undefined}
+        aria-autocomplete="list"
+        data-testid="message-input"
+      ></textarea>
+    </div>
     <div class="input-bottom-row">
       <div class="input-actions">
         <input
@@ -202,10 +500,11 @@
 
   {#if showMentionDropdown}
     <MentionDropdown
-      query={mentionQuery}
-      {participants}
-      onSelect={handleMentionSelect}
-      onClose={() => showMentionDropdown = false}
+      {candidates}
+      {highlightIndex}
+      onHover={handleDropdownHover}
+      onCommit={handleDropdownCommit}
+      listboxId="mention-listbox"
     />
   {/if}
 </div>
@@ -295,7 +594,7 @@
     border-radius: var(--radius-sm);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     font-size: 11px;
     color: var(--text-secondary);
     white-space: nowrap;
@@ -345,7 +644,7 @@
     border-radius: var(--radius);
     padding: 8px 12px 4px;
     transition: var(--transition-med);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
 
   .input-bottom-row {
@@ -356,8 +655,47 @@
   }
 
   .input-wrap:focus-within {
-    border-color: rgba(245,158,11,0.25);
-    box-shadow: 0 0 0 3px var(--border-glow), 0 0 24px rgba(245,158,11,0.04), 0 2px 8px rgba(0,0,0,0.15);
+    border-color: rgba(245, 158, 11, 0.25);
+    box-shadow: 0 0 0 3px var(--border-glow), 0 0 24px rgba(245, 158, 11, 0.04), 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  /* The textarea + overlay sit in a positioned wrapper. Both share the
+     same box model so the overlay's spans line up exactly under the
+     textarea's text. */
+  .textarea-wrap {
+    position: relative;
+    width: 100%;
+  }
+
+  .input-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow: hidden;
+    padding: 4px 0;
+    font-size: 14px;
+    font-family: inherit;
+    line-height: 1.5;
+    color: var(--text-primary);
+    z-index: 1;
+  }
+
+  .input-overlay .mention-confirmed {
+    color: var(--ember-300);
+    font-weight: 500;
+  }
+
+  .input-overlay .mention-pending {
+    color: var(--ember-300);
+    font-weight: 500;
+  }
+
+  .input-overlay .ghost-suggestion {
+    color: var(--text-faint);
+    font-style: italic;
+    opacity: 0.7;
   }
 
   .input-wrap textarea {
@@ -366,7 +704,8 @@
     border: none;
     outline: none !important;
     box-shadow: none !important;
-    color: var(--text-primary);
+    color: transparent;
+    caret-color: var(--text-primary);
     font-size: 14px;
     padding: 4px 0;
     font-family: inherit;
@@ -375,6 +714,8 @@
     line-height: 1.5;
     min-height: 36px;
     max-height: 180px;
+    position: relative;
+    z-index: 2;
   }
 
   .input-wrap textarea:focus-visible {
@@ -382,9 +723,22 @@
     box-shadow: none !important;
   }
 
-  .input-wrap textarea::placeholder { color: var(--text-faint); }
+  .input-wrap textarea::placeholder {
+    color: var(--text-faint);
+  }
 
-  .input-actions { display: flex; gap: 2px; }
+  /* Native selection highlight needs to remain visible despite the
+     transparent text color. Use the browser's selection background and
+     keep selected text legible. */
+  .input-wrap textarea::selection {
+    background: rgba(245, 158, 11, 0.32);
+    color: var(--text-primary);
+  }
+
+  .input-actions {
+    display: flex;
+    gap: 2px;
+  }
 
   .btn-icon {
     width: 34px;
@@ -420,14 +774,14 @@
     align-items: center;
     justify-content: center;
     transition: var(--transition-med);
-    box-shadow: 0 2px 10px rgba(245,158,11,0.2), inset 0 1px 0 rgba(255,255,255,0.15);
+    box-shadow: 0 2px 10px rgba(245, 158, 11, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15);
     position: relative;
     overflow: hidden;
   }
 
   .btn-send:hover {
     filter: brightness(1.1);
-    box-shadow: 0 2px 16px rgba(245,158,11,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+    box-shadow: 0 2px 16px rgba(245, 158, 11, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
     transform: translateY(-1px);
   }
 
@@ -435,7 +789,7 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.2) 50%, transparent 60%);
+    background: linear-gradient(135deg, transparent 40%, rgba(255, 255, 255, 0.2) 50%, transparent 60%);
     transform: translateX(-100%);
     transition: none;
   }

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Mention Autocomplete Revamp (2026-04-28)
+
+Production-grade overhaul of the `@mention` UX in `MessageInput.svelte`. Replaces the blocking, ungroomed dropdown with an overlay-based, non-blocking, ghost-suggesting, implicit-commit autocomplete that matches what users expect from Slack, Discord, and Linear.
+
+#### Web UI
+
+- **Overlay pattern** -- transparent `<textarea>` (caret + input events) layered over a colored mirror `<div>` (confirmed mentions in ember, ghost-suggestion in faint italic). Pixel-perfect alignment via shared font/padding/line-height + scroll sync.
+- **Mention-token data model** -- confirmed mentions are `{start, end, name, key}` records, decoupled from text. Editing punctuation around a token never breaks identity.
+- **Three-pass edit reconciliation** on every keystroke: offset-shift on insert/delete outside tokens, invalidate on overlap, sanity-check via text equality. Robust against paste, drag-drop, and programmatic mutation.
+- **Implicit commit (Tab is optional)** -- exact-match queries auto-commit via three triggers: word-terminator (space, comma, period, etc.) for instant commit, 200ms idle debounce for silent commit, cursor-move-away. Tab still works for decisive users. Send synchronously commits any pending implicit match before building recipients.
+- **Visual ember coloring leads the formal commit by ~200ms** -- as soon as exact match is detected the matched range turns ember in the overlay, giving instant feedback. If the user types more and breaks the match, color reverts. What you see is what you send.
+- **Online-first sort, prefix-match filter, cap of 7 candidates** -- replaces the previous "show every participant" behavior.
+- **Ghost text** -- the unentered remainder of the highlighted candidate appears as faint italic after the cursor (`@claude-testi[ng]`), so users always see what Tab will commit.
+- **Self-mention prevention** -- the current user is excluded from candidates.
+- **Backspace-to-edit re-targeting** -- editing a committed mention's name invalidates the token and re-spins the suggestion in the same parsing pass; user can keep typing or Tab to re-commit. No dialogs, no blocking.
+- **Send-time recipient resolution** -- `mqtt-store.svelte.js`'s `sendMessage()` now accepts an optional `recipients` array (third arg). `MessageInput` walks `mentionTokens` and passes their keys; backwards compatible (null/empty preserves old behavior).
+- **Accessibility** -- dropdown uses `role="listbox"` with `role="option"` rows and `aria-selected`. Textarea exposes `aria-activedescendant` so screen readers announce the highlighted candidate without focus moving. Confirmed mention spans get `aria-label="mentioning {name}"`. Ghost is `aria-hidden`.
+- **IME composition** -- mention parsing skipped during `compositionstart`-`compositionend` so CJK input doesn't thrash candidates mid-character.
+
+#### Files
+
+- New `web/src/lib/mentions.js` (pure helpers + segment walker, 36 unit tests)
+- New `web/tests/mentions.spec.js` (logic) + `web/tests/mention-input.spec.js` (component, 13 tests)
+- New `plans/mention-autocomplete-revamp.md` (design doc with worked examples)
+- Modified `web/src/components/MentionDropdown.svelte` (presentational, no kbd ownership)
+- Modified `web/src/components/MessageInput.svelte` (overlay + state + commit logic)
+- Modified `web/src/lib/mqtt-store.svelte.js` (`sendMessage` recipients arg)
+
+#### Tests
+
+171 / 171 Vitest passing (49 new). Build clean. svelte-autofixer clean on all modified files.
+
 ### Artifact Panel Fixes (2026-04-24)
 
 Three post-ship fixes after first-run verification.

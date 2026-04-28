@@ -534,8 +534,12 @@ export class MqttChatStore {
    * so it appears immediately even on slow connections.
    * @param {string} body - The message text (whitespace-only bodies are ignored).
    * @param {string|null} replyTo - Optional ID of the message being replied to.
+   * @param {string[]|null} recipients - Optional list of participant keys for
+   *   `@`-mention routing (matches the comms_send `recipients` field). When
+   *   provided, the server uses it to flag direct mentions in addition to
+   *   any inline `@name` markers in the body.
    */
-  sendMessage(body, replyTo = null) {
+  sendMessage(body, replyTo = null, recipients = null) {
     if (!body.trim()) return;
 
     const msg = {
@@ -546,7 +550,7 @@ export class MqttChatStore {
         name: this.userProfile.name,
         type: this.userProfile.type
       },
-      recipients: null,
+      recipients: recipients && recipients.length > 0 ? [...recipients] : null,
       body: body.trim(),
       reply_to: replyTo,
       conv: this.activeChannel

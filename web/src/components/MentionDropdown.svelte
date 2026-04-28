@@ -1,113 +1,84 @@
 <!--
   @component MentionDropdown
-  @description Autocomplete dropdown that appears above the message input when typing @mentions. Filters participants by query string, supports keyboard navigation via bits-ui Combobox, and inserts the selected name into the input.
-  @prop {string} query - The current @mention search string (text after '@').
-  @prop {Array} participants - Array of participant objects with name, key, and type fields.
-  @prop {Function} onSelect - Callback invoked with the selected participant's name.
-  @prop {Function} onClose - Callback invoked when the dropdown is dismissed.
+  @description Pure-presentational autocomplete dropdown shown above the
+    message input when typing @mentions. The dropdown does NOT capture
+    keyboard focus — its parent (MessageInput) owns all keyboard handling
+    and passes the highlighted index down. Click on a candidate to commit.
+  @prop {Array<{name:string,key:string,online:boolean}>} candidates - Pre-filtered, capped, sorted list (see `lib/mentions.js`).
+  @prop {number} highlightIndex - Index of the currently-highlighted candidate.
+  @prop {(index:number) => void} onHover - Called when the user hovers a candidate (parent updates highlight).
+  @prop {(candidate:object) => void} onCommit - Called when the user clicks a candidate.
+  @prop {string} listboxId - DOM id used for ARIA wiring (textarea aria-controls + aria-activedescendant).
 -->
 <script>
-  import { Combobox } from 'bits-ui';
   import { getInitials, getParticipantColor } from '../lib/utils.js';
 
-  let { query = '', participants = [], onSelect, onClose } = $props();
+  let {
+    candidates = [],
+    highlightIndex = 0,
+    onHover,
+    onCommit,
+    listboxId = 'mention-listbox',
+  } = $props();
 
-  let filtered = $derived(
-    participants.filter(p =>
-      p.name.toLowerCase().includes(query.toLowerCase())
-    ).slice(0, 8)
-  );
-
-  let comboValue = $state('');
-  let hiddenInputRef = $state(null);
-
-  // Auto-focus the hidden combobox input so bits-ui handles
-  // ArrowUp/Down, Enter, and Escape keyboard navigation natively.
-  // The external message input passes the query as a prop for filtering.
-  $effect(() => {
-    if (hiddenInputRef && filtered.length > 0) {
-      hiddenInputRef.focus();
-    }
-  });
-
-  function handleValueChange(value) {
-    if (value) {
-      const participant = filtered.find(p => p.key === value);
-      if (participant) {
-        onSelect(participant.name);
-      }
-    }
-  }
-
-  function handleOpenChange(open) {
-    if (!open) {
-      onClose();
-    }
+  /**
+   * Build a stable DOM id for each candidate row so the parent can wire
+   * `aria-activedescendant` on the textarea to the highlighted row.
+   *
+   * @param {string} key
+   * @returns {string}
+   */
+  function optionId(key) {
+    return listboxId + '-opt-' + key;
   }
 </script>
 
-{#if filtered.length > 0}
-  <Combobox.Root
-    type="single"
-    bind:value={comboValue}
-    open={true}
-    onOpenChange={handleOpenChange}
-    onValueChange={handleValueChange}
-    loop={true}
-  >
-    <Combobox.Input
-      bind:ref={hiddenInputRef}
-      value={query}
-      aria-label="Search participants"
-      class="mention-hidden-input"
-      data-testid="mention-combobox-input"
-    />
-
-    <Combobox.ContentStatic
-      data-testid="mention-dropdown"
-      trapFocus={false}
-      preventScroll={false}
-    >
-      {#snippet child({ props })}
-        {@const { style: _floatingStyle, class: _cls, ...ariaProps } = props}
-        <div {...ariaProps} class="mention-dropdown">
-          {#each filtered as p (p.key)}
-            {@const color = getParticipantColor(p.key)}
-            <Combobox.Item value={p.key} label={p.name} data-testid="mention-item-{p.key}">
-              {#snippet children({ selected, highlighted })}
-                <div class="mention-item" class:selected={highlighted}>
-                  <div class="mention-avatar" style="background: {color.gradient}">
-                    {getInitials(p.name)}
-                  </div>
-                  <div class="mention-info">
-                    <span class="mention-name" style="color: {color.textColor}">{p.name}</span>
-                    <span class="mention-type">{p.type}</span>
-                  </div>
-                </div>
-              {/snippet}
-            </Combobox.Item>
-          {/each}
+<div
+  class="mention-dropdown"
+  role="listbox"
+  id={listboxId}
+  aria-label="Mention suggestions"
+  data-testid="mention-dropdown"
+>
+  {#if candidates.length === 0}
+    <div class="mention-empty" data-testid="mention-empty">No matches</div>
+  {:else}
+    {#each candidates as p, i (p.key)}
+      {@const color = getParticipantColor(p.key)}
+      {@const isHighlighted = i === highlightIndex}
+      <button
+        type="button"
+        role="option"
+        id={optionId(p.key)}
+        aria-selected={isHighlighted}
+        class="mention-item"
+        class:selected={isHighlighted}
+        data-testid={'mention-item-' + p.key}
+        onmouseenter={() => onHover?.(i)}
+        onfocus={() => onHover?.(i)}
+        onmousedown={(e) => {
+          // mousedown (not click) so we commit BEFORE the textarea blurs;
+          // preventDefault keeps the textarea focused so the parent can
+          // restore the cursor at the inserted token's end.
+          e.preventDefault();
+          onCommit?.(p);
+        }}
+      >
+        <div class="mention-avatar" style="background: {color.gradient}">
+          {getInitials(p.name)}
         </div>
-      {/snippet}
-    </Combobox.ContentStatic>
-  </Combobox.Root>
-{/if}
+        <div class="mention-info">
+          <span class="mention-name" style="color: {color.textColor}">{p.name}</span>
+          {#if p.online}
+            <span class="mention-online-dot" aria-label="online" title="online"></span>
+          {/if}
+        </div>
+      </button>
+    {/each}
+  {/if}
+</div>
 
 <style>
-  :global(.mention-hidden-input) {
-    position: absolute !important;
-    width: 1px !important;
-    height: 1px !important;
-    padding: 0 !important;
-    margin: -1px !important;
-    overflow: hidden !important;
-    clip: rect(0, 0, 0, 0) !important;
-    white-space: nowrap !important;
-    border: 0 !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-
   .mention-dropdown {
     position: absolute;
     bottom: 100%;
@@ -117,10 +88,17 @@
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03);
     padding: 4px;
     z-index: 20;
     animation: panelIn 0.2s ease both;
+  }
+
+  .mention-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-faint);
+    text-align: center;
   }
 
   .mention-item {
@@ -139,7 +117,8 @@
     color: var(--text-primary);
   }
 
-  .mention-item:hover, .mention-item.selected {
+  .mention-item:hover,
+  .mention-item.selected {
     background: var(--bg-surface);
   }
 
@@ -158,10 +137,21 @@
 
   .mention-info {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 6px;
   }
 
-  .mention-name { font-size: 13px; font-weight: 600; }
-  .mention-type { font-size: 10px; color: var(--text-faint); }
+  .mention-name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .mention-online-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
+  }
 </style>
