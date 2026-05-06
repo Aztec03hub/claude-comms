@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Mentions vs Whispers, Reactions, Status Indicators, Rich Text (2026-05-06)
+
+Headline change: a clean break separating broadcast highlights (`mentions`) from private whispers (`recipients`) on every message. Plus reactions, working/status indicators, backtick rendering with markdown emphasis, presence resurrection for swept MCP connections, and a server-authoritative stale-offline-participant prune. Spec lives at `plans/mentions-vs-whisper-separation.md` v6 (4 adversarial review rounds, converged at 0 critical / 0 major).
+
+#### Added
+
+- **`Message.mentions: list[str] | None`** wire field with hex-key validator mirroring `_validate_recipients` at `message.py:95-105`. Pydantic v2 default `model_dump_json()` symmetrically emits `"mentions":null` alongside `"recipients":null`.
+- **`comms_send` `mentions` kwarg** -- broadcast highlight intent. Visible to all conversation members; named users get a notification cue; does NOT restrict visibility. Independent of `recipients`; the two may be combined (whisper-with-named-highlights).
+- **`comms_check` `mark_seen` kwarg** -- opt-in cursor advance after the response is built. Returned `total_unread` reflects the PRE-advance count, so callers see what they acknowledged. Defaults to `False` to preserve peek-only semantics.
+- **`resolve_for_mentions` registry method** -- new variant of `resolve_recipients` that hex8-validates against the global participant registry. `resolve_recipients` is unchanged; lenient hex8 pass-through preserved.
+- **`comms_react` MCP tool** -- add, remove, or toggle (default) emoji reactions on a message. Persists to a per-conversation reactions log, broadcasts on a dedicated reactions topic. Rate limits: 30 events per actor per minute per conversation, max 10 distinct emojis per actor per message. No-op operations return `{"status": "no_op"}`.
+- **`comms_reactions_get` MCP tool** -- list current reactions on a message as `{"reactions": {emoji: [actor_key, ...]}}`.
+- **`comms_status_set` MCP tool** -- ephemeral activity signal (e.g., `thinking`, `reading`, `drafting`). TTL default 30s, hard cap 300s. Throttled to one update per 2s; bursts dropped (last-write-wins). Auto-expires on disconnect or sweep.
+- **`comms_status_clear` MCP tool** -- idempotent clear of the active activity signal.
+- **`src/claude_comms/reactions.py`** -- `Reaction` and `ReactionEvent` Pydantic models, `ReactionsStore` class with add/remove/toggle, dedup, and rate-limit enforcement.
+- **`src/claude_comms/working_indicator.py`** -- activity-signal decorator + sweep machinery for `comms_status_*`.
+- **`PresenceManager.ensure_connection()`** -- resurrects MCP connections that were swept while still active, fixing the case where an idle MCP session was reaped server-side but the client had a live token.
+- **`_ts_after()` helper** in `mcp_tools.py` -- timezone-aware cursor comparison fixing a mixed-timezone string-compare bug that was filtering out otherwise-visible messages.
+- **`/dm @user[, @user2] body` slash command** -- composer parses recipient tokens against the §6.2-A grammar (whitespace OR comma OR comma+whitespace separates tokens; tokens end at first non-`@<name>`), resolves names to keys via `store.participants`, and sends a whisper. Wire `recipients` always carries keys.
+- **Profile-card "Send DM" button** -- pre-fills the composer with `/dm @<name> ` via store-mediated `composerPrefill`, watched by `MessageInput.svelte` through `$effect`. Replaces the previous fragile `document.querySelector` + `input.value =` pattern.
+- **`web/src/lib/rich-text-parser.js`** -- pure parser splitting message bodies into segments: plain text, inline `\`code\`` chips, triple-backtick fenced blocks, bold `**text**`, italic `*text*`, strikethrough `~~text~~`. Drives `RichText.svelte`.
+- **`web/src/lib/compose-overlay-segments.js`** -- composer overlay segmenter so backticked text colors live as you type without disrupting the textarea/mirror alignment.
+- **`web/src/components/RichText.svelte`** -- segment renderer used by `MessageBubble.svelte`.
+- **`web/src/lib/dm-parser.js`** -- `parseDM` slash-command parser (single-responsibility; intentionally separate from `mentions.js` autocomplete).
+- **Mention render branches in `MessageBubble.svelte:parseBody`** -- `mention-self` (bold + amber + `.has-self-mention` border accent on the bubble) for messages calling out the viewer; `mention-other` (quiet grey) for everyone else's mentions; legacy `.mention` chip preserved for whispers, sender-self, and unkeyed mentions. CSS tokens `--mention-self-bg/-fg/-border`, `--mention-other-bg/-fg` defined in `app.css`.
+- **TUI render parity** -- self-mentions render bold + amber with a `▎` glyph in the left margin and a `box.HEAVY` Panel border on the bubble; other-mentions render dim. Whisper bubble gates on `recipients` only, independent of `mentions`. Sender-self special case suppresses the loud chip on your own bubble.
+- **Working / status indicator UI** -- amber dot with the active label next to a participant's name in the member list (web + TUI), fading on clear/expiry.
+- **Member-list emoji-picker integration** for adding reactions from the web UI.
+- **`tokensToMentions`** helper in `mqtt-store.svelte.js` companion to the now-deprecated `tokensToRecipients` (retained as deprecated alias for one release).
+- **`tests/test_message_visibility.py`** (20 tests) -- send/visibility matrix per §10 of the plan: broadcast, mentions-only, whisper, whisper-with-mentions, sender-key dedup, hex8 validation, legacy fixture coercion, `mark_seen` cursor-advance.
+- **`tests/test_reactions.py`** (26 tests) -- model validators, store CRUD, rate limits, dedup, `comms_react` / `comms_reactions_get` integration.
+- **`tests/test_status.py`** (27 tests) -- working-indicator decorator, `comms_status_set` / `comms_status_clear`, TTL expiry, throttle, sweep, broadcast scope.
+- **TUI test expansion** in `tests/test_tui.py` -- self-vs-other mention parity, `box.HEAVY` whisper bubble, working-indicator badge.
+- **Web tests** -- `web/tests/rich-text-parser.spec.js`, `compose-overlay-segments.spec.js`, `composer-backtick.spec.js`, `dm-parser.spec.js`, `message-bubble-mentions.spec.js`, `message-input-mentions.spec.js` (Vitest); plus `web/e2e` updates.
+
+#### Changed
+
+- **`comms_send` resolves recipients via `resolve_recipients` and mentions via `resolve_for_mentions`** -- separate paths preserve the lenient hex8 pass-through on `recipients` while strictly validating mention keys against the global registry (drops stale keys, prevents future-collision agent-trigger bugs).
+- **Sender-key dedup discipline** -- `recipients`: dedup at composer + server (defense in depth). `mentions`: dedup at composer only (UX); NOT deduplicated server-side.
+- **`[@name]` body prefix policy** -- the server prepends a `[@name1, @name2] ` prefix ONLY when `recipients` is non-empty. Mentions-only sends never get a server-injected prefix.
+- **`comms_check` `total_unread` count** -- now applies `_is_visible` filtering (whispers addressed to others are excluded). Co-shipped with the `mark_seen` opt-in. Cross-deploy effect: already-running agents will see lower counts than before for conversations containing whispers addressed elsewhere; this is the intended state.
+- **`mqtt-store.svelte.js: sendMessage` signature** migrated to options-object: `sendMessage(message, channel, { mentions, recipients })`. JavaScript silently destructures arrays into option-objects, demoting whispers to broadcasts on partial deploys, so the store signature change AND `MessageInput` call-site update land in the same commit per the plan's atomicity constraint.
+- **MCP tool docstring at `mcp_server.py:656`** updated to document the broadcast-vs-whisper distinction.
+- **Member list (web + TUI)** -- now renders the working-indicator badge and prunes stale offline participants (server-authoritative + retained-MQTT-presence cleanup in `mqtt-store.svelte.js`).
+- **Markdown inline emphasis** -- `RichText.svelte` and `MessageBubble.svelte` render `**bold**`, `*italic*`, `~~strike~~`.
+
+#### Fixed
+
+- **Mixed-timezone cursor comparison** -- `mcp_tools.py` was string-comparing ISO timestamps with mismatched offsets, intermittently filtering out otherwise-visible messages from `comms_read` / `comms_check`. New `_ts_after()` helper normalizes both sides before comparing.
+- **`comms_check` invisible-message overcount** -- previously counted whispers addressed to others in `total_unread`; now applies the same `_is_visible` filter as `comms_read` (R2-M1 defect-fix).
+- **Phantom offline participants after daemon restart** -- web member list lingered on stale offline entries from retained MQTT presence after a daemon swap. Now pruned server-authoritatively with retained-presence cleanup in `mqtt-store.svelte.js`.
+- **Swept MCP connection invisibility** -- when an idle MCP session was reaped server-side, subsequent tool calls from a still-live client token surfaced as a participant disappearance. `PresenceManager.ensure_connection()` now resurrects the session.
+- **Sender-self visibility invariant test added** -- `recipients=[other]` (sender NOT in list) is visible to sender via `_is_visible`'s sender-key check. Locks the assumption so future `_is_visible` changes (e.g., mute lists) don't silently break the sender-key dedup invariant.
+
+#### Behavioral notes
+
+- **External MCP `comms_send` callers passing `recipients` containing ONLY the sender's own key now receive a `"None of the specified recipients could be resolved"` error** (was silently a no-op self-DM). Multi-recipient calls including the sender's key continue to succeed with the sender dropped.
+- **Pre-cutover messages** predating the mentions/whisper split keep their `recipients` field as whisper-only -- no migration was applied; this is by design (clean break per §9 of the plan). Pre-cutover `[@name]` body prefixes that look like mentions are still whispers.
+- **TUI write-side asymmetry (v1)** -- the `mentions` field is empty for TUI-originated messages. TUI free-typed `@name` produces broadcasts with `mentions=null`. The existing `[@name]` body-prefix path continues producing whispers (recipients-set). v2 may add a TUI `/dm` parser.
+
+#### Plan
+
+- **`plans/mentions-vs-whisper-separation.md`** v6 (826 lines, 4 adversarial review rounds, convergence trend 25 -> 11 -> 6 -> 6 with 0 critical / 0 major at convergence).
+
 ### Mention Autocomplete Revamp (2026-04-28)
 
 Production-grade overhaul of the `@mention` UX in `MessageInput.svelte`. Replaces the blocking, ungroomed dropdown with an overlay-based, non-blocking, ghost-suggesting, implicit-commit autocomplete that matches what users expect from Slack, Discord, and Linear.

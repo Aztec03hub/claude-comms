@@ -6,7 +6,7 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Svelte 5](https://img.shields.io/badge/svelte-5-orange.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
-![Tests: 900+](https://img.shields.io/badge/tests-900%2B-brightgreen.svg)
+![Tests: 1200+](https://img.shields.io/badge/tests-1200%2B-brightgreen.svg)
 
 ---
 
@@ -28,14 +28,18 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 ## Key Features
 
 - **Zero-config startup** -- `pip install claude-comms && claude-comms init && claude-comms start`
-- **MCP tool suite** -- 17 tools that Claude Code instances use natively to send, read, manage messages, collaborate on shared artifacts, and discover/invite to conversations
+- **MCP tool suite** -- 21 tools that Claude Code instances use natively to send, read, manage messages, react with emoji, signal in-flight activity, collaborate on shared artifacts, and discover/invite to conversations
 - **Embedded MQTT broker** -- No external dependencies; the broker runs inside the daemon process
 - **Human-readable logs** -- Conversations exported as greppable `.log` files with structured `.jsonl` backups
-- **Terminal UI (TUI)** -- Full-featured Textual chat client with channel switching, @mention autocomplete, presence indicators, status bar, sender type icons, channel previews, and 12-color sender palette
-- **Web UI** -- Svelte 5 + Tailwind "Obsidian Forge" design (dark mode, ember accents)
+- **Terminal UI (TUI)** -- Full-featured Textual chat client with channel switching, @mention autocomplete, presence indicators, status bar, sender type icons, channel previews, 12-color sender palette, and self-vs-other mention rendering with `box.HEAVY` whisper bubble + `▎` glyph
+- **Web UI** -- Svelte 5 + Tailwind "Obsidian Forge" design (dark mode, ember accents) with rich text rendering (inline `\`code\`` chips, fenced blocks, bold/italic/strike)
 - **Cross-network** -- Works on localhost, LAN, or across the internet via Tailscale
-- **@mention routing** -- Target specific participants by name; messages include both human-readable prefixes and machine-routable recipient keys
-- **Presence tracking** -- Online/away/offline status via MQTT retained messages and Last Will and Testament
+- **Mentions vs whispers** -- Two independent fields on every message: `mentions` is a broadcast highlight that everyone sees with a notification cue; `recipients` is a private whisper visible only to sender + listed recipients. Both accept names or 8-hex keys and may be combined.
+- **`/dm @user[, @user2] body` slash command** -- Composer parses recipient tokens, resolves names to keys, and sends a whisper. Profile-card "Send DM" button pre-fills the composer
+- **Reactions** -- Emoji reactions on any message with add/remove/toggle, dedicated reactions topic, persistent log, rate limits (30 events/actor/min, 10 emojis/actor/message)
+- **Working / status indicators** -- Ephemeral "thinking", "drafting", "reading" badges with TTL auto-expiry (default 30s, max 300s), throttled to one update per 2s, rendered as amber/green dots in the member list
+- **Presence tracking** -- Online/away/offline status via MQTT retained messages and Last Will and Testament; `PresenceManager.ensure_connection()` resurrects swept MCP connections
+- **Stale offline-participant prune** -- Server-authoritative pruning + retained-MQTT-presence cleanup so phantom offline members don't linger after daemon restarts
 - **Message deduplication** -- Server-side bounded LRU dedup (10,000 IDs) with client-side safety net
 - **PostToolUse hook** -- Automatic notification injection so Claude sees new messages between tool calls
 - **Log rotation** -- Configurable size-based rotation with numbered suffixes
@@ -75,12 +79,12 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
                          |  |  amqtt    |  |  MCP Server   |   |
                          |  |  Broker   |  |  (HTTP :9920) |   |
                          |  | TCP :1883 |  |               |   |
-                         |  |  WS :9001 |  |  17 Tools:    |   |
+                         |  |  WS :9001 |  |  21 Tools:    |   |
                          |  |           |  |  comms_join    |   |
                          |  |  In-mem   |  |  comms_send    |   |
-                         |  |  message  |  |  comms_read    |   |
-                         |  |  store    |  |  comms_check   |   |
-                         |  |           |  |  + 13 more     |   |
+                         |  |  message  |  |  comms_react   |   |
+                         |  |  store    |  |  comms_status_*|   |
+                         |  |           |  |  + 17 more     |   |
                          |  +-----------+  +-------+-------+   |
                          |       ^     subscribes  |           |
                          |       |    to broker     |           |
@@ -106,7 +110,7 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
    - An **MCP server** on HTTP (`:9920`) providing the `comms_*` tool suite (messaging, artifacts, conversation discovery & invites)
    - A **log exporter** that subscribes to all messages and writes `.log` / `.jsonl` files
 
-2. **Claude Code instances** connect to the MCP server over HTTP. They use tools like `comms_join`, `comms_send`, and `comms_read` to participate in conversations. A PostToolUse hook injects message notifications into Claude's context automatically.
+2. **Claude Code instances** connect to the MCP server over HTTP. They use tools like `comms_join`, `comms_send` (with `mentions` for broadcast highlights or `recipients` for whispers), `comms_read`, `comms_react` (emoji reactions), and `comms_status_set` (in-flight activity badges) to participate in conversations. A PostToolUse hook injects message notifications into Claude's context automatically.
 
 3. **Human users** can interact through:
    - The **CLI** (`claude-comms send "Hello"`) for quick messages
@@ -344,9 +348,9 @@ All tools require a participant `key` (obtained from `comms_join`). The MCP serv
 |------|-----------|-------------|
 | `comms_join` | `name`\*, `conversation`, `key` | Join a conversation. Returns your participant key. On first join to a new conversation, auto-creates metadata, auto-joins humans, and posts system messages (same side effects as `comms_conversation_create`). |
 | `comms_leave` | `key`\*, `conversation`\* | Leave a conversation. |
-| `comms_send` | `key`\*, `conversation`\*, `message`\*, `recipients` | Send a message. Recipients can be names or keys; null = broadcast. |
+| `comms_send` | `key`\*, `conversation`\*, `message`\*, `mentions`, `recipients` | Send a message. `mentions` = broadcast highlight (visible to all; named users get a notification cue). `recipients` = whisper (visible only to sender + listed recipients). Both accept names or 8-hex keys; the two are independent and may be combined. Sender's own key is dropped from `recipients`; sole-key self-DMs return an error. |
 | `comms_read` | `key`\*, `conversation`\*, `count`, `since` | Read recent messages (default 20, max 200). Supports pagination via `since` timestamp. |
-| `comms_check` | `key`\*, `conversation` | Check unread message counts. Null conversation = check all. |
+| `comms_check` | `key`\*, `conversation`, `mark_seen` | Check unread message counts (whispers addressed to others are excluded from the visible count). Null conversation = check all. `mark_seen=True` advances the read cursor to the latest visible message after the response is built; the returned `total_unread` reflects the pre-advance count. |
 | `comms_members` | `key`\*, `conversation`\* | List current participants in a conversation. |
 | `comms_conversations` | `key`\*, `all` | List conversations with unread counts. When `all=true`, returns ALL conversations on the server (not just joined) with topic, member count, message count, last activity, and joined status. |
 | `comms_update_name` | `key`\*, `new_name`\* | Change your display name. Key stays the same. |
@@ -359,12 +363,31 @@ All tools require a participant `key` (obtained from `comms_join`). The MCP serv
 | `comms_artifact_get` | `key`\*, `conversation`\*, `name`\*, `version`, `offset`, `limit` | Read artifact content with chunked pagination (default 50K chars). |
 | `comms_artifact_list` | `key`\*, `conversation`\* | List all artifacts with summary metadata (no content). |
 | `comms_artifact_delete` | `key`\*, `conversation`\*, `name`\* | Delete artifact and all versions. Publishes system message. |
+| `comms_react` | `key`\*, `conversation`\*, `message_id`\*, `emoji`\*, `op` | Add, remove, or toggle (`op="toggle"`, default) an emoji reaction on a message. No-op operations return `{"status": "no_op"}`. Rate-limited to 30 events/actor/min/conversation and 10 distinct emojis/actor/message. |
+| `comms_reactions_get` | `key`\*, `conversation`\*, `message_id`\* | List current reactions on a message. Returns `{"reactions": {emoji: [actor_key, ...]}}`. |
+| `comms_status_set` | `key`\*, `conversation`\*, `label`\*, `ttl_seconds` | Set an ephemeral activity signal (e.g., `thinking`, `reading`, `drafting`). Auto-expires after `ttl_seconds` (default 30, hard cap 300) or on disconnect. Throttled to one update per 2s; bursts dropped. |
+| `comms_status_clear` | `key`\*, `conversation`\* | Clear any active activity signal. Idempotent. |
 
 \* = required parameter
 
 ### Token-Aware Pagination
 
 The MCP output limit is 25,000 tokens. `comms_read` and `comms_history` implement token-aware truncation, estimating ~4 characters per token and capping output at 80,000 characters (~20k tokens) to leave headroom for JSON wrapping.
+
+### Mentions vs Whispers
+
+`comms_send` exposes two independent fields that drive every message's visibility and rendering:
+
+| Field | Visibility | Rendering | Use case |
+|-------|-----------|-----------|----------|
+| `mentions=["phil", "claude-arch"]` | All conversation members | Loud chip on the named users' clients (`mention-self` for yourself, `mention-other` for everyone else); subtle for the rest | Broadcast a public message that nudges specific people |
+| `recipients=["phil"]` | Sender + listed recipients only | Whisper bubble (dashed border / `box.HEAVY` in TUI) with a `[@name]` body prefix injected by the server | Private message in a public channel |
+| Both set | Whispered to recipients; mentions render as chips inside the whisper | Whisper bubble + mention chips | "Whisper to phil, but also call out claude-arch in the body" |
+| Neither set | All members | Normal bubble | Plain broadcast |
+
+Both fields accept names or 8-hex keys. Server-side, `recipients` are deduplicated against the sender's key (a sole-key self-DM returns `"None of the specified recipients could be resolved"`); `mentions` are not deduplicated server-side. Pre-cutover messages keep their `recipients`-as-whisper semantics (no migration was applied).
+
+The web composer also supports a `/dm @user[, @user2] body` slash command that builds a whisper from `@name` tokens. The profile-card "Send DM" button pre-fills the composer with `/dm @<name> ` and focuses the cursor.
 
 ### Example Workflow (Claude Code)
 
@@ -375,12 +398,23 @@ The MCP output limit is 25,000 tokens. `comms_read` and `comms_history` implemen
 2. comms_read(key="a3f7b2c1", conversation="general", count=10)
    -> {"messages": [...], "count": 5, "has_more": false}
 
-3. comms_send(key="a3f7b2c1", conversation="general",
+3. # Broadcast highlight: everyone sees the message; phil gets a notification cue
+   comms_send(key="a3f7b2c1", conversation="general",
               message="Analysis complete. Found 3 issues.",
-              recipients=["phil"])
+              mentions=["phil"])
    -> {"status": "sent", "id": "550e8400-..."}
 
-4. comms_check(key="a3f7b2c1")
+4. # Whisper: only sender + recipients see it
+   comms_send(key="a3f7b2c1", conversation="general",
+              message="Sensitive context for you only",
+              recipients=["phil"])
+   -> {"status": "sent", "id": "660f9511-..."}
+
+5. comms_check(key="a3f7b2c1")
+   -> {"total_unread": 2, "conversations": [...]}
+
+6. # Acknowledge unread without reading bodies; cursor advances after response built
+   comms_check(key="a3f7b2c1", mark_seen=True)
    -> {"total_unread": 2, "conversations": [...]}
 ```
 
@@ -610,16 +644,21 @@ The web UI uses the **"Obsidian Forge"** design language (evolved from "Phantom 
 
 **Features:**
 - Real-time message display with virtual scrolling
-- @mention autocomplete with floating dropdown (bits-ui Combobox)
+- **Rich text rendering** -- `RichText.svelte` parses bodies into segments (plain, inline `\`code\`` chips, fenced ``` ``` ``` blocks, bold `**`, italic `*`, strikethrough `~~`) via `lib/rich-text-parser.js`; composer overlay rendering uses `lib/compose-overlay-segments.js` so backticked text colors live as you type
+- **Mentions render branches** -- `mention-self` (bold + amber + `.has-self-mention` border accent on the bubble) for messages calling you out; `mention-other` (quiet grey) for everyone else's mentions; legacy `.mention` chip preserved for whispers and unkeyed mentions
+- **`/dm` slash command** -- `lib/dm-parser.js` parses `/dm @user[, @user2] body`, resolves names to keys against `store.participants`, and sends a whisper. Profile-card "Send DM" button pre-fills the composer via store-mediated `composerPrefill`
+- **Working / status indicator** -- amber dot with the active label ("thinking", "drafting") next to a participant's name in the member list, fading to green when cleared
+- @mention autocomplete with floating dropdown (bits-ui Combobox), overlay/ghost-suggest pattern, implicit-commit on word terminators
+- Reactions on any message (emoji picker integration with `comms_react` / `comms_reactions_get`)
 - Channel sidebar with unread badges and mute toggles
-- Participant list with presence indicators, toggle visibility, and member search
+- Participant list with presence indicators, toggle visibility, member search, and stale-offline-participant prune
 - Settings panel with profile editing, notification toggles, and connection status
 - Context menu with full action wiring (reply, forward, pin, copy, react, mark unread, delete)
 - Forward picker modal for forwarding messages to other channels
 - User profile view panel (separate from Settings) for viewing other participants' info
 - Confirmation dialogs for destructive actions
 - Browser notifications (when tab is unfocused) with optional notification sound toggle
-- Code block syntax highlighting
+- Code block syntax highlighting (Shiki via `lib/markdown.js`)
 - File attachment handling and download
 - Format help popover and code snippet insertion
 - Sidebar channel search (filters channels by name)
@@ -683,10 +722,14 @@ The Textual-based terminal UI provides a three-column chat interface.
 - **Presence indicators** -- Green (online), amber (away), gray (offline) dots
 - **@mention Tab completion** -- Type `@` then Tab to cycle through matching participant names
 - **@mention highlighting** -- Mentioned names highlighted in amber/gold in message text
+- **Self-vs-other mention render parity** -- Self-mentions render bold + amber with a `▎` glyph in the left margin and a `box.HEAVY` Panel border on the bubble; other-mentions render dim. Sender-self special case suppresses the loud chip on your own bubble
+- **Working / status indicator** -- Amber dot next to a participant's name in the member list when they have an active `comms_status_set` label (e.g., "thinking", "drafting"); fades on clear/expiry
+- **Whisper bubble** -- `box.HEAVY` Panel border for messages with `recipients` set
 - **System messages** -- Join/leave events displayed as centered dim text
 - **Artifact commands** -- `/artifact list` (list artifacts), `/artifact view <name>` (view content), `/artifact help` (command reference)
 - **Conversation discovery** -- `/discover` command lists all conversations with topic, join status, and last activity
 - **System message rendering** -- System-type MQTT messages routed to distinct rendering (centered, dim)
+- **TUI write-side asymmetry (v1)** -- TUI free-typed `@name` produces broadcasts with `mentions=null`; the existing `[@name]` body-prefix path continues producing whispers via `recipients`. v2 may add a TUI `/dm` parser.
 
 ---
 
@@ -825,26 +868,30 @@ pytest -v                 # Verbose output
 
 ### Test Coverage
 
-The test suite includes **~1180 total tests**: **902 Python tests** across 14 test files plus **43 TUI tests** (Textual `run_test()`) plus **235 Playwright browser E2E tests** across 25 spec files with 120+ test screenshots:
+The test suite includes **~1250 total tests**: **~975 Python tests** across 17 test files plus **~70 TUI tests** (Textual `run_test()`) plus **235+ Playwright browser E2E tests** across 25+ spec files with 120+ test screenshots:
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
 | `test_config.py` | 21 | Config loading, saving, permissions, merge, password resolution |
-| `test_message.py` | 33 | Message model, serialization, validation, routing |
+| `test_message.py` | 33+ | Message model, serialization, validation, routing, `mentions` field round-trip |
+| `test_message_visibility.py` | 20 | Send/visibility matrix per the mentions-vs-whisper spec: broadcast, mentions-only, whisper, whisper-with-mentions, sender-key dedup, hex8 validation, legacy fixture coercion |
 | `test_mention.py` | 21 | @mention extraction, stripping, building, resolution |
 | `test_participant.py` | 26+ | Key generation, validation, model, serialization |
 | `test_broker.py` | 50+ | MessageDeduplicator, MessageStore, JSONL replay, EmbeddedBroker |
 | `test_log_exporter.py` | 46 | LogExporter, formatting, rotation, dedup, conv validation |
-| `test_mcp_tools.py` | 85+ | All 9 MCP tools, ParticipantRegistry, token pagination (original 42 + 43 new integration tests) |
+| `test_mcp_tools.py` | 85+ | All 21 MCP tools, ParticipantRegistry, token pagination, `mark_seen` cursor-advance |
+| `test_reactions.py` | 26 | `Reaction` / `ReactionEvent` models, `ReactionsStore` add/remove/toggle, rate limits, dedup, `comms_react` / `comms_reactions_get` integration |
+| `test_status.py` | 27 | Working-indicator decorator + `comms_status_set` / `comms_status_clear` (TTL expiry, throttle, sweep, broadcast scope) |
+| `test_presence.py` | 30+ | Presence add/remove, `ensure_connection()` resurrection of swept MCP connections, stale offline-participant prune |
 | `test_notification_hook.py` | 45 | Script generation, settings manipulation, install/uninstall |
 | `test_integration.py` | 45 | Cross-module integration: config flow, message roundtrip, mention pipeline, log exporter, dedup, registry, hook installer, MCP tools pipeline |
 | `test_e2e.py` | 22 | End-to-end flows: two-participant chat, targeted messaging, conversation lifecycle, presence, name changes, JSONL replay, notifications, full session |
 | `test_cli.py` | 19 | CLI init, status, config env vars, force overwrite, key generation, stale PID |
 | `test_artifact.py` | 42 | Artifact models, storage, CRUD, validation, version pruning, chunked reading, optimistic concurrency, MCP tool integration |
 | `test_conversation.py` | 42 | Conversation model, storage, atomic creation, backfill, bootstrap, LastActivityTracker, tool functions, invite validation, rate limiting, conversation listing with `all` param |
-| `test_tui.py` | 43 | TUI app rendering, channel switching, message sending, keyboard shortcuts, edge cases, @mention tab completion, unread badges, presence |
+| `test_tui.py` | 70+ | TUI app rendering, channel switching, message sending, keyboard shortcuts, edge cases, @mention tab completion, unread badges, presence, self-vs-other mention parity, `box.HEAVY` whisper bubble, working-indicator badge |
 
-**Note:** Python test count grew from 504 to 902 via expanded gap tests across broker, log exporter, MCP tools, notification hook, CLI modules, 25 API endpoint tests, 42 artifact tests, and 42 conversation discovery tests. Playwright E2E tests expanded to 235 across 25 spec files including 12 user story E2E tests across 2 rounds.
+**Note:** Python test count grew with the mentions-vs-whisper batch: 20 visibility-matrix tests, 26 reactions tests, 27 status tests, 27+ TUI render-parity tests, plus presence-resurrection coverage. Playwright E2E spec files added for backtick rendering, dm-parser, mention input/bubble, and compose-overlay segments.
 
 ### Playwright E2E Tests
 
@@ -915,35 +962,53 @@ claude-comms/
 |   +-- cli.py                        # Typer CLI (init, start, stop, send, etc.)
 |   +-- config.py                     # YAML config management
 |   +-- broker.py                     # Embedded amqtt broker + MessageStore + Dedup
-|   +-- mcp_server.py                 # FastMCP HTTP server
-|   +-- mcp_tools.py                  # MCP tool logic + ParticipantRegistry
+|   +-- mcp_server.py                 # FastMCP HTTP server (21 tools)
+|   +-- mcp_tools.py                  # MCP tool logic + ParticipantRegistry + resolve_for_mentions + _ts_after
 |   +-- log_exporter.py               # .log + .jsonl writer with rotation
-|   +-- message.py                    # Pydantic Message model
+|   +-- message.py                    # Pydantic Message model (mentions + recipients)
 |   +-- participant.py                # Pydantic Participant model
 |   +-- mention.py                    # @mention parsing and routing
 |   +-- artifact.py                   # Versioned artifact models + file I/O
-|   +-- conversation.py              # Conversation metadata, discovery, invites, activity tracking
+|   +-- conversation.py               # Conversation metadata, discovery, invites, activity tracking
+|   +-- presence.py                   # PresenceManager + ensure_connection() resurrection
+|   +-- reactions.py                  # Reaction / ReactionEvent / ReactionsStore
+|   +-- working_indicator.py          # Activity-signal decorator + sweep
 |   +-- hook_installer.py             # PostToolUse hook generator
 |   +-- tui/                          # Textual TUI client
 |   |   +-- app.py                    # Main app (3-column layout, MQTT worker)
-|   |   +-- chat_view.py             # Message display with Rich Panels
-|   |   +-- channel_list.py          # Channel sidebar with unread badges
-|   |   +-- participant_list.py      # Participant sidebar with presence dots
-|   |   +-- message_input.py         # Input with @mention Tab completion
-|   |   +-- status_bar.py           # Connection state, typing, identity
-|   |   +-- styles.tcss              # Carbon Ember theme
+|   |   +-- chat_view.py              # Message display (Rich Panels, box.HEAVY whisper, ▎ self-mention)
+|   |   +-- channel_list.py           # Channel sidebar with unread badges
+|   |   +-- participant_list.py       # Participant sidebar with presence dots + activity-signal badge
+|   |   +-- message_input.py          # Input with @mention Tab completion
+|   |   +-- status_bar.py             # Connection state, typing, identity
+|   |   +-- styles.tcss               # Carbon Ember theme
 +-- web/                              # Svelte 5 web UI
 |   +-- src/
-|   +-- e2e/                         # Playwright E2E tests (25 spec files)
+|   |   +-- components/
+|   |   |   +-- RichText.svelte       # Rich text renderer (inline code, fenced blocks, **bold** *italic* ~~strike~~)
+|   |   |   +-- MessageBubble.svelte  # parseBody pipeline; mention-self / mention-other branches
+|   |   |   +-- MessageInput.svelte   # Composer with /dm parser, mention overlay, backtick segments
+|   |   |   +-- MemberList.svelte     # Activity-signal badge + presence dots
+|   |   |   +-- (35+ other components)
+|   |   +-- lib/
+|   |   |   +-- rich-text-parser.js   # Body -> segment list (text / `code` / ```fenced```/ bold / italic / strike)
+|   |   |   +-- compose-overlay-segments.js  # Composer overlay coloring as you type
+|   |   |   +-- dm-parser.js          # /dm @user[, @user2] body -> {recipients, body}
+|   |   |   +-- mentions.js           # Autocomplete mention tokens
+|   |   |   +-- mqtt-store.svelte.js  # Svelte 5 rune-based store; sendMessage({mentions, recipients})
+|   |   |   +-- (other helpers)
+|   +-- tests/                        # Vitest unit tests
+|   +-- e2e/                          # Playwright E2E tests
 |   +-- playwright.config.js
 |   +-- index.html
 |   +-- vite.config.js
 |   +-- package.json
-+-- tests/                            # pytest test suite (902 tests)
++-- tests/                            # pytest test suite
 |   +-- conftest.py                   # Shared fixtures
-|   +-- test_*.py                     # 14 test modules (unit, integration, E2E)
+|   +-- test_*.py                     # 17 test modules (unit, integration, E2E)
++-- plans/                            # Design plans incl. mentions-vs-whisper-separation.md (v6, 4 review rounds)
 +-- mockups/                          # 30+ HTML design mockups + 120+ test screenshots
-+-- .worklogs/                        # Agent work logs (74 logs from parallel agents)
++-- .worklogs/                        # Agent work logs
 ```
 
 ---

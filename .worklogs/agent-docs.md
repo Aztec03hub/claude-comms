@@ -66,3 +66,25 @@
 
 - A CLAUDE.md linter ran on initial write, replacing the comprehensive README with a shorter version. The full version was re-written.
 - Test count of 338+ is aggregated from work logs (21 + 33 + 21 + 26 + 50 + 46 + 42 + 45 = 284 minimum, with parametrized tests expanding the actual count)
+
+---
+
+## 2026-05-06T21:21:42Z
+
+- Mode: commit_and_push
+- Scope: since=0d35eed (last commit; no tags). Working-tree-only changes; nothing committed yet.
+- Buckets: Added 31, Changed 8, Fixed 5, Behavioral notes 3, Security 0
+- Files written: README.md, CHANGELOG.md, .worklogs/agent-docs.md (this entry)
+- Commit: pending
+- Push: origin main -> pending
+- Notes:
+  - This is a clean retry after a prior docs-agent run was rate-limited mid-flight.
+  - The docs commit only stages docs files (README.md, CHANGELOG.md, worklog) and leaves the substantial working-tree code changes for Phil to commit separately. Per ops-manual §8: "stage only docs files".
+  - README updates: MCP tool count 17 -> 21, architecture diagram refreshed, key features section expanded for mentions/whisper, reactions, working indicators, rich text, presence resurrection. New "Mentions vs Whispers" subsection under MCP Tools Reference. Web UI and TUI features lists updated. Project structure tree updated with reactions.py, working_indicator.py, presence.py, RichText.svelte, rich-text-parser.js, compose-overlay-segments.js, dm-parser.js. Test coverage table expanded with test_message_visibility.py (20), test_reactions.py (26), test_status.py (27), test_presence.py (30+), and bumped test_tui.py to 70+. Tests badge bumped 900+ -> 1200+.
+  - CHANGELOG: appended a single dated subsection "Mentions vs Whispers, Reactions, Status Indicators, Rich Text (2026-05-06)" under [Unreleased]. Used Keep a Changelog buckets (Added, Changed, Fixed) plus a "Behavioral notes" callout block for the three R4-mi6 / cutover / TUI-asymmetry items the prompt flagged.
+  - Source verification: read the live mcp_server.py signatures for comms_send (mentions kwarg), comms_check (mark_seen), comms_react, comms_reactions_get, comms_status_set, comms_status_clear; pulled exact docstring semantics into the README MCP table and CHANGELOG bullets.
+  - Plan §17 + §18 used as canonical source of CHANGELOG bullet content for the headline change.
+  - Counted tests in new files via grep: test_reactions.py = 26, test_status.py = 27, test_message_visibility.py = 20.
+  - No SECURITY.md exists; CONTRIBUTING.md unchanged (no dev-setup or CI matrix drift in this batch).
+  - Default branch: main per `git rev-parse --abbrev-ref HEAD`. Note: `git symbolic-ref refs/remotes/origin/HEAD` failed with "fatal: ref refs/remotes/origin/HEAD is not a symbolic ref" -- origin's default-branch ref isn't set up locally. Pushed to `main` directly per the prompt's stated practice.
+
