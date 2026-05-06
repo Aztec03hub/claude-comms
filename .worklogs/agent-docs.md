@@ -75,8 +75,8 @@
 - Scope: since=0d35eed (last commit; no tags). Working-tree-only changes; nothing committed yet.
 - Buckets: Added 31, Changed 8, Fixed 5, Behavioral notes 3, Security 0
 - Files written: README.md, CHANGELOG.md, .worklogs/agent-docs.md (this entry)
-- Commit: pending
-- Push: origin main -> pending
+- Commit: c492c6e
+- Push: origin main -> ok (0d35eed..c492c6e)
 - Notes:
   - This is a clean retry after a prior docs-agent run was rate-limited mid-flight.
   - The docs commit only stages docs files (README.md, CHANGELOG.md, worklog) and leaves the substantial working-tree code changes for Phil to commit separately. Per ops-manual §8: "stage only docs files".
