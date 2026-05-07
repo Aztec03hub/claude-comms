@@ -186,6 +186,9 @@
     threadParent = message;
     showThreadPanel = true;
     showSearchPanel = false;
+    // Acknowledge the thread's existing replies — clears the chip's unread
+    // accent, mirrors how switching to a channel clears its unread count.
+    store?.markThreadSeen?.(message.id);
   }
 
   function handleContextMenu(e) {
@@ -325,7 +328,7 @@
     {#if showThreadPanel && threadParent}
       <ThreadPanel
         parentMessage={threadParent}
-        messages={store.messages.filter(m => m.reply_to === threadParent.id)}
+        messages={store.activeChannelReplies.filter(m => m.reply_to === threadParent.id)}
         participants={store.participants}
         currentUser={store.userProfile}
         onClose={() => { showThreadPanel = false; threadParent = null; }}
@@ -372,15 +375,12 @@
         participant={userProfileTarget}
         onClose={() => { showUserProfileView = false; userProfileTarget = null; }}
         onSendMessage={(p) => {
+          // Plan §11 Phase C R2-C3: store-mediated prefill replaces
+          // querySelector + synthetic-event approach. MessageInput's
+          // $effect picks this up and splices into inputValue cleanly.
           showUserProfileView = false;
           userProfileTarget = null;
-          const input = document.querySelector('[data-testid="message-input"]');
-          if (input) {
-            input.value = `@${p.name} `;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.focus();
-            input.selectionStart = input.selectionEnd = input.value.length;
-          }
+          store.composerPrefill = `/dm @${p.name} `;
         }}
       />
     {/if}
@@ -432,15 +432,11 @@
     participant={profileCardTarget}
     onClose={() => showProfileCard = false}
     onMessage={(p) => {
-      // Focus message input with @mention pre-filled
+      // Plan §11 Phase C R2-C3: store-mediated prefill replaces
+      // querySelector + synthetic-event approach. MessageInput's
+      // $effect picks this up and splices into inputValue cleanly.
       showProfileCard = false;
-      const input = document.querySelector('[data-testid="message-input"]');
-      if (input) {
-        input.value = `@${p.name} `;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.focus();
-        input.selectionStart = input.selectionEnd = input.value.length;
-      }
+      store.composerPrefill = `/dm @${p.name} `;
     }}
     onViewProfile={(p) => {
       showProfileCard = false;

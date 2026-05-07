@@ -21,6 +21,31 @@ ParticipantType = Literal["claude", "human"]
 CONNECTION_TYPES = ("web", "tui", "mcp", "cli", "api")
 
 
+class Activity(BaseModel):
+    """Ephemeral per-connection activity signal.
+
+    Activity describes *what a participant is doing right now* — e.g.
+    ``"thinking"``, ``"reading"``, ``"drafting"``, or for Claude clients the
+    reserved labels ``"typing"`` and ``"working"``.  It is NOT persisted in the
+    message log; it lives on the presence record and decays on its own clock.
+
+    A single connection has at most one active ``Activity`` at a time; setting
+    a new one replaces the previous.  When ``expires_at`` passes, the presence
+    sweep clears it independently of the connection itself.
+    """
+
+    label: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="Short activity token, e.g. 'thinking', 'reading', 'typing', 'working'",
+    )
+    set_at: str = Field(description="ISO 8601 timestamp when activity was set")
+    expires_at: str = Field(
+        description="ISO 8601 timestamp after which the sweep clears this activity"
+    )
+
+
 class ConnectionInfo(BaseModel):
     """A single active connection for a participant."""
 
@@ -28,6 +53,10 @@ class ConnectionInfo(BaseModel):
     instance_id: str | None = Field(default=None, description="Instance identifier")
     since: str = Field(description="ISO 8601 timestamp when connection was established")
     last_seen: str = Field(description="ISO 8601 timestamp of last activity")
+    activity: Activity | None = Field(
+        default=None,
+        description="Optional ephemeral activity signal (thinking, reading, working, ...)",
+    )
 
 
 def generate_key() -> str:

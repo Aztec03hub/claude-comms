@@ -107,14 +107,28 @@ class TestSerialization:
 
     def test_json_keys(self, sample_message: Message) -> None:
         data = json.loads(sample_message.to_mqtt_payload())
+        # `mentions` was added 2026-05-06 alongside `recipients` to separate
+        # broadcast highlight intent from whisper visibility (see
+        # plans/mentions-vs-whisper-separation.md §5). Symmetric null fields
+        # under Pydantic v2 default `model_dump_json()` behavior.
+        # `thread_*` fields added 2026-05-07 for threaded replies (see
+        # plans/threaded-replies-plan §3-§4.1). All four are derived /
+        # populated server-side; they serialize as `null` on top-level
+        # messages with no replies.
         assert set(data.keys()) == {
             "id",
             "ts",
             "sender",
             "recipients",
+            "mentions",
             "body",
             "reply_to",
             "conv",
+            "thread_root_id",
+            "thread_reply_count",
+            "thread_last_ts",
+            "thread_last_author",
+            "thread_participants",
         }
         assert set(data["sender"].keys()) == {"key", "name", "type"}
 

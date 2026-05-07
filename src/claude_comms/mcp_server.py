@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -48,10 +49,16 @@ from claude_comms.mcp_tools import (
     tool_comms_join,
     tool_comms_leave,
     tool_comms_members,
+    tool_comms_react,
+    tool_comms_reactions_get,
     tool_comms_read,
     tool_comms_send,
+    tool_comms_thread_read,
+    tool_comms_status_clear,
+    tool_comms_status_set,
     tool_comms_update_name,
 )
+from claude_comms.reactions import ReactionsStore
 from claude_comms.conversation import (
     LastActivityTracker,
     backfill_missing_metadata,
@@ -77,6 +84,9 @@ _conv_data_dir: Path | None = None
 _activity_tracker: LastActivityTracker | None = None
 _presence: PresenceManager | None = None
 _topic_rate_limit: dict[str, float] = {}  # conversation -> last system msg monotonic time
+# Per-conversation reactions stores, lazily constructed on first access.
+_reactions_stores: dict[str, ReactionsStore] = {}
+_reactions_stores_lock = threading.Lock()
 
 
 def _get_registry() -> ParticipantRegistry:
@@ -109,6 +119,21 @@ def _get_conv_data_dir() -> Path:
     return _conv_data_dir
 
 
+def _get_reactions_store(conversation: str) -> ReactionsStore:
+    """Return (or lazily create) the :class:`ReactionsStore` for *conversation*.
+
+    Stores live alongside ``meta.json`` under ``{conv_data_dir}/{conversation}/``.
+    """
+    with _reactions_stores_lock:
+        store = _reactions_stores.get(conversation)
+        if store is not None:
+            return store
+        conv_dir = _get_conv_data_dir() / conversation
+        store = ReactionsStore(conv_dir)
+        _reactions_stores[conversation] = store
+        return store
+
+
 def _get_presence() -> PresenceManager | None:
     """Return the presence manager, or None if not initialised.
 
@@ -119,13 +144,21 @@ def _get_presence() -> PresenceManager | None:
 
 
 def _touch(key: str | None) -> None:
-    """Best-effort refresh of a participant's last_seen timestamp."""
+    """Best-effort refresh of a participant's presence on tool activity.
+
+    Uses :meth:`PresenceManager.ensure_connection` so that an MCP client
+    whose connection record was already swept by the TTL sweep gets its
+    record recreated on the very next tool call.  Without this, a
+    participant could remain registered but show as offline indefinitely
+    despite continuous tool activity (the per-tool-call refresh would only
+    update existing connections, not resurrect expired ones).
+    """
     if not key or _presence is None:
         return
     try:
-        _presence.touch(key)
+        _presence.ensure_connection(key, client="mcp")
     except Exception:
-        logger.exception("Presence touch failed for key %s", key)
+        logger.exception("Presence ensure_connection failed for key %s", key)
 
 
 def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
@@ -307,9 +340,54 @@ async def _mqtt_subscriber(
                             if deduplicator.is_duplicate(msg_id):
                                 continue
                             store.add(conv_id, data)
+                            # Thread-metadata dispatcher: when this message is
+                            # a reply, locate its root in the same conversation
+                            # and update the root's thread fields in place.
+                            # See plans/threaded-replies-plan §4.1.
+                            reply_to = data.get("reply_to")
+                            if reply_to:
+                                root = store.find_by_id(conv_id, reply_to)
+                                if root is not None:
+                                    # Walk up at most one level — depth-2 rule
+                                    # is enforced at send time, so the root's
+                                    # own reply_to is normally None. Defensive
+                                    # walk anyway, in case a malformed reply
+                                    # slipped past validation (e.g. raw MQTT
+                                    # publisher bypassing tool_comms_send).
+                                    if root.get("reply_to"):
+                                        true_root = store.find_by_id(
+                                            conv_id, root["reply_to"]
+                                        )
+                                        if true_root is not None:
+                                            root = true_root
+                                    sender_block = data.get("sender") or {}
+                                    add_keys: list[str] = []
+                                    sender_key = sender_block.get("key")
+                                    if sender_key:
+                                        add_keys.append(sender_key)
+                                    # In-thread @mentions auto-add to
+                                    # thread_participants per §4.4.
+                                    for mk in (data.get("mentions") or []):
+                                        if mk and mk not in add_keys:
+                                            add_keys.append(mk)
+                                    new_count = (
+                                        (root.get("thread_reply_count") or 0) + 1
+                                    )
+                                    store.update_thread_metadata(
+                                        conv_id,
+                                        root["id"],
+                                        reply_count=new_count,
+                                        last_ts=data.get("ts", ""),
+                                        last_author=sender_block.get("name") or None,
+                                        add_participants=add_keys,
+                                    )
+                                    # Stamp thread_root_id on the reply dict so
+                                    # downstream readers can identify thread
+                                    # membership without re-walking the chain.
+                                    data["thread_root_id"] = root["id"]
                             if _activity_tracker is not None:
                                 _activity_tracker.update(conv_id, data.get("ts", ""))
-                                _activity_tracker.flush_if_due(_conv_data_dir)
+                                _activity_tracker.flush_if_due(_get_conv_data_dir())
                             # Persist to disk for replay on restart
                             if log_exporter is not None:
                                 try:
@@ -616,21 +694,59 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         message: Annotated[str, Field(description="Message text to send")],
+        mentions: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Broadcast highlight intent: names or 8-hex keys. "
+                    "Visible to all; named users get a notification cue. "
+                    "Does NOT restrict visibility."
+                )
+            ),
+        ] = None,
         recipients: Annotated[
             list[str] | None,
-            Field(description="Target names or keys (null = broadcast)"),
+            Field(
+                description=(
+                    "Whisper recipients: names or 8-hex keys. "
+                    "Visible only to sender + listed recipients."
+                )
+            ),
+        ] = None,
+        reply_to: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional id of a message in the same conversation to "
+                    "thread under. Server enforces depth-2 (replies cannot "
+                    "themselves be replied to) and rejects replies targeting "
+                    "system messages. See plans/threaded-replies-plan."
+                )
+            ),
         ] = None,
     ) -> dict[str, Any]:
-        """Send a message to a conversation. Optionally target specific recipients by name or key."""
+        """Send a message to a conversation.
+
+        ``mentions`` = broadcast highlight intent (visible to all; named users
+        get a notification cue). ``recipients`` = private whisper (visible only
+        to sender + listed recipients). Both accept names or 8-hex keys; the
+        two are independent and may be combined (whisper-with-named-highlights).
+
+        ``reply_to`` = thread intent (server validates parent existence,
+        depth-2 limit, and no-system-parent).
+        """
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
         return await tool_comms_send(
             _get_registry(),
             _publish_fn,
+            _get_store(),
             key=key,
             conversation=conversation,
             message=message,
+            mentions=mentions,
             recipients=recipients,
+            reply_to=reply_to,
         )
 
     @mcp.tool()
@@ -644,14 +760,70 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             str | None,
             Field(description="ISO timestamp to read messages after"),
         ] = None,
+        top_level_only: Annotated[
+            bool,
+            Field(
+                description=(
+                    "When True, return only messages whose reply_to is null "
+                    "(thread roots and untyped top-level messages). Each "
+                    "returned root with at least one reply is decorated with "
+                    "a `thread_summary: {reply_count, last_ts, last_author}` "
+                    "field. Default False preserves the firehose behaviour. "
+                    "UI passes True for the channel feed; thread bodies are "
+                    "fetched separately via comms_thread_read."
+                )
+            ),
+        ] = False,
     ) -> dict[str, Any]:
-        """Read recent messages from a conversation. Supports pagination via 'since' parameter."""
+        """Read recent messages from a conversation. Supports pagination via 'since' parameter.
+
+        ``top_level_only=True`` filters to thread roots + untyped top-level
+        messages and decorates each retained root with a ``thread_summary``
+        field. Default False is the existing non-breaking behaviour.
+        """
         _touch(key)
         return tool_comms_read(
             _get_registry(),
             _get_store(),
             key=key,
             conversation=conversation,
+            count=count,
+            since=since,
+            top_level_only=top_level_only,
+        )
+
+    @mcp.tool()
+    def comms_thread_read(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation containing the thread")],
+        root_id: Annotated[
+            str,
+            Field(description="Message id of the thread root"),
+        ],
+        count: Annotated[
+            int, Field(description="Max replies to return (default 20, max 200)")
+        ] = 20,
+        since: Annotated[
+            str | None,
+            Field(description="ISO timestamp to read replies after"),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Read replies inside a single thread.
+
+        Returns ``{conversation, root, replies, count, has_more}``. The
+        ``root`` field is always populated with the thread root regardless
+        of ``since`` — incremental fetches must never lose context.
+        Advances a per-thread read cursor as a side effect, so subsequent
+        ``comms_check`` calls reflect the updated ``thread_unread`` for
+        this root.
+        """
+        _touch(key)
+        return tool_comms_thread_read(
+            _get_registry(),
+            _get_store(),
+            key=key,
+            conversation=conversation,
+            root_id=root_id,
             count=count,
             since=since,
         )
@@ -663,14 +835,35 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             str | None,
             Field(description="Check specific conversation (null = all)"),
         ] = None,
+        mark_seen: Annotated[
+            bool,
+            Field(
+                description=(
+                    "When True, advance the read cursor to the latest "
+                    "visible-to-viewer message after computing the response. "
+                    "Use to acknowledge unread without reading the body. "
+                    "Default False preserves peek-only semantics."
+                )
+            ),
+        ] = False,
     ) -> dict[str, Any]:
-        """Check for unread messages across conversations."""
+        """Check for unread messages across conversations.
+
+        ``total_unread`` counts only messages visible to the caller (whispers
+        addressed to others are excluded).
+
+        ``mark_seen=True`` acknowledges-without-reading: after the response
+        dict is built, the read cursor advances to the latest visible message
+        in each scanned conversation. The returned ``total_unread`` reflects
+        the PRE-advance count, so the caller sees what they acknowledged.
+        """
         _touch(key)
         return tool_comms_check(
             _get_registry(),
             _get_store(),
             key=key,
             conversation=conversation,
+            mark_seen=mark_seen,
         )
 
     @mcp.tool()
@@ -681,6 +874,126 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """List current participants in a conversation."""
         _touch(key)
         return tool_comms_members(_get_registry(), key=key, conversation=conversation)
+
+    @mcp.tool()
+    async def comms_status_set(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation to set status in")],
+        label: Annotated[
+            str,
+            Field(
+                description="Short activity token, e.g. 'thinking', 'reading', 'drafting', 'typing', 'working'. <= 32 chars."
+            ),
+        ],
+        ttl_seconds: Annotated[
+            int,
+            Field(
+                description="Seconds until the status auto-expires. Default 30, hard cap 300."
+            ),
+        ] = 30,
+    ) -> dict[str, Any]:
+        """Set an ephemeral activity signal ('thinking', 'reading', etc.) on your connections.
+
+        Status is presence, not content: it lives only as long as the activity TTL or your
+        connection, whichever expires first.  Use comms_status_clear to drop it early, or
+        let the server sweep clear it automatically.
+
+        Visibility: always per-conversation broadcast, regardless of any in-flight
+        targeted messages.
+
+        Throttle: at most one update every 2 seconds per participant; bursts above are
+        silently dropped (last-write-wins).
+        """
+        _touch(key)
+        return await tool_comms_status_set(
+            _get_registry(),
+            key=key,
+            conversation=conversation,
+            label=label,
+            ttl_seconds=ttl_seconds,
+            publish_fn=_publish_fn,
+        )
+
+    @mcp.tool()
+    async def comms_status_clear(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation in which to clear status")],
+    ) -> dict[str, Any]:
+        """Clear any active activity signal on your connections.
+
+        Idempotent: safe to call when no activity is set.
+        """
+        _touch(key)
+        return await tool_comms_status_clear(
+            _get_registry(),
+            key=key,
+            conversation=conversation,
+            publish_fn=_publish_fn,
+        )
+
+    @mcp.tool()
+    async def comms_react(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation containing the message")],
+        message_id: Annotated[
+            str,
+            Field(description="Target message UUID. Get from comms_read."),
+        ],
+        emoji: Annotated[
+            str,
+            Field(
+                description="Emoji or short token (unicode, ':heart:', or slug). Free-text up to 64 chars."
+            ),
+        ],
+        op: Annotated[
+            str,
+            Field(
+                description="Operation: 'add', 'remove', or 'toggle' (default). Toggle resolves against current state."
+            ),
+        ] = "toggle",
+    ) -> dict[str, Any]:
+        """Add, remove, or toggle a reaction on a message.
+
+        Reactions persist in the conversation's reactions log and broadcast on
+        the dedicated reactions topic. Toggling resolves to add/remove based on
+        whether the actor already has that emoji on the message. No-op
+        operations (e.g. add when already present) return ``{"status": "no_op"}``.
+
+        Rate limits: 30 reaction events per actor per minute per conversation,
+        and a max of 10 distinct emojis per actor per message.
+        """
+        _touch(key)
+        assert _publish_fn is not None, "Publish function not initialised"
+        return await tool_comms_react(
+            _get_registry(),
+            _publish_fn,
+            _get_reactions_store,
+            key=key,
+            conversation=conversation,
+            message_id=message_id,
+            emoji=emoji,
+            op=op,
+        )
+
+    @mcp.tool()
+    def comms_reactions_get(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation containing the message")],
+        message_id: Annotated[str, Field(description="Target message UUID")],
+    ) -> dict[str, Any]:
+        """List current reactions on a message.
+
+        Returns ``{"reactions": {emoji: [actor_key, ...]}}``. Empty when the
+        message has never received a reaction.
+        """
+        _touch(key)
+        return tool_comms_reactions_get(
+            _get_registry(),
+            _get_reactions_store,
+            key=key,
+            conversation=conversation,
+            message_id=message_id,
+        )
 
     @mcp.tool()
     def comms_conversations(

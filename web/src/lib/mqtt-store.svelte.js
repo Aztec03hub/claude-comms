@@ -86,6 +86,32 @@ export class MqttChatStore {
   artifactsDirty = $state(0);
 
   /**
+   * Per-thread seen cursors keyed by root message id, value is the latest
+   * reply ts the user has acknowledged. Populated when `markThreadSeen` is
+   * called (e.g. when the ThreadPanel opens) and persisted to localStorage
+   * alongside the per-conv unread markers. Drives `thread_unread_count` on
+   * roots in `activeMessages`. Mirrors phoenix's MCP-side per-thread cursor
+   * (plan §4.2) but lives client-side for the web data path.
+   */
+  threadSeenCursors = $state({});
+
+  /**
+   * Composer prefill text. When non-null, `MessageInput.svelte` consumes the
+   * value via a `$effect`, sets `inputValue` to it, focuses the textarea,
+   * positions the cursor at end, then clears this back to `null`.
+   *
+   * Set by `ProfileCard` / `UserProfileView` (via App.svelte handlers) to
+   * pre-fill `/dm @<name> ` for the "Send DM" button. Replaces the prior
+   * `document.querySelector` + `input.value =` + synthetic-event approach
+   * in App.svelte (plan §11 Phase C, R2-C3 fix). The store-mediated event
+   * keeps Svelte state coherent and auto-commits autocomplete tokens
+   * cleanly via the existing input pipeline.
+   *
+   * @type {string | null}
+   */
+  composerPrefill = $state(null);
+
+  /**
    * Reactive payload mirroring the last `artifact_ref` chat message that
    * landed in the active channel. Consumers (ArtifactPanel) watch this to
    * decide whether to surface the remote-update banner during an edit.
@@ -184,7 +210,9 @@ export class MqttChatStore {
       const data = await res.json();
       if (!Array.isArray(data.participants)) return;
 
+      const serverKeys = new Set();
       for (const p of data.participants) {
+        serverKeys.add(p.key);
         if (p.key === this.userProfile.key) {
           // For self: merge connections from API but don't overwrite any connection
           // we're currently managing locally (our own web instance(s))
@@ -217,6 +245,39 @@ export class MqttChatStore {
             connections: p.connections || {},
             lastOffline: null,
           };
+        }
+      }
+
+      // Prune stale local participants the server no longer recognizes for the
+      // active channel. The server's participant list is the source of truth
+      // for this channel's membership — any local-only MQTT presence state is
+      // from a previous session (typical cause: daemon restart leaves retained
+      // presence messages on the broker, which the web client sees on
+      // reconnect and ghosts as "offline" forever).
+      //
+      // Pruning here removes the participant entry entirely. We also publish
+      // an empty retained presence for any of their stale MQTT connections so
+      // the broker's retained store gets cleaned up too — otherwise the next
+      // page load would re-ghost the same key.
+      //
+      // Guards: only prune when polling for the active channel, and never the
+      // local user's own entry. Unlike the previous version, we DO prune even
+      // when local connections are non-empty — those connections are stale
+      // retained-presence messages, not live participants.
+      if (channel === this.activeChannel) {
+        for (const localKey of Object.keys(this.participants)) {
+          if (localKey === this.userProfile.key) continue;
+          if (serverKeys.has(localKey)) continue;
+          const local = this.participants[localKey];
+          if (!local) continue;
+          // Clean up any retained presence on the broker for this ghost.
+          if (this.#client && local.connections) {
+            for (const ck of Object.keys(local.connections)) {
+              const staleTopic = TOPIC_PREFIX + '/presence/' + localKey + '/' + ck;
+              this.#client.publish(staleTopic, '', { retain: true });
+            }
+          }
+          delete this.participants[localKey];
         }
       }
     } catch {
@@ -255,7 +316,38 @@ export class MqttChatStore {
     // Read .length to ensure proxy dependency is registered
     const _len = this.messages.length;
     const _ch = this.activeChannel;
-    return this.messages.filter(m => m.channel === _ch);
+    const _cursors = this.threadSeenCursors;
+    // Top-level only: thread replies (reply_to !== null) live in the right-
+    // side ThreadPanel data source (`activeChannelReplies` below), not the
+    // main timeline. Plan §5 — channel feed is roots only; chip on the root
+    // (MessageBubble.thread-indicator) signals reply count.
+    //
+    // Splice `thread_unread_count` onto each root from the per-thread seen-
+    // cursor (client-side, mirrors the per-conv `ch.unreadFrom` / `ch.unread`
+    // pattern at this:782,991-1015). Phoenix's `comms_check.thread_unread`
+    // MCP field serves non-web clients; web computes the same shape locally.
+    const roots = this.messages.filter(m => m.channel === _ch && !m.reply_to);
+    const replies = this.messages.filter(m => m.channel === _ch && m.reply_to);
+    return roots.map(root => {
+      if (!root.thread_reply_count) return root;
+      const cursorTs = _cursors[root.id] || null;
+      const unreadCount = cursorTs
+        ? replies.filter(r => r.reply_to === root.id && r.ts > cursorTs).length
+        : (root.thread_reply_count || 0);
+      // Avoid mutating the source dict — return a shallow extension.
+      return { ...root, thread_unread_count: unreadCount };
+    });
+  });
+
+  // Raw per-channel messages including replies — used by the ThreadPanel
+  // data source (App.svelte mounts ThreadPanel with messages filtered by
+  // reply_to === root.id). Threads stay client-side derived because the
+  // firehose MQTT topic carries all replies anyway and there is no per-
+  // thread WebSocket in the web data path.
+  activeChannelReplies = $derived.by(() => {
+    const _len = this.messages.length;
+    const _ch = this.activeChannel;
+    return this.messages.filter(m => m.channel === _ch && m.reply_to);
   });
 
   activeChannelMeta = $derived.by(() => {
@@ -295,6 +387,60 @@ export class MqttChatStore {
         key,
         name: this.participants[key]?.name || key
       }));
+  });
+
+  /**
+   * Active non-typing activities across online participants for the current
+   * channel. Returns one entry per participant whose connections carry a
+   * non-expired `activity` (per richer-expression v4). Excludes the local
+   * user and excludes `typing` (already handled by activeTypingUsers above).
+   * Each entry: {key, name, label}.
+   *
+   * Activity wire shape (in connections[conn_key].activity):
+   *   {label: string, set_at: ISO8601, expires_at: ISO8601}
+   *
+   * Picks the most-recently-set non-expired activity across a participant's
+   * connections (matching the MemberList.getActivity selection logic).
+   */
+  activeActivities = $derived.by(() => {
+    const _p = this.participants;
+    const _ch = this.activeChannel;
+    const _key = this.userProfile.key;
+    const now = Date.now();
+    const out = [];
+    for (const [key, p] of Object.entries(_p)) {
+      if (key === _key) continue;
+      // Scope to current channel: participant must be a member.
+      // (Use the same membership check the rest of the store relies on —
+      // online + connections present.)
+      if (!p || !p.connections || typeof p.connections !== 'object') continue;
+      let bestLabel = null;
+      let bestSetAt = -Infinity;
+      for (const conn of Object.values(p.connections)) {
+        const a = conn?.activity;
+        if (!a || typeof a.label !== 'string') continue;
+        if (a.label === 'typing') continue; // typing rendered separately
+        if (a.expires_at) {
+          const t = Date.parse(a.expires_at);
+          if (Number.isFinite(t) && t < now) continue;
+        }
+        const setAt = Date.parse(a.set_at || '');
+        const cmp = Number.isFinite(setAt) ? setAt : 0;
+        if (cmp > bestSetAt) {
+          bestSetAt = cmp;
+          bestLabel = a.label;
+        }
+      }
+      if (bestLabel) {
+        out.push({ key, name: p.name || key, label: bestLabel });
+      }
+    }
+    // Note: channel-scoping for activities is currently global — the
+    // presence registry doesn't track per-conversation membership for
+    // MCP claudes the way it does for typing. This matches the v4 spec
+    // ("activity is always per-conversation broadcast"); we surface it
+    // only when the participant is also online.
+    return _ch ? out : out;
   });
 
   activePinnedMessages = $derived.by(() => {
@@ -532,14 +678,26 @@ export class MqttChatStore {
    * Send a chat message to the active channel.
    * The message is echoed locally before publishing to the broker,
    * so it appears immediately even on slow connections.
+   *
+   * Signature change (plan §11 Phase C, R2-C2 atomicity constraint): the
+   * third positional arg is now an options object `{ mentions, recipients }`.
+   * The two fields are independent primitives:
+   *   - `mentions` (broadcast highlight): visible to all channel members,
+   *     named users get a notification cue. Wire field: `mentions: string[]`.
+   *   - `recipients` (whisper): visible only to sender + listed recipients.
+   *     Wire field: `recipients: string[]`. Server's `_is_visible` filter
+   *     uses this exclusively.
+   *
+   * Both default to `null`. Callers passing only two positional args (e.g.
+   * threaded reply) get broadcast semantics.
+   *
    * @param {string} body - The message text (whitespace-only bodies are ignored).
    * @param {string|null} replyTo - Optional ID of the message being replied to.
-   * @param {string[]|null} recipients - Optional list of participant keys for
-   *   `@`-mention routing (matches the comms_send `recipients` field). When
-   *   provided, the server uses it to flag direct mentions in addition to
-   *   any inline `@name` markers in the body.
+   * @param {{ mentions?: string[]|null, recipients?: string[]|null }} [options]
+   *   `mentions` — list of participant keys to highlight (broadcast).
+   *   `recipients` — list of participant keys to whisper to (private).
    */
-  sendMessage(body, replyTo = null, recipients = null) {
+  sendMessage(body, replyTo = null, { mentions = null, recipients = null } = {}) {
     if (!body.trim()) return;
 
     const msg = {
@@ -550,7 +708,8 @@ export class MqttChatStore {
         name: this.userProfile.name,
         type: this.userProfile.type
       },
-      recipients: recipients && recipients.length > 0 ? [...recipients] : null,
+      mentions: mentions?.length ? [...mentions] : null,
+      recipients: recipients?.length ? [...recipients] : null,
       body: body.trim(),
       reply_to: replyTo,
       conv: this.activeChannel
@@ -660,6 +819,36 @@ export class MqttChatStore {
   }
 
   /**
+   * Mark a thread as seen by advancing its per-thread seen-cursor to the
+   * latest reply ts in the local message list. Called when ThreadPanel
+   * opens for a root, mirroring how `markUnread`-cleared channels work
+   * when the user switches to them. Persists to localStorage so the
+   * seen state survives a page refresh.
+   * @param {string} rootId - The thread root message id.
+   */
+  markThreadSeen(rootId) {
+    if (!rootId) return;
+    // Find the latest reply ts for this root in the current message list.
+    let latestTs = null;
+    for (const m of this.messages) {
+      if (m.reply_to === rootId && (!latestTs || m.ts > latestTs)) {
+        latestTs = m.ts;
+      }
+    }
+    // Even when there are no replies yet (e.g. ThreadPanel opened on an
+    // empty thread), stamp the cursor with the root's own ts so a later
+    // arriving reply registers as unread immediately. Without this stamp
+    // the chip would silently swallow the first reply because cursorTs
+    // would still be null in `activeMessages`.
+    if (!latestTs) {
+      const root = this.messages.find(m => m.id === rootId);
+      latestTs = root?.ts || new Date().toISOString();
+    }
+    this.threadSeenCursors = { ...this.threadSeenCursors, [rootId]: latestTs };
+    this.#saveUnreadMarkers();
+  }
+
+  /**
    * Mark a message as "seen" (read) by the current user.
    * This is a local-only tracker — it updates the message's `read_by` count
    * so the ReadReceipt component shows meaningful data. Does not publish
@@ -730,6 +919,7 @@ export class MqttChatStore {
         name: this.userProfile.name,
         type: this.userProfile.type
       },
+      mentions: null,
       recipients: null,
       body: message.body,
       reply_to: null,
@@ -763,9 +953,19 @@ export class MqttChatStore {
   /**
    * Add or toggle a reaction emoji on a message.
    * If the user already reacted with this emoji, it is removed.
-   * Triggers reactivity via array spread.
+   * Triggers reactivity via self-assignment.
+   *
+   * Wire format (v4 of richer-expression-architecture):
+   *   topic:   claude-comms/conv/{conv}/reactions  (retain=false)
+   *   payload: {message_id, emoji, op: "toggle"|"add"|"remove", actor_key, ts}
+   *
+   * Client always publishes op="toggle" for user-initiated clicks; the server
+   * resolves to add or remove based on current reaction state and persists
+   * the resolved op to the JSONL log. The server then re-broadcasts the
+   * resolved op to all subscribers.
+   *
    * @param {string} messageId - The message to react to.
-   * @param {string} emoji - The emoji character to toggle.
+   * @param {string} emoji - The emoji character (or free-text token, <=32 chars).
    */
   addReaction(messageId, emoji) {
     const msg = this.messages.find(m => m.id === messageId);
@@ -775,6 +975,7 @@ export class MqttChatStore {
       msg.reactions = [];
     }
 
+    // Optimistic local update — server's re-broadcast will correct any drift.
     const existing = msg.reactions.find(r => r.emoji === emoji);
     if (existing) {
       if (existing.active) {
@@ -791,25 +992,19 @@ export class MqttChatStore {
       msg.reactions.push({ emoji, count: 1, active: true });
     }
 
-    // Determine action for broadcast
-    const action = existing && !existing.active ? 'remove' : 'add';
-
     // Trigger reactivity via self-assignment (avoids O(n) array copy)
     this.messages = this.messages;
 
-    // Broadcast reaction to other clients
+    // Broadcast toggle intent to server + other clients
     if (this.#client && this.connected) {
       const channel = msg.channel || msg.conv || this.activeChannel;
       const topic = TOPIC_PREFIX + '/conv/' + channel + '/reactions';
       this.#client.publish(topic, JSON.stringify({
         message_id: messageId,
         emoji,
-        action,
-        sender: {
-          key: this.userProfile.key,
-          name: this.userProfile.name,
-          type: this.userProfile.type
-        }
+        op: 'toggle',
+        actor_key: this.userProfile.key,
+        ts: new Date().toISOString()
       }), { qos: 1 });
     }
   }
@@ -849,8 +1044,10 @@ export class MqttChatStore {
   // ── Private Methods ──
 
   /**
-   * Persist unread markers (unreadFrom + unread count) to localStorage
-   * so they survive page refresh.
+   * Persist unread markers (per-conv `unreadFrom` + `unread`, plus per-
+   * thread seen cursors) to localStorage so they survive page refresh.
+   * Per-thread cursors live alongside per-conv markers under a separate
+   * top-level key — keeps the existing schema readable without nesting.
    */
   #saveUnreadMarkers() {
     const markers = {};
@@ -860,24 +1057,43 @@ export class MqttChatStore {
       }
     }
     safeStorage.setItem('claude-comms-unread-markers', JSON.stringify(markers));
+    // Persist per-thread seen cursors separately. Empty object is fine —
+    // the restore path tolerates a missing key.
+    safeStorage.setItem(
+      'claude-comms-thread-seen-cursors',
+      JSON.stringify(this.threadSeenCursors || {}),
+    );
   }
 
   /**
-   * Restore unread markers from localStorage on startup.
+   * Restore unread markers from localStorage on startup. Reads both the
+   * per-conv markers and the per-thread seen cursors.
    */
   #restoreUnreadMarkers() {
     const raw = safeStorage.getItem('claude-comms-unread-markers');
-    if (!raw) return;
-    try {
-      const markers = JSON.parse(raw);
-      for (const ch of this.channels) {
-        if (markers[ch.id]) {
-          ch.unreadFrom = markers[ch.id].unreadFrom || null;
-          ch.unread = markers[ch.id].unread || 0;
+    if (raw) {
+      try {
+        const markers = JSON.parse(raw);
+        for (const ch of this.channels) {
+          if (markers[ch.id]) {
+            ch.unreadFrom = markers[ch.id].unreadFrom || null;
+            ch.unread = markers[ch.id].unread || 0;
+          }
         }
+      } catch {
+        // Corrupt data — ignore
       }
-    } catch {
-      // Corrupt data — ignore
+    }
+    const rawThread = safeStorage.getItem('claude-comms-thread-seen-cursors');
+    if (rawThread) {
+      try {
+        const cursors = JSON.parse(rawThread);
+        if (cursors && typeof cursors === 'object') {
+          this.threadSeenCursors = cursors;
+        }
+      } catch {
+        // Corrupt data — ignore
+      }
     }
   }
 
@@ -889,6 +1105,7 @@ export class MqttChatStore {
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/typing/+', { qos: 0 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/meta', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/reactions', { qos: 1 });
+    this.#client.subscribe(TOPIC_PREFIX + '/conv/+/activity', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/pins', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/deletions', { qos: 1 });
 
@@ -917,6 +1134,8 @@ export class MqttChatStore {
       this.#handleMeta(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'reactions') {
       this.#handleRemoteReaction(topicParts[1], msg);
+    } else if (topicParts[0] === 'conv' && topicParts[2] === 'activity') {
+      this.#handleRemoteActivity(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'pins') {
       this.#handleRemotePin(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'deletions') {
@@ -1161,22 +1380,29 @@ export class MqttChatStore {
   }
 
   #handleRemoteReaction(channel, msg) {
-    // Ignore our own broadcasts (we already applied locally)
-    if (msg.sender?.key === this.userProfile.key) return;
+    // v4 wire format: {message_id, emoji, op, actor_key, ts}
+    // Server resolves "toggle" before re-broadcasting, so we only see add/remove here.
+    // Tolerate legacy "action" field and "sender.key" actor for clients that haven't
+    // upgraded yet — strip after a deprecation window.
+    const op = msg.op || msg.action;
+    const actorKey = msg.actor_key || msg.sender?.key;
+
+    // Ignore our own broadcasts (we already applied locally via optimistic update)
+    if (actorKey === this.userProfile.key) return;
 
     const target = this.messages.find(m => m.id === msg.message_id);
     if (!target) return;
 
     if (!target.reactions) target.reactions = [];
 
-    if (msg.action === 'add') {
+    if (op === 'add') {
       const existing = target.reactions.find(r => r.emoji === msg.emoji);
       if (existing) {
         existing.count++;
       } else {
         target.reactions.push({ emoji: msg.emoji, count: 1, active: false });
       }
-    } else if (msg.action === 'remove') {
+    } else if (op === 'remove') {
       const existing = target.reactions.find(r => r.emoji === msg.emoji);
       if (existing) {
         existing.count--;
@@ -1188,6 +1414,62 @@ export class MqttChatStore {
 
     // Trigger reactivity via self-assignment (avoids O(n) array copy)
     this.messages = this.messages;
+  }
+
+  /**
+   * Handle a live activity event for a participant in a conversation.
+   * Wire format (richer-expression v4, sage's checkpoint #3):
+   *   topic:   claude-comms/conv/{conv}/activity (retain=false)
+   *   set payload:   {key, name, type, conversation, op:"set",   activity:{label,set_at,expires_at}}
+   *   clear payload: {key, name, type, conversation, op:"clear", activity:null}
+   *
+   * Mutates the matching participant's connection records to reflect the
+   * change, so MemberList.getActivity() and store.activeActivities pick up
+   * the new state reactively.
+   *
+   * @param {string} channel - Conversation slug from the topic.
+   * @param {object} msg - Decoded activity event payload.
+   */
+  #handleRemoteActivity(channel, msg) {
+    if (!msg || typeof msg.key !== 'string') return;
+    const p = this.participants[msg.key];
+    // Surface the event even if we don't yet have a participant record:
+    // create a minimal stub so the next presence event can fill it in.
+    const target = p || (this.participants[msg.key] = {
+      key: msg.key,
+      name: msg.name || msg.key,
+      type: msg.type || 'claude',
+      connections: {},
+      lastOffline: null,
+    });
+
+    const newActivity = msg.op === 'set' && msg.activity ? {
+      label: String(msg.activity.label || '').slice(0, 32),
+      set_at: msg.activity.set_at || new Date().toISOString(),
+      expires_at: msg.activity.expires_at || null,
+    } : null;
+
+    // Apply to all known connections of this participant. The server already
+    // applied to all of them in mcp_tools.tool_comms_status_set; the wire
+    // event just announces the change. If we have no connections (rare race
+    // before the participant's presence has arrived), stash on a pending
+    // field that the next presence event can roll into a real connection.
+    const conns = target.connections || {};
+    const connKeys = Object.keys(conns);
+    if (connKeys.length === 0) {
+      target._pendingActivity = newActivity;
+    } else {
+      for (const ck of connKeys) {
+        if (newActivity) {
+          conns[ck].activity = newActivity;
+        } else {
+          delete conns[ck].activity;
+        }
+      }
+    }
+
+    // Trigger reactivity by re-assigning the participants object.
+    this.participants = { ...this.participants };
   }
 
   #handleRemotePin(channel, msg) {

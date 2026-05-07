@@ -38,6 +38,30 @@
     return [...new Set(Object.values(member.connections).map(c => c.client))];
   }
 
+  /**
+   * Return the most-recently-set, non-expired activity across a member's
+   * connections, or null if none. Activity shape (per richer-expression v4):
+   *   {label: string, set_at: ISO8601, expires_at: ISO8601}
+   */
+  function getActivity(member) {
+    if (!member.connections || typeof member.connections !== 'object') return null;
+    const now = Date.now();
+    let best = null;
+    for (const conn of Object.values(member.connections)) {
+      const a = conn?.activity;
+      if (!a || typeof a.label !== 'string') continue;
+      if (a.expires_at) {
+        const t = Date.parse(a.expires_at);
+        if (!Number.isNaN(t) && t < now) continue;
+      }
+      const setAt = Date.parse(a.set_at || '');
+      if (!best || (Number.isFinite(setAt) && setAt > best._setAt)) {
+        best = { label: a.label, _setAt: Number.isFinite(setAt) ? setAt : 0 };
+      }
+    }
+    return best ? best.label : null;
+  }
+
   let filteredOnline = $derived(
     searchQuery ? online.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())) : online
   );
@@ -73,6 +97,7 @@
         {@const color = getParticipantColor(member.key)}
         {@const isTyping = typingUsers[member.key]?.typing}
         {@const clientTypes = getClientTypes(member)}
+        {@const activityLabel = getActivity(member)}
         <div
           class="member"
           onclick={() => onShowProfile(member)}
@@ -89,32 +114,52 @@
             <div class="member-name" style="color: {color.textColor}">
               {member.name}
             </div>
-            {#if isTyping}
-              <div class="member-typing">
-                <div class="member-typing-dots"><span></span><span></span><span></span></div>
-                typing...
-              </div>
-            {:else}
-              <div class="member-meta">
-                {#if member.type === 'human'}
-                  <span class="member-badge admin">Admin</span>
-                {:else}
-                  <span class="member-badge agent">Agent</span>
-                {/if}
-                {#if clientTypes.length > 0}
-                  <div class="connection-icons">
-                    {#each clientTypes as clientType (clientType)}
-                      {#if CONNECTION_ICONS[clientType]}
-                        {@const IconComponent = CONNECTION_ICONS[clientType]}
-                        <span class="connection-icon" title="Connected via {CONNECTION_LABELS[clientType] || clientType}">
-                          <IconComponent size={11} />
-                        </span>
-                      {/if}
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {/if}
+            <!--
+              Single meta-row: [badge] [icons] · [activity italic].
+              Badge + icons are anchored on the left (flex-shrink: 0) so
+              they're always fully visible — animated typing indicators or
+              changing custom activities never displace them. The activity
+              span comes AFTER (no separator) and ellipsizes when long.
+              Per Phil: activity must not hide the type badge or connection
+              icon, and should sit AFTER the badge/icons. No separator.
+            -->
+            <div class="member-meta">
+              {#if member.type === 'human'}
+                <span class="member-badge admin">Admin</span>
+              {:else}
+                <!--
+                  Per Phil's "is the agent ready or working?" UX: the agent
+                  badge is GREEN (default) when no activity is set, and
+                  AMBER when any activity is set (typing, drafting, coding,
+                  etc.). Reads as: green = idle/waiting, amber = busy.
+                  No server changes — the activity field is already broadcast
+                  via comms_status_set/clear on each agent's MCP session.
+                -->
+                <span class="member-badge agent" class:working={isTyping || !!activityLabel} title={isTyping || activityLabel ? 'Working' : 'Ready'}>Agent</span>
+              {/if}
+              {#if clientTypes.length > 0}
+                <div class="connection-icons">
+                  {#each clientTypes as clientType (clientType)}
+                    {#if CONNECTION_ICONS[clientType]}
+                      {@const IconComponent = CONNECTION_ICONS[clientType]}
+                      <span class="connection-icon" title="Connected via {CONNECTION_LABELS[clientType] || clientType}">
+                        <IconComponent size={11} />
+                      </span>
+                    {/if}
+                  {/each}
+                </div>
+              {/if}
+              {#if isTyping}
+<span class="member-activity-inline typing" data-testid="member-typing-{member.key}">
+                  <span class="member-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                  <span class="member-activity-text">typing</span>
+                </span>
+              {:else if activityLabel}
+<span class="member-activity-inline" data-testid="member-activity-{member.key}" title={activityLabel}>
+                  <span class="member-activity-text">{activityLabel}</span>
+                </span>
+              {/if}
+            </div>
           </div>
         </div>
       {/each}
@@ -314,12 +359,44 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
   }
+
+  /*
+   * Inline activity label (typing.../"working"/etc) shares the meta-row
+   * with the type badge and connection icons. The label ellipsizes if it's
+   * too long; the badge and icons (flex-shrink: 0) remain visible. Phil's
+   * ask: activity must not hide the type badge or connection icon.
+   */
+  .member-activity-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    color: var(--text-secondary);
+    font-style: italic;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .member-activity-inline.typing {
+    color: var(--ember-500);
+  }
+
+  .member-activity-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
 
   .connection-icons {
     display: flex;
     align-items: center;
     gap: 4px;
+    flex-shrink: 0;
   }
 
   .connection-icon {
@@ -358,25 +435,29 @@
     border: 1px solid rgba(245,158,11,0.2);
   }
 
+  /* Default agent badge: green (ready / waiting for input). */
   .member-badge.agent {
     background: rgba(52,211,153,0.1);
     color: #34d399;
     border: 1px solid rgba(52,211,153,0.15);
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+
+  /*
+    Agent badge — working state. Amber to distinguish from the default
+    green. Triggered by .working class which is bound to the presence of
+    a typing or activity label (see template).
+  */
+  .member-badge.agent.working {
+    background: rgba(245,158,11,0.14);
+    color: var(--ember-300);
+    border-color: rgba(245,158,11,0.4);
   }
 
   .member-badge.member-tag {
     background: var(--bg-surface);
     color: var(--text-faint);
     border: 1px solid var(--border);
-  }
-
-  .member-typing {
-    font-size: 9px;
-    color: var(--ember-500);
-    font-style: italic;
-    display: flex;
-    align-items: center;
-    gap: 4px;
   }
 
   .member-typing-dots {

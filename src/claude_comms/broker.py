@@ -133,6 +133,62 @@ class MessageStore:
             return msgs[-limit:]
         return msgs
 
+    def find_by_id(
+        self, conv_id: str, message_id: str
+    ) -> dict[str, Any] | None:
+        """Return the in-store message dict for *message_id* in *conv_id*.
+
+        Returns the LIVE dict (not a copy) — callers must hold no expectation
+        of immutability. Intended for thread-metadata mutation via
+        :meth:`update_thread_metadata`. Returns ``None`` when not found.
+        """
+        with self._lock:
+            for msg in self._store.get(conv_id, []):
+                if msg.get("id") == message_id:
+                    return msg
+        return None
+
+    def update_thread_metadata(
+        self,
+        conv_id: str,
+        root_id: str,
+        *,
+        reply_count: int | None = None,
+        last_ts: str | None = None,
+        last_author: str | None = None,
+        add_participants: list[str] | None = None,
+    ) -> bool:
+        """Update thread-metadata fields on the root dict for *root_id*.
+
+        Mutates the live dict under the store lock. Pass ``reply_count`` to
+        SET (not increment), ``last_ts`` and ``last_author`` to SET, and
+        ``add_participants`` to APPEND (deduped, preserving existing order).
+        Returns ``True`` when the root was found and updated, ``False`` when
+        missing.
+
+        Thread metadata semantics: see plans/threaded-replies-plan §4.1.
+        """
+        with self._lock:
+            for msg in self._store.get(conv_id, []):
+                if msg.get("id") != root_id:
+                    continue
+                if reply_count is not None:
+                    msg["thread_reply_count"] = reply_count
+                if last_ts is not None:
+                    msg["thread_last_ts"] = last_ts
+                if last_author is not None:
+                    msg["thread_last_author"] = last_author
+                if add_participants:
+                    existing = msg.get("thread_participants") or []
+                    seen = set(existing)
+                    for k in add_participants:
+                        if k not in seen:
+                            existing.append(k)
+                            seen.add(k)
+                    msg["thread_participants"] = existing
+                return True
+        return False
+
     def conversations(self) -> list[str]:
         """Return list of conversation IDs that have stored messages."""
         with self._lock:
@@ -228,6 +284,7 @@ def replay_jsonl_logs(
                     if deduplicator is not None:
                         deduplicator.is_duplicate(msg_id)
 
+                    # Pre-cutover messages predating the mentions/whisper split (2026-05-06) carry only `recipients`; `mentions` is None for these. Whisper visibility semantics are preserved by design — see plans/mentions-vs-whisper-separation.md §9.
                     store.add(conv_id, msg)
                     total += 1
         except OSError as exc:
@@ -239,7 +296,75 @@ def replay_jsonl_logs(
         len(jsonl_files),
         errors,
     )
+
+    # Second pass: recompute thread metadata on root dicts from the loaded
+    # message lists. Cost is O(n) per conversation, run once at startup.
+    # See plans/threaded-replies-plan §4.1 / §7.
+    _rebuild_thread_metadata(store)
+
     return store
+
+
+def _rebuild_thread_metadata(store: "MessageStore") -> None:
+    """Recompute thread metadata on root dicts after a JSONL replay.
+
+    For each conversation, walk the message list once. For every reply
+    (message with non-null ``reply_to``), locate its root in the same
+    conversation, increment that root's ``thread_reply_count``, advance
+    its ``thread_last_ts``, and add the reply's sender key + any in-reply
+    mention keys to ``thread_participants``. Also stamps
+    ``thread_root_id`` on each reply dict.
+
+    Idempotent: clears the four root-side fields before re-aggregating,
+    so repeated calls produce the same state. Safe to invoke at every
+    daemon boot regardless of whether the JSONL log already contains
+    thread metadata.
+    """
+    # Walk conversations under the lock-free path: we mutate via the store's
+    # public mutator after we read. Acceptable here because replay runs on
+    # a single thread before the broker accepts traffic.
+    for conv_id in list(store.conversations()):
+        msgs = store.get(conv_id)
+        # Reset root-side thread fields so the recompute is idempotent.
+        for m in msgs:
+            if m.get("reply_to") is None:
+                m["thread_reply_count"] = None
+                m["thread_last_ts"] = None
+                m["thread_last_author"] = None
+                m["thread_participants"] = None
+        # Aggregate replies onto roots.
+        for m in msgs:
+            reply_to = m.get("reply_to")
+            if not reply_to:
+                continue
+            root = store.find_by_id(conv_id, reply_to)
+            if root is None:
+                continue
+            # Defensive: walk up one level if the located parent is itself a
+            # reply (shouldn't happen with depth-2 enforcement, but a corrupt
+            # log shouldn't crash boot).
+            if root.get("reply_to"):
+                true_root = store.find_by_id(conv_id, root["reply_to"])
+                if true_root is not None:
+                    root = true_root
+            sender_block = m.get("sender") or {}
+            add_keys: list[str] = []
+            sender_key = sender_block.get("key")
+            if sender_key:
+                add_keys.append(sender_key)
+            for mk in (m.get("mentions") or []):
+                if mk and mk not in add_keys:
+                    add_keys.append(mk)
+            new_count = (root.get("thread_reply_count") or 0) + 1
+            store.update_thread_metadata(
+                conv_id,
+                root["id"],
+                reply_count=new_count,
+                last_ts=m.get("ts", ""),
+                last_author=sender_block.get("name") or None,
+                add_participants=add_keys,
+            )
+            m["thread_root_id"] = root["id"]
 
 
 # ---------------------------------------------------------------------------

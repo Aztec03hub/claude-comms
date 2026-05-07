@@ -48,6 +48,27 @@
     onSelect(emojiData);
   }
 
+  /**
+   * Submit the raw search query as a free-text reaction.
+   * Per v4 of the richer-expression plan, free-text is first-class:
+   * any short token (unicode emoji, ":heart:" shortcode, or arbitrary
+   * <= 32-char slug) is a valid reaction.
+   */
+  function submitFreeText() {
+    const raw = searchQuery.trim();
+    if (!raw) return;
+    if (raw.length > 32) return; // server will also enforce
+    // Treat the raw input as both the visible token and the code form.
+    onSelect({ emoji: raw, name: raw, code: raw });
+  }
+
+  function onSearchKeydown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitFreeText();
+    }
+  }
+
   onMount(() => { searchInput?.focus(); });
 </script>
 
@@ -68,10 +89,12 @@
         id="emoji-search-input"
         class="emoji-search"
         type="text"
-        placeholder="Search emoji..."
+        placeholder="Search or type a reaction... (Enter to submit)"
         bind:value={searchQuery}
         bind:this={searchInput}
+        onkeydown={onSearchKeydown}
         data-testid="emoji-search"
+        maxlength="32"
       >
     </div>
     <div class="emoji-categories">

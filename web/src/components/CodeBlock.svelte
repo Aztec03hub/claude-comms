@@ -76,6 +76,13 @@
     background: #0e0e11;
     overflow: hidden;
     box-shadow: 0 2px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.1);
+    /* Prevent horizontal overflow of the parent message bubble when a long
+       no-wrap code line would otherwise stretch the bubble past its intended
+       max-width. The inner .code-block keeps `overflow-x: auto` so users can
+       still scroll horizontally to read the long line — the wrap just clips
+       to the bubble. */
+    max-width: 100%;
+    min-width: 0;
   }
 
   :global(:root[data-theme="light"]) .code-block-wrap {

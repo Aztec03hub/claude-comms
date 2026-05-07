@@ -99,6 +99,49 @@
   --shiki-token-string-expression: #34d399;
   --shiki-token-punctuation: var(--text-muted);
   --shiki-token-link: var(--ember-300);
+
+  /*
+   * -- Backtick highlighting tokens (RichText component) --
+   * Used by both rendered messages and the composer overlay. Themeable.
+   * Color family: red. Per Phil's call, the chip + block share a red accent
+   * so they read as distinct from the ember/orange used by @mentions.
+   */
+  --code-chip-bg: rgba(239, 68, 68, 0.14);
+  --code-chip-fg: rgb(252, 165, 165);
+  --code-chip-border: rgba(239, 68, 68, 0.55);
+  --code-block-bg: rgba(20, 20, 24, 0.85);
+  --code-block-fg: var(--text-primary);
+  --code-block-border: rgba(239, 68, 68, 0.55);
+  --code-block-lang-fg: rgba(252, 165, 165, 0.75);
+  /* Legacy alias — kept for any place that still references the per-block
+     accent (composer block textarea border, overlay block-code border-left).
+     Same red as --code-block-border so the two surfaces stay in sync. */
+  --code-block-accent: rgba(239, 68, 68, 0.55);
+
+  /*
+   * -- Mention chip tokens (MessageBubble component) --
+   *
+   * Two flavors: self (loud — viewer is mentioned by name) and other
+   * (quiet — someone else in the conversation is mentioned). Names are
+   * the contract per plan §6.3 round-3-revised; values picked here
+   * against the existing Carbon Ember palette.
+   *
+   * Self uses the ember/amber family — same color identity as the legacy
+   * `.mention` chip, but with higher saturation, bolder weight, and a
+   * 3px left-border accent on the parent bubble (`.has-self-mention`).
+   * The legacy `.mention` chip stays as the "named but not-for-you" /
+   * backwards-compat slot, so we picked self-bg one shade richer than
+   * legacy's `rgba(245,158,11,0.12)` to give visible separation.
+   *
+   * Other uses a neutral slate/grey wash from the existing surface
+   * palette so it reads as a chip (legible boundary) without competing
+   * with the ember accents.
+   */
+  --mention-self-bg: rgba(245, 158, 11, 0.28);
+  --mention-self-fg: var(--ember-300);
+  --mention-self-border: var(--ember-400);
+  --mention-other-bg: rgba(245, 158, 11, 0.12);
+  --mention-other-fg: var(--ember-400);
 }
 
 :root[data-theme="light"] {
@@ -346,6 +389,28 @@ body::after {
   --border-subtle: #e0dbd3;
   --border-glow: rgba(217, 119, 6, 0.15);
   --focus-ring: 0 0 0 2px rgba(217, 119, 6, 0.35);
+
+  /* Code chip / block in light theme: deeper red text on a lighter red wash
+     so the red stays readable against pale surfaces. Border stays the same
+     mid-alpha red as dark theme — the higher contrast helps the edge show. */
+  --code-chip-bg: rgba(239, 68, 68, 0.10);
+  --code-chip-fg: #b91c1c;
+  --code-chip-border: rgba(239, 68, 68, 0.50);
+  --code-block-bg: rgba(248, 113, 113, 0.06);
+  --code-block-border: rgba(239, 68, 68, 0.45);
+  --code-block-lang-fg: rgba(185, 28, 28, 0.75);
+  --code-block-accent: rgba(239, 68, 68, 0.50);
+
+  /* Mention chips — light-theme overrides. Self uses a warmer wash
+     against pale surfaces (stronger amber base reads loud); fg goes to
+     a deeper ember-600 for contrast against the lighter bg. Other uses
+     a darker neutral wash so the chip shows against the cream surface
+     family. Border stays in the same ember family. */
+  --mention-self-bg: rgba(217, 119, 6, 0.20);
+  --mention-self-fg: var(--ember-600);
+  --mention-self-border: var(--ember-500);
+  --mention-other-bg: rgba(217, 119, 6, 0.10);
+  --mention-other-fg: var(--ember-500);
 }
 
 :root[data-theme="light"] body {

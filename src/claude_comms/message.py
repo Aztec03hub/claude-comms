@@ -72,7 +72,15 @@ class Message(BaseModel):
     sender: Sender = Field(..., description="Who sent this message")
     recipients: list[str] | None = Field(
         default=None,
-        description="Target participant keys; null means broadcast",
+        description="Whisper recipients; null means broadcast visibility",
+    )
+    mentions: list[str] | None = Field(
+        default=None,
+        description=(
+            "Broadcast highlight intent — named participants get a notification "
+            "cue but visibility is unrestricted. Does NOT participate in the "
+            "_is_visible filter. See plans/mentions-vs-whisper-separation.md."
+        ),
     )
     body: str = Field(..., min_length=1, description="Message content")
     reply_to: str | None = Field(
@@ -80,6 +88,50 @@ class Message(BaseModel):
         description="Parent message UUID for threading",
     )
     conv: str = Field(..., description="Conversation ID")
+
+    # -- Thread metadata (derived; populated by broker dispatcher and replay) ---
+    # These fields are computed read-side state, not user-supplied. They live on
+    # the root dict of a thread (the message whose `reply_to is None` and which
+    # has at least one descendant), and are recomputed at JSONL replay time.
+    # See plans/threaded-replies-plan §4.1.
+    thread_root_id: str | None = Field(
+        default=None,
+        description=(
+            "On a reply: id of the thread root. On a top-level message: None. "
+            "Derived; populated by the broker dispatcher on reply ingest."
+        ),
+    )
+    thread_reply_count: int | None = Field(
+        default=None,
+        description=(
+            "On a thread root with at least one reply: count of replies. "
+            "None on top-level messages with no replies and on reply messages."
+        ),
+    )
+    thread_last_ts: str | None = Field(
+        default=None,
+        description=(
+            "On a thread root: ts of the most recent reply. None when no "
+            "replies. Used for thread_summary.last_ts in comms_read."
+        ),
+    )
+    thread_last_author: str | None = Field(
+        default=None,
+        description=(
+            "On a thread root: display name of the author of the most recent "
+            "reply. None when no replies. Stored at dispatcher / replay time "
+            "so the chip can render 'N replies, last by @X' without a "
+            "read-time scan."
+        ),
+    )
+    thread_participants: list[str] | None = Field(
+        default=None,
+        description=(
+            "On a thread root: ordered, deduped list of participant keys "
+            "who have replied OR been @mentioned inside the thread. None "
+            "when the message has no replies."
+        ),
+    )
 
     @field_validator("conv")
     @classmethod
@@ -104,6 +156,21 @@ class Message(BaseModel):
                     )
         return v
 
+    @field_validator("mentions")
+    @classmethod
+    def _validate_mentions(cls, v: list[str] | None) -> list[str] | None:
+        # Mirrors `_validate_recipients` (per-key 8-lowercase-hex regex,
+        # null-passes-through). `mentions` is presentation metadata, not a
+        # visibility filter — see plans/mentions-vs-whisper-separation.md §5.
+        if v is not None:
+            hex8 = re.compile(r"^[0-9a-f]{8}$")
+            for key in v:
+                if not hex8.match(key):
+                    raise ValueError(
+                        f"mention key must be 8 lowercase hex chars, got {key!r}"
+                    )
+        return v
+
     # -- Convenience constructors -----------------------------------------
 
     @classmethod
@@ -116,6 +183,7 @@ class Message(BaseModel):
         conv: str,
         *,
         recipients: list[str] | None = None,
+        mentions: list[str] | None = None,
         reply_to: str | None = None,
     ) -> Message:
         """Build a Message with auto-generated id and timestamp."""
@@ -124,6 +192,7 @@ class Message(BaseModel):
             body=body,
             conv=conv,
             recipients=recipients,
+            mentions=mentions,
             reply_to=reply_to,
         )
 

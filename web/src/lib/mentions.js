@@ -429,13 +429,17 @@ export function isWordTerminator(ch) {
 }
 
 /**
- * Convenience: convert a list of tokens into the recipients array expected
- * by the comms_send call (just the keys). Maintains insertion order.
+ * Convenience: convert a list of autocomplete-committed tokens into the
+ * `mentions` array expected by `store.sendMessage` (just the keys, deduped,
+ * order preserved). Drives the broadcast-with-highlight wire field.
+ *
+ * Renamed from `tokensToRecipients` per plan §11 Phase C: autocomplete
+ * mentions are broadcast (mentions field), not whispers (recipients field).
  *
  * @param {Array<{key:string}>} tokens
  * @returns {string[]}
  */
-export function tokensToRecipients(tokens) {
+export function tokensToMentions(tokens) {
   const seen = new Set();
   /** @type {string[]} */
   const out = [];
@@ -446,6 +450,13 @@ export function tokensToRecipients(tokens) {
   }
   return out;
 }
+
+/**
+ * @deprecated Renamed to `tokensToMentions` per the mentions-vs-whisper
+ * separation (autocomplete-committed @-mentions are broadcast highlights,
+ * not whispers). Kept as an alias for one release; will be removed.
+ */
+export const tokensToRecipients = tokensToMentions;
 
 /**
  * Re-export so test suites can probe the same regex used internally.

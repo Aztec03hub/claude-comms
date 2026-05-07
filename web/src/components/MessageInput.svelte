@@ -27,10 +27,13 @@
     filterCandidates,
     findExactMatch,
     commitMention,
-    renderSegments,
-    tokensToRecipients,
+    tokensToMentions,
     isWordTerminator,
   } from '../lib/mentions.js';
+  import { parseDM } from '../lib/dm-parser.js';
+  import { parseReply } from '../lib/reply-parser.js';
+  import { composeOverlaySegments } from '../lib/compose-overlay-segments.js';
+  import { inlineChipAtCaret } from '../lib/rich-text-parser.js';
 
   let { store, channelName, typingUsers = [], onOpenEmoji } = $props();
 
@@ -45,6 +48,13 @@
   let attachNotice = $state('');
   let inputEl = $state(null);
   let fileInputEl = $state(null);
+  /**
+   * Inline composer error string (e.g. /dm parser rejection). Surfaces
+   * below the textarea when non-null. Auto-clears on the next user input
+   * event so the user can fix and resend without an explicit dismiss.
+   * @type {string | null}
+   */
+  let composerError = $state(null);
 
   /** @type {Array<{start:number,end:number,name:string,key:string}>} */
   let mentionTokens = $state([]);
@@ -52,6 +62,22 @@
   let activeSuggestion = $state(null);
   let highlightIndex = $state(0);
   let isComposing = $state(false);
+
+  // ── Block-entry state (v2 per backtick-highlighting-plan §5.1 / §5.1.1) ─
+  //
+  // When a triple-backtick fence is opened (either via Trigger A — a complete
+  // ```...``` pair already present at caret — or Trigger B — the early-trigger
+  // gesture: ``` on its own line then Shift+Enter or Space), the composer
+  // swaps focus to a dedicated block textarea below the inline one. Body
+  // characters live in `blockMode.body` (NOT in `inputValue`); on send we
+  // synthesize the closed ```lang\nbody\n``` and splice into inline at
+  // `fenceLineStart`.
+  //
+  // Esc-exits restore the pre-entry source for Trigger B (gesture undone) or
+  // collapse to inline-mode-with-body-preserved for Trigger A.
+  /** @type {null | { trigger: 'A'|'B', fenceLineStart: number, langTag: string|null, body: string, preEntryInputValue: string, preEntryCaret: number }} */
+  let blockMode = $state(null);
+  let blockEl = $state(null);
 
   // Non-reactive cursor tracking — we read these in the input handler to
   // diff old↔new state for parseMentions. Kept off the reactivity graph
@@ -87,9 +113,18 @@
     activeSuggestion ? findExactMatch(activeSuggestion.query, candidates) : null,
   );
 
-  // Overlay segments for the mirrored layer.
+  // Overlay segments for the mirrored layer. Composes BOTH the rich-text
+  // (backtick) parser output AND the mention-overlay output into a single
+  // segment list. Inside code chips/blocks, mentions render verbatim
+  // (Phil's spec: code is verbatim; no nested formatting).
   let overlaySegments = $derived(
-    renderSegments(inputValue, mentionTokens, activeSuggestion, highlightedCandidate, exactMatch),
+    composeOverlaySegments(
+      inputValue,
+      mentionTokens,
+      activeSuggestion,
+      highlightedCandidate,
+      exactMatch,
+    ),
   );
 
   let showMentionDropdown = $derived(activeSuggestion !== null);
@@ -136,6 +171,42 @@
   // Resetting back to 0 on every list change would defeat hover, so we
   // only clamp here.)
 
+  // Composer-prefill watcher (plan §11 Phase C, R2-C3 fix). When
+  // ProfileCard / UserProfileView wants to start a DM, it sets
+  // `store.composerPrefill = '/dm @<name> '`. We pick that up here, splice
+  // into the textarea, focus + position cursor at end, then clear the
+  // store-side field so the same value can be re-fired (e.g. when the user
+  // closes and re-opens the same profile card without typing).
+  //
+  // Replaces the prior `document.querySelector` + synthetic input-event
+  // path in App.svelte (lines 374-384, 434-444) which didn't update Svelte
+  // state cleanly and bypassed the autocomplete pipeline.
+  $effect(() => {
+    // Tolerate `undefined` (test stores that don't declare the field) and
+    // `null` (the cleared idle state). Only fire when a non-empty string
+    // arrives.
+    const text = store.composerPrefill;
+    if (typeof text !== 'string') return;
+    inputValue = text;
+    // Clear immediately so subsequent identical assignments still re-fire
+    // this effect (the runes proxy compares `null` ≠ next non-null value).
+    store.composerPrefill = null;
+    // Re-anchor diff state so the next keystroke parses cleanly.
+    prevText = text;
+    prevCursor = text.length;
+    composerError = null;
+    // Focus + caret-at-end on the next microtask after Svelte flushes the
+    // value binding into the DOM.
+    queueMicrotask(() => {
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.setSelectionRange(text.length, text.length);
+        autoResize(inputEl);
+        ensureCaretVisible(inputEl);
+      }
+    });
+  });
+
   // Sync overlay scroll with textarea scroll so long messages line up.
   function handleScroll() {
     const overlay = inputEl?.parentElement?.querySelector('.input-overlay');
@@ -165,8 +236,361 @@
   function handleInput(e) {
     inputValue = e.target.value;
     autoResize(e.target);
+    ensureCaretVisible(e.target);
+    // Auto-clear any inline composer error on the next keystroke so the
+    // user can correct and retry without a separate dismiss action.
+    if (composerError !== null) composerError = null;
     store.notifyTyping();
     reparseMentions();
+  }
+
+  // ── Block-entry helpers ──────────────────────────────────────────────
+
+  /**
+   * Detect whether the current caret line in the inline textarea matches the
+   * Trigger B precondition (§5.1.1):
+   *   - Caret is on a line whose contents are EXACTLY ``` plus optional
+   *     language tag (after trimming trailing whitespace).
+   *   - That line is at start-of-source OR preceded by a newline.
+   *
+   * Returns `{ lineStart, lineEnd, langTag }` if the precondition holds, else
+   * `null`. `lineEnd` is the offset just before the trailing newline (or end
+   * of source if no trailing newline).
+   *
+   * @param {string} source
+   * @param {number} caret
+   * @returns {{lineStart:number, lineEnd:number, langTag:string|null} | null}
+   */
+  function detectTriggerBLine(source, caret) {
+    if (typeof source !== 'string' || caret < 0 || caret > source.length) return null;
+    // Find line start: walk back to start-of-source or previous '\n'.
+    let lineStart = caret;
+    while (lineStart > 0 && source.charCodeAt(lineStart - 1) !== 0x0a) lineStart--;
+    // Line must start at beginning of source OR after a \n. Both already
+    // satisfied by the walk-back above.
+    // Find line end: walk forward to next '\n' or EOF.
+    let lineEnd = caret;
+    while (lineEnd < source.length && source.charCodeAt(lineEnd) !== 0x0a) lineEnd++;
+
+    const lineContent = source.slice(lineStart, lineEnd);
+    // Must start with exactly three backticks (no more, no less in the prefix).
+    // Allow trailing whitespace which we trim.
+    if (lineContent.length < 3) return null;
+    if (
+      lineContent.charCodeAt(0) !== 0x60 ||
+      lineContent.charCodeAt(1) !== 0x60 ||
+      lineContent.charCodeAt(2) !== 0x60
+    ) return null;
+    // 4th character (if present) must NOT be a backtick — otherwise this is
+    // 4+ ticks which is not a valid fence per the v3 spec.
+    if (lineContent.length >= 4 && lineContent.charCodeAt(3) === 0x60) return null;
+
+    // After the fence, optional language tag. The lang tag must be a simple
+    // identifier-like token — letters/digits/-/+/_ — followed only by
+    // whitespace until line end. Anything else (e.g. `` ``` foo bar ``)
+    // disqualifies (§5.1.1 edge case: extra chars beyond fence + lang tag).
+    const rest = lineContent.slice(3);
+    const trimmed = rest.replace(/\s+$/, ''); // trim trailing whitespace
+    if (trimmed === '') {
+      return { lineStart, lineEnd, langTag: null };
+    }
+    // The lang token: leading whitespace allowed? No — Claude Desktop accepts
+    // ```python (no space) but typically not ``` python. Be conservative:
+    // accept either, but the lang tag is the trimmed remainder.
+    const langCandidate = trimmed.replace(/^\s+/, '');
+    if (!/^[A-Za-z0-9_+\-.#]+$/.test(langCandidate)) return null;
+    return { lineStart, lineEnd, langTag: langCandidate };
+  }
+
+  /**
+   * Enter block-entry mode via Trigger B (early-trigger gesture).
+   * Strips the fence line from `inputValue`, captures the lang tag, opens the
+   * block textarea, focuses it. Caller handles `e.preventDefault()` so the
+   * trigger keystroke (Shift+Enter or Space) is consumed.
+   *
+   * @param {{lineStart:number, lineEnd:number, langTag:string|null}} det
+   */
+  function enterBlockModeTriggerB(det) {
+    const preEntryInputValue = inputValue;
+    const preEntryCaret = inputEl ? inputEl.selectionStart : preEntryInputValue.length;
+
+    // Strip the fence line. If the line has a trailing newline, also strip
+    // that — we don't want to leave a bare blank line where the fence used
+    // to be (§5.1.1: "fence chars are removed from source").
+    const lineEndIncludingNewline =
+      det.lineEnd < preEntryInputValue.length && preEntryInputValue.charCodeAt(det.lineEnd) === 0x0a
+        ? det.lineEnd + 1
+        : det.lineEnd;
+    const newInline =
+      preEntryInputValue.slice(0, det.lineStart) +
+      preEntryInputValue.slice(lineEndIncludingNewline);
+
+    inputValue = newInline;
+    blockMode = {
+      trigger: 'B',
+      fenceLineStart: det.lineStart,
+      langTag: det.langTag,
+      body: '',
+      preEntryInputValue,
+      preEntryCaret,
+    };
+
+    // Move caret in the inline textarea to where the fence used to start
+    // (re-anchor diff state). The block textarea will receive focus AFTER
+    // it mounts — Svelte's bind:this fires post-flush, so a queueMicrotask
+    // can fire before blockEl is assigned. Use a small chain of fallbacks:
+    // try microtask first (works in tests under jsdom), fall back to
+    // requestAnimationFrame which guarantees post-render in real browsers.
+    prevText = newInline;
+    prevCursor = det.lineStart;
+    const focusBlock = () => {
+      if (blockEl) {
+        blockEl.focus();
+        blockEl.setSelectionRange(0, 0);
+      }
+    };
+    queueMicrotask(() => {
+      if (inputEl) inputEl.setSelectionRange(det.lineStart, det.lineStart);
+      focusBlock();
+      if (!blockEl && typeof requestAnimationFrame !== 'undefined') {
+        requestAnimationFrame(() => {
+          focusBlock();
+          if (!blockEl) {
+            // Last-resort: try once more after a paint.
+            requestAnimationFrame(focusBlock);
+          }
+        });
+      }
+    });
+  }
+
+  /**
+   * Exit block mode and synthesize a complete fenced block back into the
+   * inline source. Used on close-fence-typed-in-block, on send, and on Esc
+   * (Trigger A path — body preserved).
+   *
+   * @param {{exitMode: 'commit'|'esc-A'|'esc-B-empty'|'fence-dissolve'}} opts
+   */
+  function exitBlockMode(opts = { exitMode: 'commit' }) {
+    if (!blockMode) return;
+    const bm = blockMode;
+    if (opts.exitMode === 'esc-B-empty') {
+      // Restore pre-entry inline source verbatim — undo the gesture entirely.
+      inputValue = bm.preEntryInputValue;
+      const restoreCaret = bm.preEntryCaret;
+      blockMode = null;
+      prevText = inputValue;
+      prevCursor = restoreCaret;
+      queueMicrotask(() => {
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.setSelectionRange(restoreCaret, restoreCaret);
+        }
+      });
+      return;
+    }
+
+    // Synthesize the closed block source: `\`\`\`lang?\nbody\n\`\`\``.
+    // Body may be empty; we still emit a syntactically complete block on
+    // commit so MessageBubble parses it as block-code.
+    const langPart = bm.langTag ? bm.langTag : '';
+    const bodyPart = bm.body;
+    // Ensure body doesn't already end in a stray newline; we always emit a
+    // single \n between body and closing fence.
+    const synthesized = '```' + langPart + '\n' + bodyPart + '\n```';
+
+    if (opts.exitMode === 'fence-dissolve') {
+      // §5.4 fence-dissolve-merge: opening fence and closing fence both
+      // dissolve; body merges back as plain text at fenceLineStart.
+      const before = inputValue.slice(0, bm.fenceLineStart);
+      const after = inputValue.slice(bm.fenceLineStart);
+      inputValue = before + bodyPart + after;
+      const restoreCaret = bm.fenceLineStart + bodyPart.length;
+      blockMode = null;
+      prevText = inputValue;
+      prevCursor = restoreCaret;
+      queueMicrotask(() => {
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.setSelectionRange(restoreCaret, restoreCaret);
+        }
+      });
+      return;
+    }
+
+    // Default: commit / esc-A — splice the synthesized block into inline
+    // source at the fence line start.
+    const before = inputValue.slice(0, bm.fenceLineStart);
+    const after = inputValue.slice(bm.fenceLineStart);
+    // If the splice point is mid-line (not the start of a line), prepend a
+    // newline so the fence sits on its own line (parser correctness).
+    const needsLeadingNewline =
+      bm.fenceLineStart > 0 && inputValue.charCodeAt(bm.fenceLineStart - 1) !== 0x0a;
+    const insert = (needsLeadingNewline ? '\n' : '') + synthesized;
+    // If the next character isn't a newline, append one so subsequent text
+    // doesn't bleed into the closing fence line.
+    const insertWithTrailing = after.length > 0 && after.charCodeAt(0) !== 0x0a
+      ? insert + '\n'
+      : insert;
+    inputValue = before + insertWithTrailing + after;
+    const restoreCaret = before.length + insertWithTrailing.length;
+    blockMode = null;
+    prevText = inputValue;
+    prevCursor = restoreCaret;
+    queueMicrotask(() => {
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.setSelectionRange(restoreCaret, restoreCaret);
+      }
+    });
+  }
+
+  function handleBlockInput(e) {
+    if (!blockMode) return;
+    const newBody = e.target.value;
+    // Detect close-fence-typed-on-own-line: scan body for a line consisting
+    // only of ``` (optionally trailing whitespace). When found, commit the
+    // block (body up to that line) and exit; remainder after the close goes
+    // back into inline source.
+    const lines = newBody.split('\n');
+    let closeIdx = -1;
+    for (let li = 0; li < lines.length; li++) {
+      const trimmed = lines[li].replace(/\s+$/, '');
+      if (trimmed === '```') {
+        closeIdx = li;
+        break;
+      }
+    }
+    if (closeIdx !== -1) {
+      // Body is everything before the close-fence line.
+      const bodyLines = lines.slice(0, closeIdx);
+      const tailLines = lines.slice(closeIdx + 1);
+      blockMode = { ...blockMode, body: bodyLines.join('\n') };
+      const tail = tailLines.join('\n');
+      // Commit, then append `tail` back into inline source.
+      const bm = blockMode;
+      const langPart = bm.langTag ? bm.langTag : '';
+      const synthesized = '```' + langPart + '\n' + bm.body + '\n```';
+      const before = inputValue.slice(0, bm.fenceLineStart);
+      const after = inputValue.slice(bm.fenceLineStart);
+      const needsLeadingNewline =
+        bm.fenceLineStart > 0 && inputValue.charCodeAt(bm.fenceLineStart - 1) !== 0x0a;
+      const insert = (needsLeadingNewline ? '\n' : '') + synthesized;
+      const insertWithTrailing = after.length > 0 && after.charCodeAt(0) !== 0x0a
+        ? insert + '\n'
+        : insert + (tail.length > 0 ? '\n' + tail : '');
+      const finalInline = before + insertWithTrailing + after;
+      const restoreCaret = before.length + insertWithTrailing.length;
+      inputValue = finalInline;
+      blockMode = null;
+      prevText = finalInline;
+      prevCursor = restoreCaret;
+      queueMicrotask(() => {
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.setSelectionRange(restoreCaret, restoreCaret);
+        }
+      });
+      return;
+    }
+    blockMode = { ...blockMode, body: newBody };
+  }
+
+  function handleBlockKeydown(e) {
+    if (!blockMode) return;
+    // Esc → exit block mode. Trigger B + empty body → undo gesture (restore
+    // pre-entry source). Trigger A or non-empty body → commit synthesized
+    // block back to inline source.
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (blockMode.trigger === 'B' && blockMode.body === '') {
+        exitBlockMode({ exitMode: 'esc-B-empty' });
+      } else {
+        exitBlockMode({ exitMode: 'esc-A' });
+      }
+      return;
+    }
+
+    // Arrow-key escape (Phil's v2 ask): right-arrow at end of body OR
+    // down-arrow on the last line of the body should exit the block and
+    // return focus to the inline textarea. Lets the user "step out" of the
+    // block without Esc / closing fence / re-clicking.
+    {
+      const ta = e.target;
+      const value = blockMode.body;
+      const caret = ta.selectionStart;
+      const isCollapsed = ta.selectionStart === ta.selectionEnd;
+      if (isCollapsed && e.key === 'ArrowRight' && caret === value.length) {
+        e.preventDefault();
+        exitBlockMode({ exitMode: 'commit' });
+        return;
+      }
+      if (isCollapsed && e.key === 'ArrowDown') {
+        // True iff caret sits on the LAST line of the body. Equivalent to:
+        // no '\n' in `value.slice(caret)`.
+        if (value.indexOf('\n', caret) === -1) {
+          e.preventDefault();
+          exitBlockMode({ exitMode: 'commit' });
+          return;
+        }
+      }
+    }
+    // Tab → insert literal tab; preventDefault so focus doesn't escape.
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const ta = e.target;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const oldBody = blockMode.body;
+      const newBody = oldBody.slice(0, start) + '\t' + oldBody.slice(end);
+      blockMode = { ...blockMode, body: newBody };
+      queueMicrotask(() => {
+        if (blockEl) {
+          blockEl.value = newBody;
+          blockEl.setSelectionRange(start + 1, start + 1);
+        }
+      });
+      return;
+    }
+    // Enter inside block → newline (default textarea behavior). Cmd/Ctrl+Enter
+    // sends the message (commits block first).
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      // Commit block first, then send.
+      exitBlockMode({ exitMode: 'commit' });
+      // sendMessage runs in the microtask after commit, after inputValue has
+      // been updated.
+      queueMicrotask(() => {
+        sendMessage();
+      });
+      return;
+    }
+    // Backspace at row 0 col 0:
+    //   - Empty block → atomically remove block.
+    //     - Trigger B: restore pre-entry source (gesture undo).
+    //     - Trigger A: collapse — body was empty so we just leave NORMAL with
+    //       the inline fences intact.
+    //   - Non-empty block → fence-dissolve-merge (Trigger A only); body
+    //     merges as plain text at fenceLineStart.
+    if (e.key === 'Backspace') {
+      const ta = e.target;
+      if (ta.selectionStart === 0 && ta.selectionEnd === 0) {
+        e.preventDefault();
+        if (blockMode.body === '') {
+          // Empty block — atomic remove.
+          if (blockMode.trigger === 'B') {
+            exitBlockMode({ exitMode: 'esc-B-empty' });
+          } else {
+            // Trigger A empty: just clear blockMode, leave inline source as-is.
+            blockMode = null;
+          }
+        } else {
+          // Non-empty block — fence-dissolve-merge.
+          exitBlockMode({ exitMode: 'fence-dissolve' });
+        }
+        return;
+      }
+    }
   }
 
   function handleSelect() {
@@ -174,7 +598,26 @@
     // a text edit. If we were holding a pending exact match and the
     // cursor moved out of the prefix range, commit immediately.
     if (!inputEl) return;
-    const cursor = inputEl.selectionStart;
+    let cursor = inputEl.selectionStart;
+    const selEnd = inputEl.selectionEnd;
+
+    // Phil §5.4 (inline chip): the caret cannot rest at chip interior
+    // position 1 (immediately after the opening backtick). If the user
+    // clicks/arrow-lefts there, snap left to just before the opening tick.
+    // We only enforce this for collapsed selections — a range selection
+    // that happens to start mid-chip is the user explicitly grabbing
+    // content, leave it alone.
+    if (cursor === selEnd) {
+      const chip = inlineChipAtCaret(inputValue, cursor);
+      if (chip && cursor === chip.start + 1) {
+        // Caret is immediately after the opening backtick — illegal rest
+        // position. Snap left to before the opening tick.
+        const snap = chip.start;
+        inputEl.setSelectionRange(snap, snap);
+        cursor = snap;
+      }
+    }
+
     if (exactMatch && activeSuggestion) {
       const prefixEnd = activeSuggestion.atIndex + 1 + activeSuggestion.query.length;
       if (cursor < activeSuggestion.atIndex || cursor > prefixEnd) {
@@ -299,43 +742,202 @@
       }
     }
 
+    // §5.1.1 early-trigger gesture (Trigger B): triple-tick on its own line
+    // + Shift+Enter OR Space → enter block mode, fence chars stripped from
+    // source. Must fire BEFORE the Enter-sends handler below (Shift+Enter
+    // would otherwise default to a literal newline) and BEFORE Space gets
+    // inserted as a literal character.
+    //
+    // Precondition: block-mode not active (no nested triggers); not composing
+    // an IME character; the caret line matches detectTriggerBLine.
+    if (
+      !isComposing
+      && !blockMode
+      && (
+        (e.key === 'Enter' && e.shiftKey)
+        || (e.key === ' ' && !e.metaKey && !e.ctrlKey && !e.altKey)
+      )
+      && inputEl
+    ) {
+      const det = detectTriggerBLine(inputValue, inputEl.selectionStart);
+      if (det) {
+        e.preventDefault();
+        enterBlockModeTriggerB(det);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
     // Shift+Enter inserts a newline (default textarea behavior).
+
+    // Phil §5.4 (inline chip): Backspace from chip-interior-position-2
+    // (caret immediately after the FIRST interior char, e.g. `|x|y` with
+    // caret at the | between x and y) deletes that first interior char
+    // AND jumps the caret to before the opening tick. The chip is now
+    // empty (`|y`) — parser sees ``y` -> single tick + text + tick which
+    // becomes literal text. This dissolves the chip atomically and lands
+    // the caret outside, matching Claude Desktop.
+    if (e.key === 'Backspace' && !isComposing && inputEl) {
+      const cursor = inputEl.selectionStart;
+      const selEnd = inputEl.selectionEnd;
+      if (cursor === selEnd) {
+        const chip = inlineChipAtCaret(inputValue, cursor);
+        // chip exists when cursor is strictly inside (chip.start, chip.end).
+        // chip-interior-position-2 means cursor === chip.start + 2.
+        if (chip && cursor === chip.start + 2) {
+          e.preventDefault();
+          // Delete the first interior char (at chip.start + 1).
+          const deleteAt = chip.start + 1;
+          const newText = inputValue.slice(0, deleteAt) + inputValue.slice(deleteAt + 1);
+          inputValue = newText;
+          // Re-anchor diff state; caret jumps to before opening tick.
+          const newCursor = chip.start;
+          prevText = newText;
+          prevCursor = newCursor;
+          // Apply caret on next tick (after Svelte propagates value).
+          queueMicrotask(() => {
+            if (inputEl) {
+              inputEl.setSelectionRange(newCursor, newCursor);
+              autoResize(inputEl);
+              ensureCaretVisible(inputEl);
+            }
+          });
+          // Re-run mention parser against the new text.
+          const r = parseMentions(newText, mentionTokens, prevText, prevCursor, newCursor);
+          mentionTokens = r.tokens;
+          activeSuggestion = r.activeSuggestion;
+          return;
+        }
+      }
+    }
   }
 
-  /** Auto-resize textarea to fit content, capped at 6 lines (~144px). */
+  /**
+   * Maximum visible textarea height in pixels before the textarea becomes
+   * internally scrollable. Kept in lock-step with the `max-height` CSS rule
+   * on the textarea (`.input-wrap textarea`). If you change one, change
+   * both — drift produces a phantom region where the caret sits but the
+   * overlay paints, which is exactly the bug Phil reported (cursor at
+   * "line start" visually while text is elsewhere).
+   */
+  const TEXTAREA_MAX_HEIGHT = 180;
+
+  /** Auto-resize textarea to fit content, capped at TEXTAREA_MAX_HEIGHT. */
   function autoResize(el) {
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 144) + 'px';
+    el.style.height = Math.min(el.scrollHeight, TEXTAREA_MAX_HEIGHT) + 'px';
+  }
+
+  /**
+   * After autoResize the textarea may be in scroll-mode (scrollHeight >
+   * clientHeight). The browser does NOT auto-scroll the caret into view in
+   * that case for programmatic height changes — only for clientHeight that
+   * was already smaller. Manually push scrollTop to keep the caret visible
+   * if it's below the visible region. Then mirror to the overlay so the
+   * styled layer follows.
+   */
+  function ensureCaretVisible(el) {
+    if (!el) return;
+    // Cheap heuristic: if the textarea is in overflow mode and the caret is
+    // at or near the end, pin scroll to bottom. This covers the dominant
+    // "type past the bottom" case Phil flagged. Mid-document edits with
+    // long content remain in the user's control via native scroll.
+    if (el.scrollHeight > el.clientHeight) {
+      const caretAtEnd = el.selectionStart === el.value.length;
+      if (caretAtEnd) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+    // Always sync the overlay even if we didn't touch scrollTop —
+    // autoResize itself can change scrollTop implicitly when height shrinks.
+    handleScroll();
   }
 
   // ── Send ─────────────────────────────────────────────────────────────
 
   function sendMessage() {
-    // Force-commit any pending exact-match before reading recipients so
+    // If a block is open, commit it first so the synthesized fenced source
+    // lands in inputValue before we read recipients & dispatch.
+    if (blockMode) {
+      exitBlockMode({ exitMode: 'commit' });
+    }
+
+    // Force-commit any pending exact-match before reading mentions so
     // what the user sees is what we send.
     commitPendingIfMatch();
 
     if (!inputValue.trim()) return;
     if (inputValue.length > MAX_MESSAGE_LENGTH) return;
 
-    const recipients = tokensToRecipients(mentionTokens);
-    store.sendMessage(inputValue, null, recipients.length > 0 ? recipients : null);
+    // Parse-order (plan §11 Phase C-1): /dm-detection BEFORE
+    // tokensToMentions. The two paths are mutually exclusive — a /dm send
+    // never carries `mentions`, an autocomplete send never carries
+    // `recipients`.
+    if (inputValue.trim().startsWith('/dm ')) {
+      const parsed = parseDM(inputValue, store.participants, store.userProfile.key);
+      if (parsed.error) {
+        // Surface inline; do NOT reset composer so user can correct.
+        composerError = parsed.error;
+        return;
+      }
+      store.sendMessage(parsed.body, null, {
+        recipients: parsed.recipients,
+        mentions: null,
+      });
+    } else if (
+      inputValue.trim().startsWith('/reply ')
+      || inputValue.trim() === '/reply'
+    ) {
+      // Threaded-replies plan §6 — /reply <message_id> <body>.
+      // Server is the authority on parent-exists / depth-2 / non-system;
+      // parser screens the surface UUID shape so typos are caught locally.
+      const parsed = parseReply(inputValue);
+      if (parsed.error) {
+        composerError = parsed.error;
+        return;
+      }
+      store.sendMessage(parsed.body, parsed.replyTo, {
+        recipients: null,
+        mentions: null,
+      });
+    } else {
+      // Default path: autocomplete-driven mentions (broadcast highlight).
+      const mentions = tokensToMentions(mentionTokens);
+      // Composer-side sender-key dedup (UX): drop self if it somehow snuck
+      // into the token list. `filterCandidates` already excludes self, so
+      // this is defense in depth against direct token-list manipulation.
+      const filtered = mentions.filter((k) => k !== store.userProfile.key);
+      store.sendMessage(inputValue, null, {
+        mentions: filtered.length > 0 ? filtered : null,
+        recipients: null,
+      });
+    }
 
+    resetComposer();
+  }
+
+  /**
+   * Reset composer state after a successful send. Extracted so /dm and
+   * autocomplete paths share the cleanup; both leave the composer empty
+   * with diff state re-anchored.
+   */
+  function resetComposer() {
     inputValue = '';
     mentionTokens = [];
     activeSuggestion = null;
     highlightIndex = 0;
     prevText = '';
     prevCursor = 0;
+    composerError = null;
     if (pendingCommitTimer) {
       clearTimeout(pendingCommitTimer);
       pendingCommitTimer = null;
     }
+    blockMode = null;
     if (inputEl) {
       inputEl.style.height = 'auto';
     }
@@ -437,6 +1039,12 @@
             <span class="mention-pending">{seg.text}</span>
           {:else if seg.type === 'ghost'}
             <span class="ghost-suggestion">{seg.text}</span>
+          {:else if seg.type === 'inline-code'}
+            <span class="overlay-code-chip">{seg.text}</span>
+          {:else if seg.type === 'inline-code-tick'}
+            <span class="overlay-code-tick">{seg.text}</span>
+          {:else if seg.type === 'block-code'}
+            <span class="overlay-code-block">{seg.text}</span>
           {:else}
             {seg.text}
           {/if}
@@ -463,6 +1071,35 @@
         data-testid="message-input"
       ></textarea>
     </div>
+
+    {#if blockMode}
+      <!--
+        Dedicated block textarea per backtick-highlighting-plan §5.1 / §5.1.1.
+        Mounted only while in block-mode. Body chars live here, NOT in the
+        inline textarea. On commit / send / Esc the synthesized closed block
+        is spliced back into inline source (see exitBlockMode).
+      -->
+      <div class="block-textarea-wrap" data-testid="block-textarea-wrap">
+        <div class="block-textarea-header">
+          <span class="block-textarea-label">code block</span>
+          {#if blockMode.langTag}
+            <span class="block-textarea-lang" data-testid="block-textarea-lang">{blockMode.langTag}</span>
+          {/if}
+          <span class="block-textarea-hint">Esc to exit · ``` to close</span>
+        </div>
+        <textarea
+          bind:this={blockEl}
+          rows="3"
+          class="block-textarea"
+          placeholder="Type your code..."
+          value={blockMode.body}
+          oninput={handleBlockInput}
+          onkeydown={handleBlockKeydown}
+          data-testid="block-textarea"
+        ></textarea>
+      </div>
+    {/if}
+
     <div class="input-bottom-row">
       <div class="input-actions">
         <input
@@ -496,6 +1133,12 @@
 
   {#if attachNotice}
     <div class="attach-notice" data-testid="attach-notice">{attachNotice}</div>
+  {/if}
+
+  {#if composerError}
+    <div class="composer-error" data-testid="composer-error" role="alert">
+      {composerError}
+    </div>
   {/if}
 
   {#if showMentionDropdown}
@@ -636,6 +1279,21 @@
     padding: 4px 4px 0;
   }
 
+  /* Inline composer error: surfaced when /dm parsing rejects (unknown
+     recipient, empty body, self-DM, etc.). Auto-clears on next keystroke
+     via handleInput; no explicit dismiss control. Positioned above the
+     send row so the user sees it without scroll. */
+  .composer-error {
+    margin-top: 6px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: rgb(252, 165, 165);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
   .input-wrap {
     display: flex;
     flex-direction: column;
@@ -667,18 +1325,30 @@
     width: 100%;
   }
 
+  /*
+   * Overlay and textarea must share the EXACT same text-flow properties
+   * (font-family, font-size, line-height, letter-spacing, padding,
+   * box-sizing, white-space, overflow-wrap, word-break, tab-size) so that
+   * a glyph at source offset N renders at the same x/y in both layers.
+   * Any drift produces the bug Phil flagged: caret position visually
+   * lagging the rendered text. See plan §10.5 + §11.1.
+   */
   .input-overlay {
     position: absolute;
     inset: 0;
     pointer-events: none;
     white-space: pre-wrap;
     overflow-wrap: break-word;
+    word-break: normal;
     overflow: hidden;
     padding: 4px 0;
     font-size: 14px;
     font-family: inherit;
     line-height: 1.5;
+    letter-spacing: normal;
+    tab-size: 2;
     color: var(--text-primary);
+    box-sizing: border-box;
     z-index: 1;
   }
 
@@ -698,6 +1368,62 @@
     opacity: 0.7;
   }
 
+  /* Inline code chip — rounded background highlight on the value between
+     the backticks. The backticks themselves render as `overlay-code-tick`
+     spans at low opacity so the overlay stays character-aligned with the
+     textarea (caret math depends on identical character counts). The chip
+     uses the SAME base font as the surrounding text — the "monospace
+     feel" comes from the background + accent color, NOT a font swap; a
+     font-family change here would shift glyph metrics and misalign the
+     caret. The rendered MessageBubble (no caret) is free to use a real
+     monospace stack. */
+  .input-overlay .overlay-code-chip {
+    background: var(--code-chip-bg, rgba(239, 68, 68, 0.14));
+    color: var(--code-chip-fg, rgb(252, 165, 165));
+    border-radius: 6px;
+    /* Inset box-shadow gives the 1px edge without affecting layout
+       (a real `border` would shift glyph metrics and misalign the caret
+       against the textarea behind us). */
+    box-shadow: inset 0 0 0 1px var(--code-chip-border, rgba(239, 68, 68, 0.55));
+    padding: 0 2px;
+    /* Negative margin keeps the chip's visual width matching its source
+       chars (the padding would otherwise push the textarea/overlay out of
+       sync). Browsers render this stably for inline backgrounds. */
+    margin: 0 -2px;
+  }
+
+  .input-overlay .overlay-code-tick {
+    color: var(--code-chip-fg, rgb(252, 165, 165));
+    opacity: 0.45;
+  }
+
+  /* Block code — rendered as a single inline span over the entire fenced
+     range (raw text including the opening/closing fences). The dedicated
+     block textarea (when in BLOCK mode) handles fine-grained editing; the
+     overlay here is purely decorative until the user closes the fence.
+
+     Multi-line bubble cohesion: by default an inline span with a
+     background paints each visual line as a separate fragment, which Phil
+     flagged as ugly ("each line gets its own bubble"). `box-decoration-break:
+     clone` (and webkit prefix for Safari) makes EACH fragment carry the
+     full background + border-radius + border-left, which still reads as
+     "one block" because they share the same bg color and accent edge — and
+     critically they don't fight the textarea's character flow underneath.
+     A real `display: block` would shift glyph metrics and break caret
+     alignment with the textarea behind us, so we stick with inline. */
+  .input-overlay .overlay-code-block {
+    background: var(--code-block-bg, rgba(20, 20, 24, 0.85));
+    color: var(--code-block-fg, var(--text-primary));
+    border-left: 2px solid var(--code-block-accent, rgba(239, 68, 68, 0.55));
+    border-radius: 4px;
+    padding: 0 6px;
+    display: inline;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    /* white-space: pre-wrap is inherited from .input-overlay so newlines
+       inside the block render as line breaks correctly. */
+  }
+
   .input-wrap textarea {
     width: 100%;
     background: none;
@@ -712,6 +1438,14 @@
     resize: none;
     overflow-y: auto;
     line-height: 1.5;
+    /* Mirror the overlay's text-flow properties so wrap points line up.
+       See plan §10.5 + §11.1 — drift here is the cursor-drift bug. */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+    letter-spacing: normal;
+    tab-size: 2;
+    box-sizing: border-box;
     min-height: 36px;
     max-height: 180px;
     position: relative;
@@ -733,6 +1467,80 @@
   .input-wrap textarea::selection {
     background: rgba(245, 158, 11, 0.32);
     color: var(--text-primary);
+  }
+
+  /* Dedicated block textarea (v2 §5.1 / §5.1.1). Mounted only while
+     blockMode is active. Visually distinct from the inline textarea — uses
+     the code-block theme tokens, monospace font, and a leading accent
+     border to read as a block-of-code surface.
+
+     Border color uses --code-block-accent (red, distinct from the ember
+     accent on @mentions per Phil's call) so users don't confuse code with
+     mentions at a glance. Default falls back to a red rgba so the chrome
+     reads even without theme tokens. */
+  .block-textarea-wrap {
+    margin-top: 6px;
+    border-radius: var(--radius-sm);
+    background: var(--code-block-bg, rgba(20, 20, 24, 0.85));
+    border: 1px solid var(--code-block-accent, rgba(239, 68, 68, 0.55));
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+  }
+
+  .block-textarea-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--code-block-lang-fg, var(--text-faint));
+    background: rgba(0, 0, 0, 0.35);
+    border-bottom: 1px solid var(--code-block-accent, rgba(239, 68, 68, 0.4));
+  }
+
+  .block-textarea-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .block-textarea-lang {
+    color: var(--code-block-fg, var(--text-primary));
+    background: rgba(0, 0, 0, 0.25);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  .block-textarea-hint {
+    margin-left: auto;
+    color: var(--text-faint);
+    font-size: 10.5px;
+  }
+
+  .block-textarea {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none !important;
+    box-shadow: none !important;
+    color: var(--code-block-fg, var(--text-primary));
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    resize: vertical;
+    min-height: 60px;
+    max-height: 240px;
+    white-space: pre;
+    overflow: auto;
+    tab-size: 2;
+    box-sizing: border-box;
+  }
+
+  .block-textarea:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
   }
 
   .input-actions {

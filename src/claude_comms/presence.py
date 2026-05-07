@@ -101,11 +101,54 @@ class PresenceManager:
         is not frozen; we do not take the registry lock because we are not
         mutating the registry's own dicts — only fields on objects already
         referenced by it.
+
+        Note: if ``p.connections`` is empty (e.g. the sweep already expired
+        the only connection), ``touch`` is a no-op.  Callers that want to
+        re-register a connection on activity should use
+        :meth:`ensure_connection` instead.
         """
         p = self._registry.get(key)
         if p is None:
             return
         ts = now_iso()
+        for conn in p.connections.values():
+            conn.last_seen = ts
+
+    def ensure_connection(self, key: str, *, client: str = "mcp") -> None:
+        """Refresh ``last_seen`` for *key*, recreating a connection if needed.
+
+        Behaves exactly like :meth:`touch` when the participant has at least
+        one active connection — every existing connection's ``last_seen``
+        is bumped to *now*.
+
+        If the participant exists but has zero connections (because the
+        background sweep expired the last one), a fresh ``ConnectionInfo``
+        with ``client=client`` is inserted under the connection key
+        ``client``.  This is the "MCP heartbeat" path: any successful tool
+        call from the client is, by definition, evidence of a live
+        connection, so we resurrect the record rather than letting the
+        participant remain visibly offline despite ongoing activity.
+
+        Silently returns if the participant key is unknown.
+        """
+        p = self._registry.get(key)
+        if p is None:
+            return
+        ts = now_iso()
+        if not p.connections:
+            # Resurrect the connection record. Use ``client`` as the conn key
+            # so subsequent touches collide on the same slot rather than
+            # accumulating duplicates (matches the convention used by
+            # ``mcp_tools._ensure_mcp_connection``).
+            from claude_comms.participant import ConnectionInfo
+
+            p.connections[client] = ConnectionInfo(
+                client=client,
+                instance_id=None,
+                since=ts,
+                last_seen=ts,
+            )
+            return
         for conn in p.connections.values():
             conn.last_seen = ts
 
@@ -162,10 +205,16 @@ class PresenceManager:
     # -- Internals ---------------------------------------------------------
 
     async def _sweep_once(self) -> list[tuple[str, str]]:
-        """Expire stale connections and return ``[(key, conn_key), ...]``.
+        """Expire stale connections and stale activities.
 
-        Does NOT publish offline presence — the caller is responsible for
-        that so the sweep logic stays testable in isolation.
+        Returns ``[(key, conn_key), ...]`` for connections that were fully
+        removed.  Expired activities (where the connection itself is still
+        live) are cleared in place and NOT included in the return value —
+        they don't need offline-presence publishing.
+
+        Does NOT publish offline presence for removed connections — the
+        caller is responsible for that so the sweep logic stays testable
+        in isolation.
         """
         removed: list[tuple[str, str]] = []
         now = datetime.now(timezone.utc).astimezone()
@@ -183,6 +232,23 @@ class PresenceManager:
                 if age > self._ttl_seconds:
                     p.connections.pop(conn_key, None)
                     removed.append((key, conn_key))
+                    continue
+
+                # Connection still live — check whether its activity has expired
+                # on its own clock.  Activities decay independently of connection
+                # TTL: a participant can be present without "thinking" anymore.
+                activity = conn.activity
+                if activity is None:
+                    continue
+                try:
+                    expires_at = datetime.fromisoformat(activity.expires_at)
+                except (ValueError, TypeError):
+                    # Unparseable activity timestamp — clear defensively rather
+                    # than letting a malformed record stick around forever.
+                    conn.activity = None
+                    continue
+                if expires_at <= now:
+                    conn.activity = None
         return removed
 
     async def _run(self) -> None:

@@ -141,6 +141,17 @@ class ClaudeCommsApp(App):
         participant_list = self.query_one("#participant-sidebar", ParticipantList)
         msg_input.set_name_provider(participant_list.get_names)
 
+        # Wire up the chat-view's render-classifier with the viewer's key
+        # and a live name→key snapshot accessor. Phase E mention
+        # classification (self/other/legacy) needs both. Defer to the
+        # callable so participant additions/removals are reflected
+        # automatically.
+        chat_view = self.query_one("#chat-view", ChatView)
+        chat_view.set_render_context(
+            viewer_key=self._key,
+            name_to_key_provider=participant_list.get_name_to_key,
+        )
+
         # Set initial active channel
         channel_list = self.query_one("#channel-sidebar", ChannelList)
         channel_list.active_channel = self._active_conv

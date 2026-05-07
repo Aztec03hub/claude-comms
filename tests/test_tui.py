@@ -1702,3 +1702,444 @@ class TestRound14SwitchConvErrors:
             )
             item = participant_list._items["peer0006"]
             assert item.participant_name == "user-peer0006"
+
+
+# ============================================================================
+# Round 15: Mention / whisper render parity (Phase F3)
+# ============================================================================
+#
+# Verifies the TUI render-side semantic differentiation contract from
+# `plans/mentions-vs-whisper-separation.md` §11 Phase E and §10 cases 1-6 + 11b.
+#
+# Contract under test (web ⇄ TUI parity table, plan §6.3 + §11 Phase E):
+#   - mention-self  → loud styling (bold + amber)
+#   - mention-other → quiet styling (muted grey)
+#   - mention-legacy → existing chip styling (muted-ember, no self-accent)
+#   - Whisper-gate: when `recipients` is set, all body @-tokens render as
+#                   mention-legacy regardless of `mentions` (loud self/other
+#                   styling is mention-only per §6.3 R2-C1).
+#   - Sender-self downgrade: when viewer.key === sender.key, segments that
+#                            would be `mention-self` render as `mention-legacy`
+#                            instead.
+#
+# Approach: direct classifier test against phoenix's
+# `chat_view.classify_mention_segments` (Phase E landing). The classifier
+# returns a list of (kind, text) tuples where kind ∈
+# {"plain", "mention-self", "mention-other", "mention-legacy"}, mirroring the
+# web `parseBody(text, participants, message, currentUser)` algorithm in §6.3.
+# This makes the parity test semantic (kind name match) rather than fragile
+# style-string matching.
+#
+# Bubble-level self-accent: phoenix encodes the plan §11 Phase E
+# "reverse-video left margin OR `▎` glyph" requirement as a Panel `box.HEAVY`
+# + amber border accent on `MessageBubble.render()`, plus a `box.MINIMAL`
+# whisper border. These are verified through the bubble render path
+# (`MessageBubble._render_body` returns `(renderable, has_self_mention)`,
+# and `MessageBubble.render()` returns the Panel).
+# ============================================================================
+
+
+from claude_comms.message import Message  # noqa: E402  (deferred import for clarity)
+from claude_comms.tui.chat_view import (  # noqa: E402
+    classify_mention_segments,
+    MessageBubble,
+)
+
+# Stable 8-hex keys for the canonical viewers used across §10 cases.
+# (Pure 0-9a-f to satisfy the Sender.key validator.)
+EMBER_KEY = "aea026a7"
+SAGE_KEY = "5a6e0001"
+PHIL_KEY = "ab110001"
+BYSTANDER_KEY = "b75ea001"
+
+
+def _name_to_key() -> dict[str, str]:
+    """Standard name→key map for render-classifier tests.
+
+    Phoenix's `classify_mention_segments(name_to_key=...)` lowercases keys
+    internally for case-insensitive lookup; we pass canonical lowercase
+    names.
+    """
+    return {
+        "ember": EMBER_KEY,
+        "sage": SAGE_KEY,
+        "phil": PHIL_KEY,
+        "bystander": BYSTANDER_KEY,
+    }
+
+
+def _build_message(
+    *,
+    sender_key: str = PHIL_KEY,
+    sender_name: str = "phil",
+    sender_type: str = "human",
+    body: str,
+    mentions: list[str] | None = None,
+    recipients: list[str] | None = None,
+    conv: str = "general",
+) -> Message:
+    """Helper — build a Message with the §10 wire-format fields."""
+    return Message.create(
+        sender_key=sender_key,
+        sender_name=sender_name,
+        sender_type=sender_type,  # type: ignore[arg-type]
+        body=body,
+        conv=conv,
+        recipients=recipients,
+        mentions=mentions,
+    )
+
+
+def _classify(
+    message: Message,
+    viewer_key: str,
+) -> list[tuple[str, str]]:
+    """Invoke phoenix's `classify_mention_segments` and return segments.
+
+    Returns a list of (kind, text) tuples where kind ∈
+    ``{"plain", "mention-self", "mention-other", "mention-legacy"}``.
+    """
+    return classify_mention_segments(
+        message.body,
+        mentions=message.mentions,
+        recipients=message.recipients,
+        name_to_key=_name_to_key(),
+        viewer_key=viewer_key,
+        sender_key=message.sender.key,
+    )
+
+
+def _kinds_for_token(
+    segments: list[tuple[str, str]], token: str
+) -> list[str]:
+    """Return the segment kinds whose text equals *token*.
+
+    Phoenix emits each `@<name>` token as its own segment, so this filter
+    cleanly extracts the chip-classification kind for any given mention.
+    """
+    return [kind for kind, value in segments if value == token]
+
+
+def _bubble_has_self_mention(
+    message: Message, viewer_key: str
+) -> bool:
+    """Construct a MessageBubble and report its `has_self_mention` flag.
+
+    Phoenix's MessageBubble computes `has_self_mention` in `_render_body`
+    and uses it to switch the Panel border to the amber-accent / box.HEAVY
+    style — the terminal equivalent of web's `.has-self-mention` 3px
+    amber border (per plan §11 Phase E "reverse-video left margin or a
+    `▎` glyph" — phoenix chose the border-accent route).
+    """
+    bubble = MessageBubble(
+        message,
+        viewer_key=viewer_key,
+        name_to_key=_name_to_key(),
+    )
+    _, has_self = bubble._render_body(message, is_whisper=bool(message.recipients))
+    return has_self
+
+
+def _bubble_panel(message: Message, viewer_key: str):
+    """Render a MessageBubble's Panel for box-style + border-color inspection."""
+    bubble = MessageBubble(
+        message,
+        viewer_key=viewer_key,
+        name_to_key=_name_to_key(),
+    )
+    return bubble.render()
+
+
+class TestRound15TuiMentionRenderParity:
+    """§10 cases 1-6, 11b TUI render parity tests.
+
+    Each test builds a Message in the §10 wire-format shape, invokes phoenix's
+    `classify_mention_segments`, and asserts segment kinds match the
+    self/other/legacy/whisper-gate contract.
+
+    Phoenix's contract (chat_view.py:145-263):
+        Returns a list of (kind, text) tuples where kind ∈
+        ``{"plain", "mention-self", "mention-other", "mention-legacy"}``.
+
+    Bubble-level self-accent: phoenix encodes the plan §11 Phase E
+    "reverse-video left margin OR `▎` glyph" requirement as a Panel
+    `box.HEAVY` + amber border. We verify this through ``MessageBubble``'s
+    ``_render_body`` ``has_self_mention`` flag and ``render()`` Panel
+    inspection.
+    """
+
+    # ------------------------------------------------------------------ #
+    # §10 case 1 — Broadcast, no mention/whisper
+    # ------------------------------------------------------------------ #
+    def test_tui_broadcast_no_mention_styling(self):
+        """Plain broadcast → all `plain` segments, bubble has no self-accent."""
+        msg = _build_message(body="hi", mentions=None, recipients=None)
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        # No body @-tokens → every segment is plain.
+        kinds = {kind for kind, _ in segments}
+        assert kinds == {"plain"}, (
+            f"plain broadcast must produce only plain segments, got {kinds!r}"
+        )
+
+        # Bubble must NOT register a self-mention (no border accent).
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is False
+
+    # ------------------------------------------------------------------ #
+    # §10 case 2 — Mention, viewer = mentioned (self)
+    # ------------------------------------------------------------------ #
+    def test_tui_mention_self_renders_loud(self):
+        """mentions=[ember], body `@ember`, viewer=ember → mention-self + accent."""
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="@ember check this",
+            mentions=[EMBER_KEY],
+            recipients=None,
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        # @ember token classified as mention-self.
+        ember_kinds = _kinds_for_token(segments, "@ember")
+        assert ember_kinds == ["mention-self"], (
+            f"viewer=ember + mentions=[ember] must classify `@ember` as "
+            f"mention-self. Got: {ember_kinds!r}"
+        )
+
+        # Bubble carries the self-mention border accent.
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is True
+
+        # Bubble panel uses HEAVY box + amber accent border (terminal
+        # equivalent of web's `.has-self-mention` 3px amber border).
+        from rich import box
+
+        panel = _bubble_panel(msg, viewer_key=EMBER_KEY)
+        assert panel.box is box.HEAVY, (
+            f"self-mention bubble must use box.HEAVY, got {panel.box!r}"
+        )
+        assert "fbbf24" in str(panel.border_style).lower(), (
+            f"self-mention bubble border must be amber accent, got "
+            f"{panel.border_style!r}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # §10 case 2 — Mention, viewer = bystander (other)
+    # ------------------------------------------------------------------ #
+    def test_tui_mention_other_renders_dim(self):
+        """Same message, viewer=sage → mention-other, no bubble accent."""
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="@ember check this",
+            mentions=[EMBER_KEY],
+            recipients=None,
+        )
+        segments = _classify(msg, viewer_key=SAGE_KEY)
+
+        ember_kinds = _kinds_for_token(segments, "@ember")
+        assert ember_kinds == ["mention-other"], (
+            f"viewer=sage (other) must classify `@ember` as mention-other. "
+            f"Got: {ember_kinds!r}"
+        )
+
+        # Bubble carries no self-accent for this viewer.
+        assert _bubble_has_self_mention(msg, viewer_key=SAGE_KEY) is False
+
+    # ------------------------------------------------------------------ #
+    # §10 case 4 — Whisper + mention overlap, viewer = listed
+    # ------------------------------------------------------------------ #
+    def test_tui_whisper_with_mention_renders_legacy(self):
+        """recipients=[ember] + mentions=[ember] → mention-legacy + whisper bubble.
+
+        Per §6.3 R2-C1: "Whisper bubble + legacy mention chip is the intended
+        appearance for whisper-with-recipient." Loud self/other styling is
+        mention-only.
+        """
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="[@ember] @ember check",
+            mentions=[EMBER_KEY],
+            recipients=[EMBER_KEY],
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        # The bracket prefix is stripped by the classifier; only the body-side
+        # `@ember` token survives. It must be classified as mention-legacy
+        # (whisper-gate).
+        ember_kinds = _kinds_for_token(segments, "@ember")
+        assert ember_kinds == ["mention-legacy"], (
+            f"whisper+mention overlap must classify body `@ember` as "
+            f"mention-legacy (whisper-gate). Got: {ember_kinds!r}"
+        )
+
+        # No mention-self segment exists anywhere — whisper-gate suppresses
+        # self/other classification entirely.
+        all_kinds = [kind for kind, _ in segments]
+        assert "mention-self" not in all_kinds, (
+            f"whisper-gate must suppress mention-self. Got: {all_kinds!r}"
+        )
+
+        # Bubble has no self-accent — that treatment is mention-only.
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is False
+
+        # Bubble renders with whisper styling — minimal box.
+        from rich import box
+
+        panel = _bubble_panel(msg, viewer_key=EMBER_KEY)
+        assert panel.box is box.MINIMAL, (
+            f"whisper bubble must use box.MINIMAL, got {panel.box!r}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # §10 case 5 — Multi-mention, viewer = ember (mixed self+other)
+    # ------------------------------------------------------------------ #
+    def test_tui_multi_mention_mixed_self_other(self):
+        """mentions=[ember, sage], viewer=ember → @ember=self, @sage=other."""
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="@ember and @sage",
+            mentions=[EMBER_KEY, SAGE_KEY],
+            recipients=None,
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        assert _kinds_for_token(segments, "@ember") == ["mention-self"]
+        assert _kinds_for_token(segments, "@sage") == ["mention-other"]
+
+        # Single self-mention triggers the bubble border accent.
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is True
+
+    # ------------------------------------------------------------------ #
+    # §10 case 6 — Multi-whisper, no mention field
+    # ------------------------------------------------------------------ #
+    def test_tui_multi_whisper_no_mention_styling(self):
+        """recipients=[ember, sage], mentions=None → all plain, whisper bubble."""
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="multi-recipient note",
+            mentions=None,
+            recipients=[EMBER_KEY, SAGE_KEY],
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        # No @-tokens in body, only plain segments.
+        kinds = {kind for kind, _ in segments}
+        assert kinds == {"plain"}, (
+            f"multi-whisper without body @-tokens must produce only plain "
+            f"segments, got {kinds!r}"
+        )
+
+        # No self-accent on the bubble.
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is False
+
+        # Whisper-bubble styling on the rendered Panel.
+        from rich import box
+
+        panel = _bubble_panel(msg, viewer_key=EMBER_KEY)
+        assert panel.box is box.MINIMAL, (
+            f"whisper bubble must use box.MINIMAL, got {panel.box!r}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # §10 case 11b — Sender in mentions, viewer is OTHER mentioned user
+    # ------------------------------------------------------------------ #
+    def test_tui_mention_sender_in_mentions_other_view(self):
+        """sender=phil, mentions=[phil, ember], viewer=ember.
+
+        Per §6.3 sender-self special case + R2-C1:
+          - viewer=ember sees `@ember` as mention-self (key ∈ mentions, key === viewer)
+          - viewer=ember sees `@phil` as mention-other (key ∈ mentions, key ≠ viewer
+            — the sender-self downgrade only fires when viewer === sender)
+          - bubble has self-accent (viewer is mentioned)
+        """
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="@phil @ember note",
+            mentions=[PHIL_KEY, EMBER_KEY],
+            recipients=None,
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        assert _kinds_for_token(segments, "@ember") == ["mention-self"], (
+            f"viewer=ember mentioned → @ember=mention-self. Got: "
+            f"{_kinds_for_token(segments, '@ember')!r}"
+        )
+        assert _kinds_for_token(segments, "@phil") == ["mention-other"], (
+            f"viewer=ember sees sender's name @phil as mention-other "
+            f"(sender-self downgrade applies to the SENDER's view only). "
+            f"Got: {_kinds_for_token(segments, '@phil')!r}"
+        )
+
+        # Bubble border accent fires (viewer is mentioned).
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is True
+
+
+class TestRound15TuiMentionDefensive:
+    """Defensive render tests beyond the §10 matrix.
+
+    These lock the legacy/sender-self edge cases that have repeatedly caused
+    surface drift on the web side — same risk applies to TUI parity.
+    """
+
+    def test_tui_legacy_message_no_mentions_field_renders_plain_at_name(self):
+        """Old message: mentions=None, body `@ember` → mention-legacy.
+
+        Backwards compat: messages predating the mentions/whisper split keep
+        their behavior. Body `@name` with no `mentions` field → legacy
+        rendering — NOT loud self/other classification, since loud styling
+        requires the wire `mentions` field per §6.3.
+        """
+        msg = _build_message(
+            sender_key=PHIL_KEY,
+            sender_name="phil",
+            sender_type="human",
+            body="hey @ember",
+            mentions=None,
+            recipients=None,
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        ember_kinds = _kinds_for_token(segments, "@ember")
+        assert ember_kinds == ["mention-legacy"], (
+            f"legacy `@ember` (no mentions field) must classify as "
+            f"mention-legacy. Got: {ember_kinds!r}"
+        )
+
+        # No bubble accent — that's mention-self only.
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is False
+
+    def test_tui_sender_self_mention_no_loud_render_on_own_message(self):
+        """sender=ember, mentions=[ember], viewer=ember → mention-legacy.
+
+        Per §6.3 sender-self special case (locked m3): "Don't loudly notify
+        yourself about a message you sent." `mention-self` segments downgrade
+        to mention-legacy on the sender's own bubble.
+        """
+        msg = _build_message(
+            sender_key=EMBER_KEY,
+            sender_name="ember",
+            sender_type="claude",
+            body="@ember note to self",
+            mentions=[EMBER_KEY],
+            recipients=None,
+        )
+        segments = _classify(msg, viewer_key=EMBER_KEY)
+
+        ember_kinds = _kinds_for_token(segments, "@ember")
+        assert ember_kinds == ["mention-legacy"], (
+            f"sender-self downgrade must classify own `@ember` as "
+            f"mention-legacy. Got: {ember_kinds!r}"
+        )
+
+        # No bubble accent — sender-self downgrade strips it.
+        assert _bubble_has_self_mention(msg, viewer_key=EMBER_KEY) is False

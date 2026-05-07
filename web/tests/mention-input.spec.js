@@ -308,14 +308,17 @@ describe('MessageInput @mention — send-time recipient resolution', () => {
     await fireEvent.click(getByTestId('send-button'));
     await tick();
     expect(store.sendMessage).toHaveBeenCalledTimes(1);
+    // Plan §11 Phase C: autocomplete-committed @-mentions populate the
+    // `mentions` wire field (broadcast highlight), NOT `recipients`
+    // (whisper). Whispers come from the explicit `/dm` slash command.
     expect(store.sendMessage).toHaveBeenCalledWith(
       '@claude-test hello',
       null,
-      ['claude-test-key'],
+      { mentions: ['claude-test-key'], recipients: null },
     );
   });
 
-  it('sends recipients=null when no tokens are committed', async () => {
+  it('sends mentions=null when no tokens are committed', async () => {
     const store = makeStore();
     const { getByTestId } = render(MessageInput, {
       props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
@@ -324,7 +327,11 @@ describe('MessageInput @mention — send-time recipient resolution', () => {
     await typeText(ta, 'hi everyone');
     await fireEvent.click(getByTestId('send-button'));
     await tick();
-    expect(store.sendMessage).toHaveBeenCalledWith('hi everyone', null, null);
+    expect(store.sendMessage).toHaveBeenCalledWith(
+      'hi everyone',
+      null,
+      { mentions: null, recipients: null },
+    );
   });
 });
 
