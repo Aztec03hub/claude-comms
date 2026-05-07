@@ -111,8 +111,8 @@
 - Scope: focused docs change (no code commits to summarize). Surface MCP-registration instructions from USAGE.md into README Quick Start.
 - Buckets: Changed 1 (docs-only)
 - Files written: README.md, CHANGELOG.md, .worklogs/agent-docs.md (this entry)
-- Commit: pending
-- Push: pending (origin main)
+- Commit: 7260705
+- Push: origin main -> ok (b26a0ee..7260705)
 - Notes:
   - Per ops-manual §5: existing Quick Start step 6 already mentioned `mcpServers` and a config snippet, so I expanded that step in place rather than adding a duplicate "Register the MCP server" step. The prior snippet was a hybrid stdio/HTTP form (`command`/`args` AND `url`) that dropped the trailing `/mcp` path -- replaced with the canonical `{type, url}` shape that matches the repo's shipped `.mcp.json` and what `claude mcp add ... -t http` writes.
   - Verified the shipped `.mcp.json` at the repo root: `{"type":"http","url":"http://127.0.0.1:9920/mcp"}` -- README Option A snippet matches verbatim. Verified USAGE.md uses the same shape.
