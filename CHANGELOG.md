@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Threaded Replies + Mention-Color Polish (2026-05-07)
+
+Headline change: end-to-end threaded replies across the server, MCP read + MQTT fanout, and web UI lanes, capped at depth-2 (a reply may target a top-level message but not another reply). Plus a small surgical mention-color polish that pulls `mention-other` out of grey and back into the ember family in both web themes and the TUI. Threading work shipped via three coordinated subagents (ember/phoenix/sage) against the `threaded-replies-plan` artifact (v1 -> v5 with adversarial review baked in).
+
+#### Added
+
+- **`Message` thread metadata** -- five optional Pydantic fields at `message.py:97-134`: `thread_root_id`, `thread_reply_count`, `thread_last_ts`, `thread_last_author`, `thread_participants`. Derived/read-side state (not user-supplied); populated by the broker dispatcher on reply ingest and rebuilt at JSONL replay time.
+- **`comms_send` `reply_to` kwarg** -- depth-2 thread send. Server validates parent existence, same-conversation, depth-2 (parent's own `reply_to` must be null), and non-system-parent. On reply ingest the dispatcher mutates the root dict to maintain the five `thread_*` fields and additionally publishes to `claude-comms/conv/{conv}/threads/{root_id}` (non-fatal on failure).
+- **`comms_thread_read` MCP tool (#22)** -- `comms_thread_read(key, conversation, root_id, count?, since?)` returns `{conversation, root, replies, count, has_more}`. `root` is always populated regardless of `since` so incremental fetches never lose context. `replies` is the flat depth-2 list of messages whose `reply_to == root_id`, visibility-filtered for `key`. Side-effect: advances a per-thread read cursor.
+- **`comms_read` `top_level_only` kwarg** -- when True, filters to thread roots + untyped top-level messages and decorates each retained root with at least one reply with a `thread_summary: {reply_count, last_ts, last_author}` field synthesized from the flat thread metadata. UI passes True for the channel feed.
+- **`comms_check` `thread_unread` map** -- each per-conv summary entry now also carries a `thread_unread: {root_id: count}` map for any threads with unread replies, computed against the per-thread read cursors. `mark_seen=True` advances both the channel-level read cursor AND every relevant per-thread cursor in lockstep to the latest visible reply.
+- **`MessageStore.find_by_id(conv_id, msg_id)` and `MessageStore.update_thread_metadata(...)`** -- lock-safe accessors on the in-memory store. `find_by_id` returns the live dict reference (the same object decorated with `thread_summary` at read time).
+- **`broker.py:_rebuild_thread_metadata(store)`** -- second-pass JSONL replay function wired into `replay_jsonl_logs` so daemon restart reconstructs every root's `thread_*` fields from the flat reply records.
+- **`ParticipantRegistry._thread_read_cursors`** keyspace plus `update_thread_cursor` / `get_thread_cursor` / `thread_cursors_for` / `advance_thread_cursors_to` methods. Cursors are keyed `(participant_key, conversation, root_id) -> ts`.
+- **Per-thread MQTT topic** -- replies fan out to `claude-comms/conv/{conv}/threads/{root_id}` in addition to the main `messages` topic, letting a thread-focused viewer subscribe just to the thread it cares about. Publish failure is logged but non-fatal.
+- **`web/src/lib/reply-parser.js`** -- pure `/reply <message_id> <body>` parser. Surface-shape UUID v4 validation (`8-4-4-4-12` lowercase hex with hyphens); the server is the authority on existence/depth-2/non-system-parent. Returns `{replyTo, body, error}`. Mirrors the `dm-parser.js` shape so the threading grammar stays orthogonal to the whisper grammar.
+- **`web/tests/reply-parser.spec.js`** -- 20 Vitest tests covering missing trigger, missing id, malformed id, empty body, leading-whitespace tolerance, tab-as-separator, body-with-internal-spaces.
+- **Web `mqtt-store.svelte.js` thread state** -- `threadSeenCursors` (`$state` map of `root_id -> latest acknowledged reply ts`), `markThreadSeen(rootId)` method, `activeChannelReplies` `$derived` (filters `activeMessages` to depth-2 replies in the active channel), persistence to `localStorage` under `claude-comms-thread-seen-cursors`. The existing `activeMessages` `$derived` is now top-level-only and splices `thread_unread_count` onto each root from the seen-cursor map.
+- **Web `MessageBubble` thread chip** -- driven by `thread_reply_count` (singular/plural-aware), optional "last by @author" line, `class:has-unread` accent when `thread_unread_count > 0`. Click/Enter/Space opens the ThreadPanel.
+- **Web `MessageInput` `/reply` dispatch** -- `parseReply` import + branch alongside the existing `/dm` dispatch, identical composer-error UX.
+- **Web `App.svelte` thread wiring** -- `handleOpenThread` calls `store.markThreadSeen(message.id)`; ThreadPanel `messages` prop reads `store.activeChannelReplies`.
+- **`tests/test_threaded_replies.py`** (16 tests) -- server-side: `Message.thread_*` round-trip, `find_by_id` + `update_thread_metadata`, `_rebuild_thread_metadata` replay, `tool_comms_send` `reply_to` validation matrix.
+- **`tests/test_threaded_replies_read.py`** (23 tests) -- read-side: `tool_comms_thread_read`, `top_level_only` + `thread_summary`, `thread_unread` map, lockstep `mark_seen` per-thread cursor advance, per-thread MQTT fanout (incl. non-fatal failure path).
+- **`tests/test_message.py::test_json_keys`** updated to expect the five new `thread_*` keys in the `model_dump_json()` output.
+
+#### Changed
+
+- **`MessageBubble.svelte` thread chip** -- upgraded from the dead `thread_count` placeholder to the live `thread_reply_count` (singular/plural), with an optional "last by @author" line and a `.has-unread` accent. Driven by the broker-dispatcher / replay-rebuilt `thread_*` fields rather than client-side counting.
+- **`mqtt-store.svelte.js: activeMessages`** -- now `$derived.by` filtering to top-level messages (`reply_to === null`) and splicing `thread_unread_count` onto each root from the per-thread seen-cursor map. The depth-2 reply feed lives in the new `activeChannelReplies` `$derived`. Non-breaking for top-level rendering; ThreadPanel switches to the new derivation.
+- **Mention-other color tokens** -- both dark and light theme `--mention-other-bg` / `--mention-other-fg` moved out of grey and into the ember family. Dark: `rgba(245,158,11,0.12)` + `var(--ember-400)` (was `rgba(168,160,152,0.14)` + `var(--text-secondary)`). Light: `rgba(217,119,6,0.10)` + `var(--ember-500)`. The TUI `MENTION_OTHER_STYLE` in `chat_view.py` flipped from `"#8a8a8a"` to `"#f59e0b"` for parity. All three mention tiers (`self` loud, `other` softer, legacy chip) now share the ember palette and differentiate via weight + alpha rather than hue.
+
+#### Behavioral notes
+
+- **Threading is intentionally flat (depth-2).** A reply may target a top-level message; a reply may not target another reply. The server enforces this on every send, returning a validation error.
+- **Thread metadata is derived state, not user-supplied.** Wire-format messages still ship with `thread_*` fields as `null` from the client; the server populates them on the root dict during dispatch / replay.
+- **Per-thread MQTT publish failure is non-fatal.** The primary publish to the conversation `messages` topic is the source of truth; the per-thread topic is a fanout convenience.
+- **TUI threading is not yet exposed.** The MCP + web lanes shipped this batch. Replies arrive on the TUI's channel feed as ordinary messages; a TUI `/reply` parser + ThreadPanel is a follow-up.
+
+#### Workflow
+
+- **Three coordinated implementation subagents** -- ember (server lane), phoenix (MCP read + MQTT lane), sage (web UI lane) -- shipped against a single `threaded-replies-plan` artifact (v1 -> v5 with adversarial review baked in). The plan structure (per-lane scope + locked grammar in §6 + Pydantic schemas in §4.1) let the three lanes integrate cleanly without follow-up correction passes.
+
 ### Mentions vs Whispers, Reactions, Status Indicators, Rich Text (2026-05-06)
 
 Headline change: a clean break separating broadcast highlights (`mentions`) from private whispers (`recipients`) on every message. Plus reactions, working/status indicators, backtick rendering with markdown emphasis, presence resurrection for swept MCP connections, and a server-authoritative stale-offline-participant prune. Spec lives at `plans/mentions-vs-whisper-separation.md` v6 (4 adversarial review rounds, converged at 0 critical / 0 major).
