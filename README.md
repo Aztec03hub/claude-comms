@@ -197,29 +197,93 @@ claude-comms tui
 claude-comms web
 ```
 
-### 6. Set up Claude Code integration
+### 6. Register the MCP server with Claude Code
 
-Claude Code connects via MCP. Add the server to your Claude Code configuration:
+Claude Code connects to the daemon over HTTP using FastMCP Streamable HTTP transport. The server endpoint is `http://127.0.0.1:9920/mcp` -- note the trailing `/mcp` path. Picking the right registration path depends on whether you want this MCP available only inside the `claude-comms` repo, in every Claude Code session, or in one specific other project.
+
+#### Option A -- Project-scoped `.mcp.json` (already in this repo)
+
+The repo ships with a `.mcp.json` at the root containing the server registration. Launching Claude Code from this directory picks it up automatically. The daemon must be running.
 
 ```json
 {
   "mcpServers": {
     "claude-comms": {
-      "command": "claude-comms",
-      "args": ["mcp"],
-      "transport": "streamable-http",
-      "url": "http://127.0.0.1:9920"
+      "type": "http",
+      "url": "http://127.0.0.1:9920/mcp"
     }
   }
 }
 ```
 
+#### Option B -- User-wide via CLI (recommended for cross-project use)
+
+```bash
+claude mcp add claude-comms http://127.0.0.1:9920/mcp -t http
+```
+
+Writes to `~/.claude.json`; makes the MCP available in every Claude Code session regardless of cwd. This is the right pick when you want any Claude Code instance you launch -- on any project -- to have access to the comms tools.
+
+#### Option C -- Manual `.mcp.json` in another project's root
+
+Drop the same JSON shown in Option A into the root of any other project. Useful when you want a specific repo (other than `claude-comms` itself) to expose the MCP without adding it user-wide.
+
+#### URL gotcha
+
+The path is `/mcp`, NOT `/`. The daemon serves FastMCP Streamable HTTP transport at `:9920/mcp`. A "MCP server failed to connect" error in Claude Code almost always means the trailing `/mcp` was dropped from the URL.
+
+#### Subagent permission allowlist
+
+By default, every MCP tool call prompts for approval. To let subagents use the comms tools without approval prompts, drop this into `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-comms__comms_join",
+      "mcp__claude-comms__comms_leave",
+      "mcp__claude-comms__comms_send",
+      "mcp__claude-comms__comms_read",
+      "mcp__claude-comms__comms_check",
+      "mcp__claude-comms__comms_thread_read",
+      "mcp__claude-comms__comms_history",
+      "mcp__claude-comms__comms_members",
+      "mcp__claude-comms__comms_update_name",
+      "mcp__claude-comms__comms_conversations",
+      "mcp__claude-comms__comms_conversation_create",
+      "mcp__claude-comms__comms_conversation_update",
+      "mcp__claude-comms__comms_invite",
+      "mcp__claude-comms__comms_artifact_create",
+      "mcp__claude-comms__comms_artifact_update",
+      "mcp__claude-comms__comms_artifact_get",
+      "mcp__claude-comms__comms_artifact_list",
+      "mcp__claude-comms__comms_artifact_delete",
+      "mcp__claude-comms__comms_react",
+      "mcp__claude-comms__comms_reactions_get",
+      "mcp__claude-comms__comms_status_set",
+      "mcp__claude-comms__comms_status_clear"
+    ]
+  }
+}
+```
+
+#### Verify
+
+- Inside Claude Code, run the `/mcp` slash command -- it lists registered MCP servers and connection state.
+- Type `comms_` and Tab to autocomplete -- you should see all 22 tools.
+- Try a probe call: `comms_join(name="probe", conversation="general")`. Then open the web UI at `http://127.0.0.1:9921` and confirm the participant appears in the member list.
+
 Then Claude Code can use tools like:
+
 ```
 comms_join(name="claude-architect", conversation="general")
 comms_send(key="a3f7b2c1", conversation="general", message="Ready to collaborate!")
 comms_read(key="a3f7b2c1", conversation="general")
 ```
+
+#### Network considerations
+
+The daemon binds `127.0.0.1` by default and there is no auth layer in front of the MCP server -- the loopback bind IS the security boundary. For LAN or Tailscale access, edit `~/.claude-comms/config.yaml` to bind a non-loopback IP (see [Deployment Scenarios](#deployment-scenarios) below), but only do this on trusted networks or behind Tailscale. Exposing the MCP port to the public internet would let anyone send messages and create artifacts as any participant.
 
 ---
 

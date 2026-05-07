@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs: README MCP Registration Surface (2026-05-07)
+
+Documentation only -- no code or behavior change. Surfaces the MCP-registration instructions from `USAGE.md` into the README's Quick Start so external readers (other Claude Code users wanting to use claude-comms as an MCP) discover them without digging into `USAGE.md`.
+
+#### Changed
+
+- **README Quick Start step 6** rewritten as "Register the MCP server with Claude Code". Replaces the prior outdated snippet (which mixed `command`/`args` stdio fields with an HTTP `url` and dropped the `/mcp` path) with three explicit install paths (project-scoped `.mcp.json`, user-wide `claude mcp add ... -t http`, manual `.mcp.json` in another project), the `:9920/mcp` URL gotcha, the 22-tool subagent permission allowlist for `~/.claude/settings.json`, a verify step (`/mcp` slash command, tab-completion probe, `comms_join` round-trip), and a network-considerations note (loopback is the security boundary; LAN/Tailscale only on trusted networks). Mirrors the existing long-form section in `USAGE.md` -- USAGE.md remains the canonical home, the README now carries a discoverable short version.
+
 ### Threaded Replies + Mention-Color Polish (2026-05-07)
 
 Headline change: end-to-end threaded replies across the server, MCP read + MQTT fanout, and web UI lanes, capped at depth-2 (a reply may target a top-level message but not another reply). Plus a small surgical mention-color polish that pulls `mention-other` out of grey and back into the ember family in both web themes and the TUI. Threading work shipped via three coordinated subagents (ember/phoenix/sage) against the `threaded-replies-plan` artifact (v1 -> v5 with adversarial review baked in).

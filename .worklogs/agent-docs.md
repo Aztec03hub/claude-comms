@@ -105,3 +105,21 @@
   - Default branch: main; same git symbolic-ref note as the prior run (origin/HEAD ref not set up locally). Pushing to main directly.
   - Working-tree state: 21 modified source files + 12 untracked test/component/lib files. None of those are staged in this docs commit.
 
+## 2026-05-07T17:50:00Z
+
+- Mode: commit_and_push
+- Scope: focused docs change (no code commits to summarize). Surface MCP-registration instructions from USAGE.md into README Quick Start.
+- Buckets: Changed 1 (docs-only)
+- Files written: README.md, CHANGELOG.md, .worklogs/agent-docs.md (this entry)
+- Commit: pending
+- Push: pending (origin main)
+- Notes:
+  - Per ops-manual §5: existing Quick Start step 6 already mentioned `mcpServers` and a config snippet, so I expanded that step in place rather than adding a duplicate "Register the MCP server" step. The prior snippet was a hybrid stdio/HTTP form (`command`/`args` AND `url`) that dropped the trailing `/mcp` path -- replaced with the canonical `{type, url}` shape that matches the repo's shipped `.mcp.json` and what `claude mcp add ... -t http` writes.
+  - Verified the shipped `.mcp.json` at the repo root: `{"type":"http","url":"http://127.0.0.1:9920/mcp"}` -- README Option A snippet matches verbatim. Verified USAGE.md uses the same shape.
+  - Subagent allowlist: USAGE.md only lists 17 tools (pre-mention/whisper/reactions/status/threads). README now lists all 22 current tools (matches the count claimed in README architecture diagram + features). Tool list is grouped (presence -> messaging -> threads -> conversations -> artifacts -> reactions -> status), matching how the existing CHANGELOG / README group them.
+  - URL gotcha + Verify + Network-considerations subsections all added per the prompt. Network considerations cross-references the existing "Deployment Scenarios" section.
+  - CHANGELOG: documentation-of-existing-feature, so no Added/Fixed bullets. Added a small dated subsection "Docs: README MCP Registration Surface (2026-05-07)" at the top of [Unreleased] under Changed, documenting the README delta and explicitly noting USAGE.md is unchanged (canonical long-form home).
+  - USAGE.md left intact per the prompt -- the short README version is additive, not a replacement.
+  - Default branch: main. origin/HEAD ref still not set up locally (same note as prior runs); pushing to main directly.
+  - Discovered drift: the prior step-6 snippet was outright incorrect for the current daemon (mixed transport shape + missing `/mcp` path). This docs run also functions as a correctness fix for that snippet, not just an additive surfacing.
+
