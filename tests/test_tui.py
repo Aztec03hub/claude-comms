@@ -1742,7 +1742,6 @@ class TestRound14SwitchConvErrors:
 from claude_comms.message import Message  # noqa: E402  (deferred import for clarity)
 from claude_comms.tui.chat_view import (  # noqa: E402
     classify_mention_segments,
-    MessageBubble,
 )
 
 # Stable 8-hex keys for the canonical viewers used across §10 cases.
@@ -1809,9 +1808,7 @@ def _classify(
     )
 
 
-def _kinds_for_token(
-    segments: list[tuple[str, str]], token: str
-) -> list[str]:
+def _kinds_for_token(segments: list[tuple[str, str]], token: str) -> list[str]:
     """Return the segment kinds whose text equals *token*.
 
     Phoenix emits each `@<name>` token as its own segment, so this filter
@@ -1820,9 +1817,7 @@ def _kinds_for_token(
     return [kind for kind, value in segments if value == token]
 
 
-def _bubble_has_self_mention(
-    message: Message, viewer_key: str
-) -> bool:
+def _bubble_has_self_mention(message: Message, viewer_key: str) -> bool:
     """Construct a MessageBubble and report its `has_self_mention` flag.
 
     Phoenix's MessageBubble computes `has_self_mention` in `_render_body`

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -493,7 +490,10 @@ class TestToolCommsConversationCreate:
             )
             assert result.get("error") is True
             # May fail as invalid conv ID or as reserved name depending on validation order
-            assert "reserved" in result["message"].lower() or "invalid" in result["message"].lower()
+            assert (
+                "reserved" in result["message"].lower()
+                or "invalid" in result["message"].lower()
+            )
 
 
 # ===================================================================
@@ -677,7 +677,9 @@ class TestToolCommsInvite:
         registry = _registry_with_humans()
         spy = PublishSpy()
         key_alice = _register(registry, name="alice")
-        key_bob = _register(registry, name="bob")
+        # Side-effect-only registration; the test rebuilds `registry_clean`
+        # below and uses that for the actual invite call.
+        _register(registry, name="bob")
 
         # alice creates a conversation
         await tool_comms_conversation_create(
@@ -694,7 +696,9 @@ class TestToolCommsInvite:
             "private", topic="", created_by="alice", data_dir=tmp_path
         )
         # Manually join alice to private
-        registry_clean.join("alice", "private", key=p_alice.key, participant_type="claude")
+        registry_clean.join(
+            "alice", "private", key=p_alice.key, participant_type="claude"
+        )
 
         result = await tool_comms_invite(
             registry_clean,

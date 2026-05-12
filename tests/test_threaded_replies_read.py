@@ -62,9 +62,9 @@ class TestThreadCursorMethods:
         r = ParticipantRegistry()
         r.update_thread_cursor("aaaa1111", "general", "root", "2026-01-01T00:00:00Z")
         r.update_thread_cursor("bbbb2222", "general", "root", "2026-02-02T00:00:00Z")
-        assert r.get_thread_cursor("aaaa1111", "general", "root") != r.get_thread_cursor(
-            "bbbb2222", "general", "root"
-        )
+        assert r.get_thread_cursor(
+            "aaaa1111", "general", "root"
+        ) != r.get_thread_cursor("bbbb2222", "general", "root")
 
     def test_thread_cursors_for_returns_only_users_threads_in_conv(self) -> None:
         r = ParticipantRegistry()
@@ -337,9 +337,7 @@ class TestCommsCheckThreadUnread:
         self, stocked: tuple[ParticipantRegistry, MessageStore, str]
     ) -> None:
         registry, store, key = stocked
-        result = tool_comms_check(
-            registry, store, key=key, conversation="general"
-        )
+        result = tool_comms_check(registry, store, key=key, conversation="general")
         # Two replies, no per-thread cursor → both unread.
         entry = result["conversations"][0]
         assert entry["thread_unread"] == {"root-1": 2}
@@ -349,12 +347,8 @@ class TestCommsCheckThreadUnread:
     ) -> None:
         registry, store, key = stocked
         # Set the per-thread cursor past reply-1 → only reply-2 unread.
-        registry.update_thread_cursor(
-            key, "general", "root-1", "2026-05-07T10:01:30Z"
-        )
-        result = tool_comms_check(
-            registry, store, key=key, conversation="general"
-        )
+        registry.update_thread_cursor(key, "general", "root-1", "2026-05-07T10:01:30Z")
+        result = tool_comms_check(registry, store, key=key, conversation="general")
         entry = result["conversations"][0]
         assert entry["thread_unread"] == {"root-1": 1}
 
@@ -363,14 +357,10 @@ class TestCommsCheckThreadUnread:
     ) -> None:
         registry, store, key = stocked
         # Cursor past all replies.
-        registry.update_thread_cursor(
-            key, "general", "root-1", "2026-05-07T11:00:00Z"
-        )
+        registry.update_thread_cursor(key, "general", "root-1", "2026-05-07T11:00:00Z")
         # Also ack the per-conv cursor so total_unread drops to 0.
         registry.update_cursor(key, "general", "2026-05-07T11:00:00Z")
-        result = tool_comms_check(
-            registry, store, key=key, conversation="general"
-        )
+        result = tool_comms_check(registry, store, key=key, conversation="general")
         # No unread → conv may not appear at all, or appear with no
         # thread_unread key.
         assert result["total_unread"] == 0
@@ -393,9 +383,7 @@ class TestCommsCheckThreadUnread:
             == "2026-05-07T10:02:00Z"
         )
         # Subsequent check should report zero thread_unread.
-        result2 = tool_comms_check(
-            registry, store, key=key, conversation="general"
-        )
+        result2 = tool_comms_check(registry, store, key=key, conversation="general")
         for e in result2["conversations"]:
             assert e.get("thread_unread", {}) == {}
 

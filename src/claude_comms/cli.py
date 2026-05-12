@@ -120,9 +120,7 @@ def _resolve_cors_origin(request: Any, allow_list: list[str]) -> str | None:
     return origin if origin in allow_list else None
 
 
-def _resolve_cors_origin_legacy(
-    request: Any, allow_list: list[str]
-) -> str | None:
+def _resolve_cors_origin_legacy(request: Any, allow_list: list[str]) -> str | None:
     """Legacy substring-match CORS check, retained only for the rollback
     runbook escape hatch ``web.strict_cors: false``. Emits a deprecation
     warning every time it's invoked so operators notice they're on the
@@ -192,9 +190,9 @@ def build_csp(config: dict) -> str:
     elif api_base:
         # Replace only the scheme prefix, not any 'http' substring elsewhere.
         if api_origin.startswith("https://"):
-            ws_origin = "wss://" + api_origin[len("https://"):] + "/mqtt"
+            ws_origin = "wss://" + api_origin[len("https://") :] + "/mqtt"
         elif api_origin.startswith("http://"):
-            ws_origin = "ws://" + api_origin[len("http://"):] + "/mqtt"
+            ws_origin = "ws://" + api_origin[len("http://") :] + "/mqtt"
         else:
             ws_origin = f"ws://127.0.0.1:{ws_port}"
     else:
@@ -276,9 +274,7 @@ def build_capabilities_route(config: dict):
         payload = {
             "writable": writable,
             "features": {
-                "markdown_render": bool(
-                    web_cfg.get("markdown_render_enabled", True)
-                ),
+                "markdown_render": bool(web_cfg.get("markdown_render_enabled", True)),
                 "diff_view": True,
                 "legacy_codeblock": bool(
                     web_cfg.get("use_legacy_codeblock_highlighter", False)
@@ -304,9 +300,7 @@ def build_web_token_route():
 
     async def _handler(request):  # type: ignore[no-untyped-def]
         if not _is_loopback(request):
-            return JSONResponse(
-                {"error": "loopback only"}, status_code=403
-            )
+            return JSONResponse({"error": "loopback only"}, status_code=403)
         token = get_web_token()
         if token is None:
             return JSONResponse(
@@ -352,9 +346,7 @@ def build_artifact_post_route(
     async def _handler(request: Request) -> JSONResponse:
         # Defense 1: loopback only. X-Forwarded-For is NEVER consulted.
         if not _is_loopback(request):
-            return JSONResponse(
-                {"error": "loopback only"}, status_code=403
-            )
+            return JSONResponse({"error": "loopback only"}, status_code=403)
 
         # Defense 2: bearer token.
         auth_header = request.headers.get("authorization", "")
@@ -367,17 +359,13 @@ def build_artifact_post_route(
             or supplied is None
             or not secrets.compare_digest(supplied, expected_token)
         ):
-            return JSONResponse(
-                {"error": _SESSION_EXPIRED_MSG}, status_code=401
-            )
+            return JSONResponse({"error": _SESSION_EXPIRED_MSG}, status_code=401)
 
         # Parse + validate path params.
         conversation = request.path_params.get("conversation", "")
         name = request.path_params.get("name", "")
         if not validate_conv_id(conversation):
-            return JSONResponse(
-                {"error": "Invalid conversation ID"}, status_code=400
-            )
+            return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
 
         try:
             body = await request.json()
@@ -834,7 +822,9 @@ def start(
 
             def _cors(request: Request) -> dict[str, str]:
                 return _cors_headers(
-                    request, cors_origins, strict=_strict_cors,
+                    request,
+                    cors_origins,
+                    strict=_strict_cors,
                 )
 
             async def _api_messages(request: Request) -> JSONResponse:
@@ -907,10 +897,16 @@ def start(
                 """GET /api/artifacts/{conversation} — list artifacts."""
                 conversation = request.path_params["conversation"]
                 if not validate_conv_id(conversation):
-                    return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
+                    return JSONResponse(
+                        {"error": "Invalid conversation ID"}, status_code=400
+                    )
                 artifacts = get_conversation_artifacts(conversation)
                 return JSONResponse(
-                    {"conversation": conversation, "artifacts": artifacts, "count": len(artifacts)},
+                    {
+                        "conversation": conversation,
+                        "artifacts": artifacts,
+                        "count": len(artifacts),
+                    },
                     headers=_cors(request),
                 )
 
@@ -919,12 +915,16 @@ def start(
                 conversation = request.path_params["conversation"]
                 name = request.path_params["name"]
                 if not validate_conv_id(conversation):
-                    return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
+                    return JSONResponse(
+                        {"error": "Invalid conversation ID"}, status_code=400
+                    )
                 version_param = request.query_params.get("version")
                 version = int(version_param) if version_param else None
                 artifact = get_artifact(conversation, name, version=version)
                 if artifact is None:
-                    return JSONResponse({"error": "Artifact not found"}, status_code=404)
+                    return JSONResponse(
+                        {"error": "Artifact not found"}, status_code=404
+                    )
                 return JSONResponse(
                     artifact,
                     headers=_cors(request),
@@ -946,14 +946,20 @@ def start(
 
             async def _api_conversations(request: Request) -> JSONResponse:
                 """GET /api/conversations?all=true — list conversations."""
-                all_param = request.query_params.get("all", "false").lower() in ("true", "1", "yes")
+                all_param = request.query_params.get("all", "false").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
                 # Get identity key for "joined" status
                 identity = config.get("identity", {})
                 identity_key = identity.get("key", "")
                 if all_param:
                     conversations = get_all_conversations(key=identity_key)
                 else:
-                    conversations = get_all_conversations(key=identity_key)  # REST always returns all for now
+                    conversations = get_all_conversations(
+                        key=identity_key
+                    )  # REST always returns all for now
                 return JSONResponse(
                     {"conversations": conversations, "count": len(conversations)},
                     headers=_cors(request),
@@ -999,22 +1005,47 @@ def start(
                 ),
             )
             starlette_app.routes.insert(
-                6, Route("/api/artifacts/{conversation}", _api_artifacts_list, methods=["GET"])
+                6,
+                Route(
+                    "/api/artifacts/{conversation}",
+                    _api_artifacts_list,
+                    methods=["GET"],
+                ),
             )
             starlette_app.routes.insert(
-                7, Route("/api/artifacts/{conversation}", _api_artifacts_options, methods=["OPTIONS"])
+                7,
+                Route(
+                    "/api/artifacts/{conversation}",
+                    _api_artifacts_options,
+                    methods=["OPTIONS"],
+                ),
             )
             starlette_app.routes.insert(
-                8, Route("/api/artifacts/{conversation}/{name}", _api_artifacts_get, methods=["GET"])
+                8,
+                Route(
+                    "/api/artifacts/{conversation}/{name}",
+                    _api_artifacts_get,
+                    methods=["GET"],
+                ),
             )
             starlette_app.routes.insert(
-                9, Route("/api/artifacts/{conversation}/{name}", _api_artifacts_name_options, methods=["OPTIONS"])
+                9,
+                Route(
+                    "/api/artifacts/{conversation}/{name}",
+                    _api_artifacts_name_options,
+                    methods=["OPTIONS"],
+                ),
             )
             starlette_app.routes.insert(
                 10, Route("/api/conversations", _api_conversations, methods=["GET"])
             )
             starlette_app.routes.insert(
-                11, Route("/api/conversations", _api_conversations_options, methods=["OPTIONS"])
+                11,
+                Route(
+                    "/api/conversations",
+                    _api_conversations_options,
+                    methods=["OPTIONS"],
+                ),
             )
 
             # ── NEW: capabilities + bearer token + conditional POST edit ──
@@ -1120,7 +1151,9 @@ def start(
             if _mcp_mod._presence is not None:
                 _mcp_mod._presence.set_publish_fn(_do_publish)
                 _mcp_mod._presence.start()
-                console.print("  [green]Presence manager[/green] started (TTL cleanup active)")
+                console.print(
+                    "  [green]Presence manager[/green] started (TTL cleanup active)"
+                )
 
             console.print(
                 f"  [green]MCP server[/green] ready on http://{mcp_host}:{mcp_port}"
@@ -1176,7 +1209,9 @@ def start(
                                     status_code=response.status_code,
                                     headers=dict(response.headers),
                                 )
-                            rewritten = inject_api_base_meta(html, _meta_api_base).encode("utf-8")
+                            rewritten = inject_api_base_meta(
+                                html, _meta_api_base
+                            ).encode("utf-8")
                             new_headers = dict(response.headers)
                             new_headers["content-length"] = str(len(rewritten))
                             return Response(
@@ -1235,7 +1270,10 @@ def start(
 
             mcp_uvi_server.should_exit = True
             # Flush last_activity timestamps before shutting down
-            if _mcp_mod._activity_tracker is not None and _mcp_mod._conv_data_dir is not None:
+            if (
+                _mcp_mod._activity_tracker is not None
+                and _mcp_mod._conv_data_dir is not None
+            ):
                 _mcp_mod._activity_tracker.flush_all(_mcp_mod._conv_data_dir)
             # Flush offline presence for all active connections, then stop the sweep.
             # Done BEFORE cancelling the MQTT subscriber so offline messages are observed.

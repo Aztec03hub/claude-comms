@@ -38,7 +38,9 @@ from claude_comms.mcp_tools import (
 from conftest import PublishSpy
 
 
-async def _fresh_registry_with_member(conv: str = "general") -> tuple[ParticipantRegistry, str]:
+async def _fresh_registry_with_member(
+    conv: str = "general",
+) -> tuple[ParticipantRegistry, str]:
     registry = ParticipantRegistry()
     result = await tool_comms_join(registry, name="poster", conversation=conv)
     return registry, result["key"]
@@ -80,7 +82,6 @@ def _mount(
     ``testclient``-style hosts; we use ``raw_path`` hooks through a tiny
     ASGI wrapper when needed).
     """
-    from starlette.routing import Route
 
     spy = PublishSpy()
 
@@ -91,7 +92,9 @@ def _mount(
         data_dir_provider=lambda: data_dir,
     )
     if post_route is None:
-        raise RuntimeError("POST route was not built — allow_remote_edits/proxy mode mismatch")
+        raise RuntimeError(
+            "POST route was not built — allow_remote_edits/proxy mode mismatch"
+        )
 
     app = Starlette(routes=[post_route, build_artifact_post_options_route(config)])
 
@@ -100,7 +103,9 @@ def _mount(
     async def _asgi_wrap(scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] == "http":
             scope = dict(scope)
-            scope["client"] = ("127.0.0.1", 54321) if loopback else ("203.0.113.5", 54321)
+            scope["client"] = (
+                ("127.0.0.1", 54321) if loopback else ("203.0.113.5", 54321)
+            )
         await app(scope, receive, send)
 
     return TestClient(_asgi_wrap)
@@ -114,7 +119,12 @@ def _mount(
 @pytest.mark.asyncio
 async def test_post_happy_path(tmp_path: Path) -> None:
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -138,7 +148,12 @@ async def test_post_happy_path(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_post_401_on_missing_token(tmp_path: Path) -> None:
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -160,7 +175,12 @@ async def test_post_401_on_missing_token(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_post_401_on_wrong_token(tmp_path: Path) -> None:
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -182,7 +202,12 @@ async def test_post_401_on_wrong_token(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_post_403_when_key_not_registered(tmp_path: Path) -> None:
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -205,7 +230,12 @@ async def test_post_403_when_key_not_registered(tmp_path: Path) -> None:
 async def test_post_403_when_key_not_member_of_conv(tmp_path: Path) -> None:
     """Valid token + registered key, but key did not join the target conversation."""
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -213,7 +243,9 @@ async def test_post_403_when_key_not_member_of_conv(tmp_path: Path) -> None:
     await _seed_artifact(registry, key, tmp_path, conv="general")
 
     # Register a second participant only to "other" channel
-    other_result = await tool_comms_join(registry, name="intruder", conversation="other")
+    other_result = await tool_comms_join(
+        registry, name="intruder", conversation="other"
+    )
     other_key = other_result["key"]
 
     set_web_token("tok")
@@ -236,7 +268,12 @@ async def test_post_403_when_key_not_member_of_conv(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_post_403_when_client_is_remote(tmp_path: Path) -> None:
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -259,7 +296,12 @@ async def test_post_403_when_client_is_remote(tmp_path: Path) -> None:
 async def test_post_xff_spoof_does_not_bypass_loopback(tmp_path: Path) -> None:
     """Spoofed X-Forwarded-For MUST NOT bypass the loopback check."""
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -290,7 +332,12 @@ async def test_post_xff_spoof_does_not_bypass_loopback(tmp_path: Path) -> None:
 
 def test_route_not_built_when_allow_remote_edits_false() -> None:
     config = {
-        "web": {"allow_remote_edits": False, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": False,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -324,10 +371,17 @@ def test_route_not_built_when_api_base_set() -> None:
     assert route is None
 
 
-def test_route_not_built_when_reverse_proxy_env_set(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_not_built_when_reverse_proxy_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("REVERSE_PROXY", "1")
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }
@@ -345,7 +399,12 @@ def test_route_built_when_allow_remote_edits_true_and_no_proxy(
 ) -> None:
     monkeypatch.delenv("REVERSE_PROXY", raising=False)
     config = {
-        "web": {"allow_remote_edits": True, "strict_cors": True, "port": 9921, "api_base": None},
+        "web": {
+            "allow_remote_edits": True,
+            "strict_cors": True,
+            "port": 9921,
+            "api_base": None,
+        },
         "mcp": {"port": 9920},
         "broker": {"ws_port": 9001},
     }

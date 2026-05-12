@@ -112,7 +112,9 @@ async def test_version_counter_after_pruning(tmp_path: Path) -> None:
         data_dir=tmp_path,
     )
     assert stale.get("error") is True
-    assert "conflict" in stale["message"].lower() or "version" in stale["message"].lower()
+    assert (
+        "conflict" in stale["message"].lower() or "version" in stale["message"].lower()
+    )
 
 
 @pytest.mark.asyncio

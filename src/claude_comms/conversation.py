@@ -15,11 +15,10 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
-from claude_comms.message import now_iso, validate_conv_id
+from claude_comms.message import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,9 @@ class ConversationMeta(BaseModel):
     )
     created_at: str = Field(..., description="ISO 8601 creation timestamp")
     last_activity: str = Field(..., description="ISO 8601 timestamp of last activity")
-    archived: bool = Field(default=False, description="Whether the conversation is archived")
+    archived: bool = Field(
+        default=False, description="Whether the conversation is archived"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +107,9 @@ def list_all_conversations(data_dir: Path) -> list[ConversationMeta]:
             meta = ConversationMeta.model_validate_json(raw)
             results.append(meta)
         except (json.JSONDecodeError, ValueError) as exc:
-            logger.warning("Skipping malformed conversation meta %s: %s", meta_file, exc)
+            logger.warning(
+                "Skipping malformed conversation meta %s: %s", meta_file, exc
+            )
             continue
 
     return results
@@ -325,9 +328,7 @@ class LastActivityTracker:
         for conv_name, ts in pending.items():
             meta = load_meta(conv_name, data_dir)
             if meta is None:
-                logger.debug(
-                    "Skipping flush for %r — no meta.json on disk", conv_name
-                )
+                logger.debug("Skipping flush for %r — no meta.json on disk", conv_name)
                 continue
             meta.last_activity = ts
             try:

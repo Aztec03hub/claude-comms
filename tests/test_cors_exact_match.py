@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
 
 from claude_comms.cli import (
     _cors_headers,

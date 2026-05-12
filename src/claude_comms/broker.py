@@ -133,9 +133,7 @@ class MessageStore:
             return msgs[-limit:]
         return msgs
 
-    def find_by_id(
-        self, conv_id: str, message_id: str
-    ) -> dict[str, Any] | None:
+    def find_by_id(self, conv_id: str, message_id: str) -> dict[str, Any] | None:
         """Return the in-store message dict for *message_id* in *conv_id*.
 
         Returns the LIVE dict (not a copy) — callers must hold no expectation
@@ -352,7 +350,7 @@ def _rebuild_thread_metadata(store: "MessageStore") -> None:
             sender_key = sender_block.get("key")
             if sender_key:
                 add_keys.append(sender_key)
-            for mk in (m.get("mentions") or []):
+            for mk in m.get("mentions") or []:
                 if mk and mk not in add_keys:
                     add_keys.append(mk)
             new_count = (root.get("thread_reply_count") or 0) + 1

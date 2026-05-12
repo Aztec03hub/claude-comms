@@ -29,7 +29,6 @@ from claude_comms.artifact import (
 )
 from claude_comms.conversation import (
     list_all_conversations,
-    load_meta,
 )
 from claude_comms.broker import generate_client_id
 from claude_comms.config import load_config
@@ -618,9 +617,11 @@ class ClaudeCommsApp(App):
 
         lines = ["[bold]Artifacts:[/bold]"]
         for a in artifacts:
-            type_badge = {"plan": "\U0001f4cb", "doc": "\U0001f4c4", "code": "\U0001f4bb"}.get(
-                a["type"], "\U0001f4c4"
-            )
+            type_badge = {
+                "plan": "\U0001f4cb",
+                "doc": "\U0001f4c4",
+                "code": "\U0001f4bb",
+            }.get(a["type"], "\U0001f4c4")
             lines.append(
                 f"  {type_badge} [bold]{a['title']}[/bold] ({a['name']}) "
                 f"\u2014 v{a['version_count']}, by {a.get('author', {}).get('name', '?')}"
@@ -663,7 +664,8 @@ class ClaudeCommsApp(App):
         if latest.summary:
             header += f"\n[dim]{latest.summary}[/dim]"
 
-        chat.add_system_message(f"{header}\n{'\u2500' * 40}\n{content}")
+        divider = "\u2500" * 40
+        chat.add_system_message(f"{header}\n{divider}\n{content}")
 
     def _artifact_help(self) -> None:
         """Show artifact command help."""
@@ -709,12 +711,9 @@ class ClaudeCommsApp(App):
         for conv in conversations:
             # Check membership
             is_member = (
-                conv.name == self._active_conv
-                or conv.name in self._conversations
+                conv.name == self._active_conv or conv.name in self._conversations
             )
-            status = (
-                "[green]joined[/green]" if is_member else "[dim]not joined[/dim]"
-            )
+            status = "[green]joined[/green]" if is_member else "[dim]not joined[/dim]"
             topic_str = f" \u2014 {conv.topic}" if conv.topic else ""
             lines.append(
                 f"  [bold]#{conv.name}[/bold]{topic_str} ({status})"
@@ -931,5 +930,7 @@ class HelpScreen(ModalScreen):
             yield Label("  /artifact list       List artifacts", classes="help-line")
             yield Label("  /artifact view <n>   View an artifact", classes="help-line")
             yield Label("  /artifact help       Artifact help", classes="help-line")
-            yield Label("  /discover            Browse all conversations", classes="help-line")
+            yield Label(
+                "  /discover            Browse all conversations", classes="help-line"
+            )
             yield Label("Press Escape or F1 to close", classes="help-footer")

@@ -12,7 +12,6 @@ from claude_comms.mcp_tools import ParticipantRegistry
 from claude_comms.participant import ConnectionInfo, Participant
 from claude_comms.presence import (
     DEFAULT_CONNECTION_TTL_SECONDS,
-    DEFAULT_SWEEP_INTERVAL_SECONDS,
     PresenceManager,
 )
 
@@ -46,7 +45,7 @@ def _registry_with_participant(
     reg = ParticipantRegistry()
     p = reg.join(name, "general", key=key, participant_type="human")
     ts = _stale_iso(stale_seconds) if stale_seconds else _now_iso()
-    for ck in (conn_keys or ["mcp"]):
+    for ck in conn_keys or ["mcp"]:
         p.connections[ck] = ConnectionInfo(
             client=ck.split("-")[0] if "-" in ck else ck,
             instance_id=None,
@@ -82,8 +81,10 @@ class TestTouch:
         for ck in ("mcp", "web"):
             updated = datetime.fromisoformat(p.connections[ck].last_seen)
             # Allow a tiny clock skew window
-            assert (before - timedelta(seconds=1)) <= updated <= (
-                after + timedelta(seconds=1)
+            assert (
+                (before - timedelta(seconds=1))
+                <= updated
+                <= (after + timedelta(seconds=1))
             )
             # And clearly not the stale original
             assert p.connections[ck].last_seen != old_ts
@@ -132,8 +133,10 @@ class TestEnsureConnection:
 
         for ck in ("mcp", "web"):
             updated = datetime.fromisoformat(p.connections[ck].last_seen)
-            assert (before - timedelta(seconds=1)) <= updated <= (
-                after + timedelta(seconds=1)
+            assert (
+                (before - timedelta(seconds=1))
+                <= updated
+                <= (after + timedelta(seconds=1))
             )
 
     def test_ensure_connection_unknown_key_is_noop(self):
@@ -159,8 +162,10 @@ class TestEnsureConnection:
         assert conn.client == "mcp"
         assert conn.instance_id is None
         last_seen = datetime.fromisoformat(conn.last_seen)
-        assert (before - timedelta(seconds=1)) <= last_seen <= (
-            after + timedelta(seconds=1)
+        assert (
+            (before - timedelta(seconds=1))
+            <= last_seen
+            <= (after + timedelta(seconds=1))
         )
         # since == last_seen on a fresh record
         assert conn.since == conn.last_seen
@@ -168,7 +173,9 @@ class TestEnsureConnection:
     def test_ensure_connection_after_sweep_brings_back_online(self):
         """End-to-end: stale conn gets swept, then ensure_connection resurrects."""
         # Start with a stale connection.
-        reg, p = _registry_with_participant(stale_seconds=DEFAULT_CONNECTION_TTL_SECONDS + 5)
+        reg, p = _registry_with_participant(
+            stale_seconds=DEFAULT_CONNECTION_TTL_SECONDS + 5
+        )
         assert "mcp" in p.connections
 
         mgr = PresenceManager(reg, ttl_seconds=DEFAULT_CONNECTION_TTL_SECONDS)

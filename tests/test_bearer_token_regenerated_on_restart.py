@@ -12,7 +12,6 @@ Also verifies:
 
 from __future__ import annotations
 
-import stat
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -23,7 +22,6 @@ from claude_comms.cli import (
     _generate_web_token,
     _persist_web_token,
     build_web_token_route,
-    get_web_token,
     set_web_token,
 )
 

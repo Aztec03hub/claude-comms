@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -28,10 +27,7 @@ from claude_comms.mcp_tools import (
 )
 from claude_comms.reactions import (
     MAX_EMOJI_LEN,
-    Reaction,
-    ReactionEvent,
     ReactionsStore,
-    SNAPSHOT_LINE_THRESHOLD,
     reactions_topic,
 )
 
@@ -107,9 +103,7 @@ class TestReactionsStoreBasics:
     def test_invalid_op_raises(self, tmp_path: Path) -> None:
         store = ReactionsStore(tmp_path)
         with pytest.raises(ValueError):
-            store.apply(
-                message_id="m1", emoji="heart", actor_key="deadbeef", op="wat"
-            )  # type: ignore[arg-type]
+            store.apply(message_id="m1", emoji="heart", actor_key="deadbeef", op="wat")  # type: ignore[arg-type]
 
 
 class TestReactionsStorePersistence:
@@ -226,9 +220,11 @@ def published_capture():
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro) \
-        if asyncio.get_event_loop().is_running() \
+    return (
+        asyncio.get_event_loop().run_until_complete(coro)
+        if asyncio.get_event_loop().is_running()
         else asyncio.run(coro)
+    )
 
 
 class TestCommsReactValidation:
@@ -239,7 +235,9 @@ class TestCommsReactValidation:
         _, publish = published_capture
         result = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
+                reg,
+                publish,
+                store_factory,
                 key="00000000",
                 conversation="general",
                 message_id="m1",
@@ -256,7 +254,9 @@ class TestCommsReactValidation:
         _, publish = published_capture
         result = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
+                reg,
+                publish,
+                store_factory,
                 key=key,
                 conversation="general",
                 message_id="m1",
@@ -273,7 +273,9 @@ class TestCommsReactValidation:
         _, publish = published_capture
         result = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
+                reg,
+                publish,
+                store_factory,
                 key=key,
                 conversation="other-conv",
                 message_id="m1",
@@ -290,7 +292,9 @@ class TestCommsReactValidation:
         _, publish = published_capture
         result = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
+                reg,
+                publish,
+                store_factory,
                 key=key,
                 conversation="general",
                 message_id="m1",
@@ -309,7 +313,9 @@ class TestCommsReactSemantics:
         published, publish = published_capture
         result = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
+                reg,
+                publish,
+                store_factory,
                 key=key,
                 conversation="general",
                 message_id="m1",
@@ -334,7 +340,9 @@ class TestCommsReactSemantics:
         for _ in range(2):
             result = asyncio.run(
                 tool_comms_react(
-                    reg, publish, store_factory,
+                    reg,
+                    publish,
+                    store_factory,
                     key=key,
                     conversation="general",
                     message_id="m1",
@@ -352,16 +360,26 @@ class TestCommsReactSemantics:
         _, publish = published_capture
         r1 = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
-                key=key, conversation="general", message_id="m1",
-                emoji="heart", op="toggle",
+                reg,
+                publish,
+                store_factory,
+                key=key,
+                conversation="general",
+                message_id="m1",
+                emoji="heart",
+                op="toggle",
             )
         )
         r2 = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
-                key=key, conversation="general", message_id="m1",
-                emoji="heart", op="toggle",
+                reg,
+                publish,
+                store_factory,
+                key=key,
+                conversation="general",
+                message_id="m1",
+                emoji="heart",
+                op="toggle",
             )
         )
         assert r1["op"] == "add"
@@ -378,18 +396,28 @@ class TestCommsReactRateLimits:
         for i in range(MAX_REACTIONS_PER_MESSAGE_PER_ACTOR):
             result = asyncio.run(
                 tool_comms_react(
-                    reg, publish, store_factory,
-                    key=key, conversation="general", message_id="m1",
-                    emoji=f"emoji-{i}", op="add",
+                    reg,
+                    publish,
+                    store_factory,
+                    key=key,
+                    conversation="general",
+                    message_id="m1",
+                    emoji=f"emoji-{i}",
+                    op="add",
                 )
             )
             assert result["status"] == "applied"
         # The N+1th add must error.
         result = asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
-                key=key, conversation="general", message_id="m1",
-                emoji="overflow", op="add",
+                reg,
+                publish,
+                store_factory,
+                key=key,
+                conversation="general",
+                message_id="m1",
+                emoji="overflow",
+                op="add",
             )
         )
         assert result.get("error") is True
@@ -406,9 +434,14 @@ class TestCommsReactRateLimits:
         for i in range(REACTIONS_PER_ACTOR_PER_MINUTE + 5):
             r = asyncio.run(
                 tool_comms_react(
-                    reg, publish, store_factory,
-                    key=key, conversation="general",
-                    message_id=f"m-{i}", emoji="heart", op="add",
+                    reg,
+                    publish,
+                    store_factory,
+                    key=key,
+                    conversation="general",
+                    message_id=f"m-{i}",
+                    emoji="heart",
+                    op="add",
                 )
             )
             results.append(r)
@@ -418,13 +451,14 @@ class TestCommsReactRateLimits:
 
 
 class TestCommsReactionsGet:
-    def test_empty_when_no_reactions(
-        self, store_factory, registry_and_alice
-    ) -> None:
+    def test_empty_when_no_reactions(self, store_factory, registry_and_alice) -> None:
         reg, key = registry_and_alice
         result = tool_comms_reactions_get(
-            reg, store_factory,
-            key=key, conversation="general", message_id="m1",
+            reg,
+            store_factory,
+            key=key,
+            conversation="general",
+            message_id="m1",
         )
         assert result["reactions"] == {}
 
@@ -435,14 +469,22 @@ class TestCommsReactionsGet:
         _, publish = published_capture
         asyncio.run(
             tool_comms_react(
-                reg, publish, store_factory,
-                key=key, conversation="general", message_id="m1",
-                emoji="heart", op="add",
+                reg,
+                publish,
+                store_factory,
+                key=key,
+                conversation="general",
+                message_id="m1",
+                emoji="heart",
+                op="add",
             )
         )
         result = tool_comms_reactions_get(
-            reg, store_factory,
-            key=key, conversation="general", message_id="m1",
+            reg,
+            store_factory,
+            key=key,
+            conversation="general",
+            message_id="m1",
         )
         assert result["reactions"] == {"heart": [key]}
         assert result["message_id"] == "m1"

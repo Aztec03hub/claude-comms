@@ -219,9 +219,7 @@ def classify_mention_segments(
     mentions_active = bool(mentions) and not is_whisper
     mentions_set = set(mentions) if mentions_active and mentions else set()
     viewer_is_sender = (
-        viewer_key is not None
-        and sender_key is not None
-        and viewer_key == sender_key
+        viewer_key is not None and sender_key is not None and viewer_key == sender_key
     )
 
     segments: list[tuple[str, str]] = []

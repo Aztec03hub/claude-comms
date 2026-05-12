@@ -15,14 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 
 import pytest
 
 from claude_comms import mcp_tools
 from claude_comms.mcp_tools import (
-    ACTIVITY_THROTTLE_SECONDS,
-    DEFAULT_ACTIVITY_TTL_SECONDS,
     MAX_ACTIVITY_TTL_SECONDS,
     ParticipantRegistry,
     activity_topic,
@@ -68,7 +65,11 @@ async def _join_claude(reg: ParticipantRegistry, name: str = "claude-x") -> str:
 
 
 def test_activity_round_trip():
-    a = Activity(label="thinking", set_at="2026-04-28T10:00:00Z", expires_at="2026-04-28T10:00:30Z")
+    a = Activity(
+        label="thinking",
+        set_at="2026-04-28T10:00:00Z",
+        expires_at="2026-04-28T10:00:30Z",
+    )
     payload = a.model_dump_json()
     a2 = Activity.model_validate_json(payload)
     assert a2 == a
@@ -145,7 +146,9 @@ async def test_status_set_label_required():
     key = await _join_claude(reg)
     res = await tool_comms_status_set(reg, key=key, conversation="general", label="")
     assert res.get("error") is True
-    res2 = await tool_comms_status_set(reg, key=key, conversation="general", label="   ")
+    res2 = await tool_comms_status_set(
+        reg, key=key, conversation="general", label="   "
+    )
     assert res2.get("error") is True
 
 

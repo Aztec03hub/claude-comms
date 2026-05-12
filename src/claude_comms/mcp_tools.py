@@ -43,7 +43,6 @@ from claude_comms.artifact import (
 from claude_comms.broker import MessageStore
 from claude_comms.reactions import (
     ReactionEvent,
-    ReactionOp,
     ReactionsStore,
     reactions_topic,
 )
@@ -328,9 +327,7 @@ class ParticipantRegistry:
         with self._lock:
             return self._thread_read_cursors.get((key, conversation, root_id))
 
-    def thread_cursors_for(
-        self, key: str, conversation: str
-    ) -> dict[str, str]:
+    def thread_cursors_for(self, key: str, conversation: str) -> dict[str, str]:
         """Return ``{root_id: ts}`` for every thread cursor *key* holds in *conversation*.
 
         Used by ``tool_comms_check`` to compute ``thread_unread`` per root.
@@ -420,7 +417,9 @@ def _auto_join_humans(registry: ParticipantRegistry, conversation: str) -> list[
     general_members = registry.members("general")
     for member in general_members:
         if member.type == "human":
-            registry.join(member.name, conversation, key=member.key, participant_type="human")
+            registry.join(
+                member.name, conversation, key=member.key, participant_type="human"
+            )
             joined_keys.append(member.key)
     return joined_keys
 
@@ -457,7 +456,10 @@ async def tool_comms_join(
             # Implicit creation: if conv_data_dir provided, try atomic create
             if conv_data_dir is not None:
                 meta = create_conversation_atomic(
-                    conversation, topic="", created_by=existing.name, data_dir=conv_data_dir
+                    conversation,
+                    topic="",
+                    created_by=existing.name,
+                    data_dir=conv_data_dir,
                 )
                 if meta is not None:
                     # New conversation was created — run side effects
@@ -467,7 +469,11 @@ async def tool_comms_join(
                         system_msg = {
                             "id": str(uuid4()),
                             "ts": now_iso(),
-                            "sender": {"key": "00000000", "name": "system", "type": "system"},
+                            "sender": {
+                                "key": "00000000",
+                                "name": "system",
+                                "type": "system",
+                            },
                             "body": body,
                             "conv": "general",
                             "recipients": None,
@@ -621,9 +627,7 @@ async def tool_comms_send(
             parent_sender.get("key") == "00000000"
             or parent_sender.get("type") == "system"
         ):
-            return _error(
-                "reply_to may not target a system message."
-            )
+            return _error("reply_to may not target a system message.")
 
     # Resolve recipients (names or keys -> keys). Sender-key dedup applied
     # post-resolve as defense in depth; the composer also dedups at parse-time.
@@ -696,13 +700,12 @@ async def tool_comms_send(
     if reply_to is not None:
         thread_topic = f"claude-comms/conv/{conversation}/threads/{reply_to}"
         try:
-            await publish_fn(
-                thread_topic, msg.to_mqtt_payload().encode("utf-8")
-            )
+            await publish_fn(thread_topic, msg.to_mqtt_payload().encode("utf-8"))
         except Exception:
             # Convenience topic only — log and continue.
             logger.warning(
-                "Failed to publish per-thread fanout to %s", thread_topic,
+                "Failed to publish per-thread fanout to %s",
+                thread_topic,
                 exc_info=True,
             )
 
@@ -868,8 +871,7 @@ def tool_comms_thread_read(
     # `reply_to == root_id` directly; no transitive chain traversal needed.
     all_msgs = store.get(conversation)
     replies = [
-        m for m in all_msgs
-        if m.get("reply_to") == root_id and _is_visible(m, key)
+        m for m in all_msgs if m.get("reply_to") == root_id and _is_visible(m, key)
     ]
 
     if since:
@@ -964,9 +966,7 @@ def tool_comms_check(
         # viewer can actually see (R2-M1 defect-fix).
         visible_msgs = [m for m in msgs if _is_visible(m, key)]
         if cursor:
-            unread = [
-                m for m in visible_msgs if _ts_after(m.get("ts", ""), cursor)
-            ]
+            unread = [m for m in visible_msgs if _ts_after(m.get("ts", ""), cursor)]
         else:
             unread = visible_msgs
 
@@ -985,9 +985,8 @@ def tool_comms_check(
                 continue
             thread_unread[root_id] = thread_unread.get(root_id, 0) + 1
             # Track latest reply per root for mark_seen advance.
-            if (
-                root_id not in thread_latest_ts
-                or _ts_after(ts, thread_latest_ts[root_id])
+            if root_id not in thread_latest_ts or _ts_after(
+                ts, thread_latest_ts[root_id]
             ):
                 thread_latest_ts[root_id] = ts
 
@@ -1200,7 +1199,9 @@ async def tool_comms_status_set(
             await publish_fn(activity_topic(conversation), json.dumps(payload).encode())
         except Exception:
             logger.exception(
-                "Failed to publish activity_set event for key %s in %s", key, conversation
+                "Failed to publish activity_set event for key %s in %s",
+                key,
+                conversation,
             )
 
     return {
@@ -1261,7 +1262,9 @@ async def tool_comms_status_clear(
             await publish_fn(activity_topic(conversation), json.dumps(payload).encode())
         except Exception:
             logger.exception(
-                "Failed to publish activity_clear event for key %s in %s", key, conversation
+                "Failed to publish activity_clear event for key %s in %s",
+                key,
+                conversation,
             )
 
     return {"status": "cleared", "key": key, "count": cleared}
@@ -1525,9 +1528,7 @@ async def tool_comms_artifact_update(
 
     artifact = load_artifact(conversation, name, data_dir)
     if artifact is None:
-        return _error(
-            f"Artifact {name!r} not found in conversation {conversation!r}."
-        )
+        return _error(f"Artifact {name!r} not found in conversation {conversation!r}.")
 
     # Optimistic concurrency check.
     # R1-2 fix: use max(v.version) instead of len(versions). After the versions
@@ -1608,9 +1609,7 @@ def tool_comms_artifact_get(
 
     artifact = load_artifact(conversation, name, data_dir)
     if artifact is None:
-        return _error(
-            f"Artifact {name!r} not found in conversation {conversation!r}."
-        )
+        return _error(f"Artifact {name!r} not found in conversation {conversation!r}.")
 
     # Select version
     if version is not None:
@@ -1717,9 +1716,7 @@ async def tool_comms_artifact_delete(
     # Load first to get title for the system message
     artifact = load_artifact(conversation, name, data_dir)
     if artifact is None:
-        return _error(
-            f"Artifact {name!r} not found in conversation {conversation!r}."
-        )
+        return _error(f"Artifact {name!r} not found in conversation {conversation!r}.")
     title = artifact.title
 
     deleted = delete_artifact(conversation, name, data_dir)
@@ -1784,7 +1781,9 @@ async def tool_comms_conversation_create(
         )
 
     # Auto-join creator
-    registry.join(participant.name, conversation, key=key, participant_type=participant.type)
+    registry.join(
+        participant.name, conversation, key=key, participant_type=participant.type
+    )
 
     # Auto-join humans
     _auto_join_humans(registry, conversation)
@@ -2023,9 +2022,7 @@ async def tool_comms_react(
     # on this message. Only enforced for add/toggle->add transitions.
     if op in ("add", "toggle"):
         current = store.get(message_id)
-        actor_emojis_here = sum(
-            1 for actors in current.values() if actor.key in actors
-        )
+        actor_emojis_here = sum(1 for actors in current.values() if actor.key in actors)
         # If this is a toggle that will turn into a remove, we don't cap.
         # Determine that without mutating state.
         will_be_add = True

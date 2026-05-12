@@ -48,22 +48,22 @@ def _sender(key: str = "ab12cd34", name: str = "test-user") -> Sender:
 
 
 VALID_NAMES = [
-    "Notes",                    # mixed case
-    "my-plan",                  # legacy lowercase+hyphen
-    "API Spec v2",              # spaces
-    "project_alpha.md",         # mixed punctuation, dot, underscore
-    "Q&A session",              # ampersand
-    "план",                     # Cyrillic Unicode
-    "build (2026-04)",          # parens + space + hyphen
-    "x",                        # single char
-    "a.b.c.d",                  # multiple dots OK
-    "a" * 128,                  # exactly at length cap
-    "backend-plan",             # legacy migration
-    "my-api-spec",              # legacy migration
-    "abc123",                   # alphanumeric
-    "Foo",                      # capitalized
-    "hello world",              # space
-    "v1.2.3-rc1",               # tag-like
+    "Notes",  # mixed case
+    "my-plan",  # legacy lowercase+hyphen
+    "API Spec v2",  # spaces
+    "project_alpha.md",  # mixed punctuation, dot, underscore
+    "Q&A session",  # ampersand
+    "план",  # Cyrillic Unicode
+    "build (2026-04)",  # parens + space + hyphen
+    "x",  # single char
+    "a.b.c.d",  # multiple dots OK
+    "a" * 128,  # exactly at length cap
+    "backend-plan",  # legacy migration
+    "my-api-spec",  # legacy migration
+    "abc123",  # alphanumeric
+    "Foo",  # capitalized
+    "hello world",  # space
+    "v1.2.3-rc1",  # tag-like
 ]
 
 
@@ -165,7 +165,7 @@ def test_validator_accepts_nfd_input():
 
 def test_artifact_name_field_auto_normalizes_nfd_to_nfc():
     nfd = "café"  # NFD café
-    nfc = "café"   # NFC café
+    nfc = "café"  # NFC café
     artifact = Artifact(
         name=nfd,
         title="Test",
@@ -194,16 +194,18 @@ def test_artifact_name_field_idempotent_on_nfc():
 def test_artifact_name_auto_normalizes_on_json_deserialization():
     nfd = "café"
     nfc = "café"
-    raw = json.dumps({
-        "id": "00000000-0000-0000-0000-000000000000",
-        "name": nfd,
-        "title": "Test",
-        "type": "doc",
-        "conversation_id": "general",
-        "created_by": {"key": "ab12cd34", "name": "u", "type": "human"},
-        "created_at": "2026-04-23T00:00:00+00:00",
-        "versions": [],
-    })
+    raw = json.dumps(
+        {
+            "id": "00000000-0000-0000-0000-000000000000",
+            "name": nfd,
+            "title": "Test",
+            "type": "doc",
+            "conversation_id": "general",
+            "created_by": {"key": "ab12cd34", "name": "u", "type": "human"},
+            "created_at": "2026-04-23T00:00:00+00:00",
+            "versions": [],
+        }
+    )
     artifact = Artifact.model_validate_json(raw)
     assert artifact.name == nfc
 
@@ -372,7 +374,10 @@ async def test_case_collision_at_create(tmp_path: Path):
     kwargs_foo_lower = dict(kwargs_foo, name="foo")
     result2 = await tool_comms_artifact_create(registry, spy, **kwargs_foo_lower)
     assert result2.get("error") is True
-    assert "collide" in result2["message"].lower() or "already exists" in result2["message"].lower()
+    assert (
+        "collide" in result2["message"].lower()
+        or "already exists" in result2["message"].lower()
+    )
 
 
 @pytest.mark.asyncio
@@ -384,16 +389,28 @@ async def test_case_collision_at_create_uppercase_variant(tmp_path: Path):
     key = join_result["key"]
 
     first = await tool_comms_artifact_create(
-        registry, spy,
-        key=key, conversation="general", name="bar", title="Bar",
-        type="doc", content="x", data_dir=tmp_path,
+        registry,
+        spy,
+        key=key,
+        conversation="general",
+        name="bar",
+        title="Bar",
+        type="doc",
+        content="x",
+        data_dir=tmp_path,
     )
     assert first.get("status") == "created"
 
     second = await tool_comms_artifact_create(
-        registry, spy,
-        key=key, conversation="general", name="BAR", title="Bar Upper",
-        type="doc", content="x", data_dir=tmp_path,
+        registry,
+        spy,
+        key=key,
+        conversation="general",
+        name="BAR",
+        title="Bar Upper",
+        type="doc",
+        content="x",
+        data_dir=tmp_path,
     )
     assert second.get("error") is True
 

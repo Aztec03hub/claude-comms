@@ -18,7 +18,7 @@ from claude_comms.artifact import (
     save_artifact,
     validate_artifact_name,
 )
-from claude_comms.message import Sender, now_iso
+from claude_comms.message import Sender
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_artifact_create,
@@ -35,7 +35,9 @@ from conftest import PublishSpy
 # ---------------------------------------------------------------------------
 
 
-def _sender(key: str = "ab12cd34", name: str = "test-user", type: str = "human") -> Sender:
+def _sender(
+    key: str = "ab12cd34", name: str = "test-user", type: str = "human"
+) -> Sender:
     return Sender(key=key, name=name, type=type)
 
 
@@ -96,12 +98,12 @@ class TestValidateArtifactName:
     @pytest.mark.parametrize(
         "name",
         [
-            "",            # empty
-            "bad-",        # trailing hyphen
-            "has/slash",   # forbidden char
-            " leading",    # leading space
-            ".hidden",     # leading dot
-            "a" * 129,     # over length cap
+            "",  # empty
+            "bad-",  # trailing hyphen
+            "has/slash",  # forbidden char
+            " leading",  # leading space
+            ".hidden",  # leading dot
+            "a" * 129,  # over length cap
         ],
     )
     def test_invalid_names(self, name: str):
@@ -333,7 +335,9 @@ class TestToolCommsArtifactCreate:
     async def test_create_artifact(self, tmp_path: Path):
         registry = ParticipantRegistry()
         spy = PublishSpy()
-        participant = await _register_participant(registry, name="alice", conversation="general")
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
 
         result = await tool_comms_artifact_create(
             registry,
@@ -355,7 +359,9 @@ class TestToolCommsArtifactCreate:
     async def test_publishes_system_message(self, tmp_path: Path):
         registry = ParticipantRegistry()
         spy = PublishSpy()
-        participant = await _register_participant(registry, name="alice", conversation="general")
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
 
         await tool_comms_artifact_create(
             registry,
@@ -380,7 +386,9 @@ class TestToolCommsArtifactCreate:
     async def test_duplicate_name_returns_error(self, tmp_path: Path):
         registry = ParticipantRegistry()
         spy = PublishSpy()
-        participant = await _register_participant(registry, name="alice", conversation="general")
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
 
         kwargs = dict(
             key=participant["key"],
@@ -400,8 +408,7 @@ class TestToolCommsArtifactCreate:
         # Either the case-insensitive collision check or the "already exists"
         # check must fire; both are valid duplicate-name rejections.
         assert (
-            "already exists" in result2["message"]
-            or "collides" in result2["message"]
+            "already exists" in result2["message"] or "collides" in result2["message"]
         )
 
 
@@ -494,21 +501,35 @@ class TestToolCommsArtifactUpdate:
     async def test_update_with_correct_base_version(self, tmp_path: Path):
         registry = ParticipantRegistry()
         spy = PublishSpy()
-        participant = await _register_participant(registry, name="carol", conversation="general")
+        participant = await _register_participant(
+            registry, name="carol", conversation="general"
+        )
         key = participant["key"]
 
         # Create initial artifact
         await tool_comms_artifact_create(
-            registry, spy, key=key, conversation="general",
-            name="updatable", title="Updatable", type="doc",
-            content="v1 content", data_dir=tmp_path,
+            registry,
+            spy,
+            key=key,
+            conversation="general",
+            name="updatable",
+            title="Updatable",
+            type="doc",
+            content="v1 content",
+            data_dir=tmp_path,
         )
 
         # Update with correct base_version
         result = await tool_comms_artifact_update(
-            registry, spy, key=key, conversation="general",
-            name="updatable", content="v2 content",
-            summary="updated text", base_version=1, data_dir=tmp_path,
+            registry,
+            spy,
+            key=key,
+            conversation="general",
+            name="updatable",
+            content="v2 content",
+            summary="updated text",
+            base_version=1,
+            data_dir=tmp_path,
         )
 
         assert result["status"] == "updated"
@@ -518,43 +539,72 @@ class TestToolCommsArtifactUpdate:
     async def test_update_with_wrong_base_version(self, tmp_path: Path):
         registry = ParticipantRegistry()
         spy = PublishSpy()
-        participant = await _register_participant(registry, name="carol", conversation="general")
+        participant = await _register_participant(
+            registry, name="carol", conversation="general"
+        )
         key = participant["key"]
 
         await tool_comms_artifact_create(
-            registry, spy, key=key, conversation="general",
-            name="updatable", title="Updatable", type="doc",
-            content="v1 content", data_dir=tmp_path,
+            registry,
+            spy,
+            key=key,
+            conversation="general",
+            name="updatable",
+            title="Updatable",
+            type="doc",
+            content="v1 content",
+            data_dir=tmp_path,
         )
 
         # Update with wrong base_version
         result = await tool_comms_artifact_update(
-            registry, spy, key=key, conversation="general",
-            name="updatable", content="conflict",
-            base_version=99, data_dir=tmp_path,
+            registry,
+            spy,
+            key=key,
+            conversation="general",
+            name="updatable",
+            content="conflict",
+            base_version=99,
+            data_dir=tmp_path,
         )
 
         assert result.get("error") is True
-        assert "conflict" in result["message"].lower() or "version" in result["message"].lower()
+        assert (
+            "conflict" in result["message"].lower()
+            or "version" in result["message"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_update_without_base_version_succeeds(self, tmp_path: Path):
         registry = ParticipantRegistry()
         spy = PublishSpy()
-        participant = await _register_participant(registry, name="carol", conversation="general")
+        participant = await _register_participant(
+            registry, name="carol", conversation="general"
+        )
         key = participant["key"]
 
         await tool_comms_artifact_create(
-            registry, spy, key=key, conversation="general",
-            name="updatable", title="Updatable", type="doc",
-            content="v1 content", data_dir=tmp_path,
+            registry,
+            spy,
+            key=key,
+            conversation="general",
+            name="updatable",
+            title="Updatable",
+            type="doc",
+            content="v1 content",
+            data_dir=tmp_path,
         )
 
         # Update without base_version (no concurrency check)
         result = await tool_comms_artifact_update(
-            registry, spy, key=key, conversation="general",
-            name="updatable", content="v2 content",
-            summary="no base check", data_dir=tmp_path,
+            registry,
+            spy,
+            key=key,
+            conversation="general",
+            name="updatable",
+            content="v2 content",
+            summary="no base check",
+            data_dir=tmp_path,
         )
 
         assert result["status"] == "updated"

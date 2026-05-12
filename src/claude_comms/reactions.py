@@ -29,9 +29,8 @@ import os
 import re
 import threading
 from collections import defaultdict
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -391,7 +390,9 @@ class ReactionsStore:
             with open(self.jsonl_path, "a", encoding="utf-8") as fh:
                 fh.write(line)
         except OSError as exc:
-            logger.error("Failed to append reaction event to %s: %s", self.jsonl_path, exc)
+            logger.error(
+                "Failed to append reaction event to %s: %s", self.jsonl_path, exc
+            )
             raise
         self._jsonl_line_count += 1
 

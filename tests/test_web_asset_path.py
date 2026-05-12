@@ -41,9 +41,8 @@ def test_web_dist_index_html_when_built() -> None:
     having run `pnpm build` yet). The CI ``build-wheel`` job installs the
     wheel into a clean venv where this assertion is always exercised.
     """
-    index = (
-        importlib.resources.files("claude_comms")
-        .joinpath("web", "dist", "index.html")
+    index = importlib.resources.files("claude_comms").joinpath(
+        "web", "dist", "index.html"
     )
     if not index.is_file():
         pytest.skip(

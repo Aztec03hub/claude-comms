@@ -30,11 +30,16 @@ logger = logging.getLogger(__name__)
 # Also reject: backtick (shell quoting hazard), newline, tab (whitespace confusion)
 ARTIFACT_NAME_FORBIDDEN = re.compile(r'[\x00-\x1f\x7f<>:"/\\|?*`\n\r\t]')
 
-WINDOWS_RESERVED = frozenset({
-    "CON", "PRN", "AUX", "NUL",
-    *(f"COM{i}" for i in range(1, 10)),
-    *(f"LPT{i}" for i in range(1, 10)),
-})
+WINDOWS_RESERVED = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
 
 DEFAULT_GET_CHUNK_SIZE = 50_000
 MAX_VERSIONS = 50
@@ -83,7 +88,10 @@ def validate_artifact_name(name: str) -> tuple[bool, str]:
         return False, "name exceeds 128 characters"
 
     if ARTIFACT_NAME_FORBIDDEN.search(name):
-        return False, 'name contains a forbidden character (< > : " / \\ | ? * or control char)'
+        return (
+            False,
+            'name contains a forbidden character (< > : " / \\ | ? * or control char)',
+        )
 
     # R4-7: Reject confusable fullwidth chars (U+FF00–U+FFEF) — they render
     # indistinguishably from ASCII in many fonts and are a phishing vector.
@@ -97,7 +105,12 @@ def validate_artifact_name(name: str) -> tuple[bool, str]:
     # Windows silently strips trailing dot / space → file collision risk.
     # Also reject trailing hyphen/underscore — visually ambiguous with
     # accidental concatenation.
-    if name.endswith(".") or name.endswith(" ") or name.endswith("-") or name.endswith("_"):
+    if (
+        name.endswith(".")
+        or name.endswith(" ")
+        or name.endswith("-")
+        or name.endswith("_")
+    ):
         return False, "name cannot end with a dot, space, hyphen, or underscore"
 
     if ".." in name:
@@ -124,7 +137,9 @@ def validate_artifact_name(name: str) -> tuple[bool, str]:
 class ArtifactVersion(BaseModel):
     """A single immutable snapshot of an artifact's content."""
 
-    version: int = Field(..., ge=1, description="Monotonically increasing version number")
+    version: int = Field(
+        ..., ge=1, description="Monotonically increasing version number"
+    )
     content: str = Field(..., description="Full document content at this version")
     author: Sender = Field(..., description="Who created this version")
     timestamp: str = Field(
@@ -309,19 +324,19 @@ def migrate_artifact_names_to_nfc(data_dir: Path) -> tuple[int, int]:
                 json_file.rename(q_target)
                 logger.warning(
                     "NFC migration: collision on %s; quarantined NFD file to %s",
-                    target, q_target,
+                    target,
+                    q_target,
                 )
                 quarantined += 1
                 continue
             json_file.rename(target)
-            logger.info(
-                "NFC migration: renamed %s -> %s", json_file.name, target.name
-            )
+            logger.info("NFC migration: renamed %s -> %s", json_file.name, target.name)
             renamed += 1
 
     if quarantined > 0:
         logger.warning(
             "NFC migration quarantined %d file(s). Review %s and reconcile manually.",
-            quarantined, quarantine_root,
+            quarantined,
+            quarantine_root,
         )
     return renamed, quarantined

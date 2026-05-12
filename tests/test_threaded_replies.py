@@ -13,9 +13,7 @@ dispatcher logic mirrors ``_rebuild_thread_metadata``, which IS covered here.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -121,8 +119,24 @@ async def test_send_with_reply_to_depth2_errors(
 ) -> None:
     registry, store, key = registered
     # Seed a top-level + a reply
-    store.add("general", {"id": "root1", "conv": "general", "reply_to": None, "sender": {"key": key, "type": "claude"}})
-    store.add("general", {"id": "reply1", "conv": "general", "reply_to": "root1", "sender": {"key": key, "type": "claude"}})
+    store.add(
+        "general",
+        {
+            "id": "root1",
+            "conv": "general",
+            "reply_to": None,
+            "sender": {"key": key, "type": "claude"},
+        },
+    )
+    store.add(
+        "general",
+        {
+            "id": "reply1",
+            "conv": "general",
+            "reply_to": "root1",
+            "sender": {"key": key, "type": "claude"},
+        },
+    )
     # Now try to reply to the reply -> should reject as depth-2 violation
     result = await tool_comms_send(
         registry,
@@ -223,14 +237,34 @@ def _write_jsonl(path: Path, messages: list[dict]) -> None:
 
 def test_rebuild_thread_metadata_idempotent() -> None:
     store = MessageStore()
-    store.add("general", {"id": "r1", "conv": "general", "reply_to": None, "sender": {"key": "aaaa1111"}})
     store.add(
         "general",
-        {"id": "p1", "conv": "general", "reply_to": "r1", "sender": {"key": "bbbb2222", "name": "phoenix"}, "ts": "T1"},
+        {
+            "id": "r1",
+            "conv": "general",
+            "reply_to": None,
+            "sender": {"key": "aaaa1111"},
+        },
     )
     store.add(
         "general",
-        {"id": "p2", "conv": "general", "reply_to": "r1", "sender": {"key": "cccc3333", "name": "sage"}, "ts": "T2"},
+        {
+            "id": "p1",
+            "conv": "general",
+            "reply_to": "r1",
+            "sender": {"key": "bbbb2222", "name": "phoenix"},
+            "ts": "T1",
+        },
+    )
+    store.add(
+        "general",
+        {
+            "id": "p2",
+            "conv": "general",
+            "reply_to": "r1",
+            "sender": {"key": "cccc3333", "name": "sage"},
+            "ts": "T2",
+        },
     )
     _rebuild_thread_metadata(store)
     root = store.find_by_id("general", "r1")
@@ -248,7 +282,15 @@ def test_rebuild_thread_metadata_idempotent() -> None:
 
 def test_rebuild_thread_metadata_includes_mentions() -> None:
     store = MessageStore()
-    store.add("general", {"id": "r1", "conv": "general", "reply_to": None, "sender": {"key": "aaaa1111"}})
+    store.add(
+        "general",
+        {
+            "id": "r1",
+            "conv": "general",
+            "reply_to": None,
+            "sender": {"key": "aaaa1111"},
+        },
+    )
     store.add(
         "general",
         {
@@ -272,7 +314,13 @@ def test_rebuild_thread_metadata_orphan_reply_skipped() -> None:
     # Reply with no root in the store — should not crash, should not aggregate.
     store.add(
         "general",
-        {"id": "p1", "conv": "general", "reply_to": "missing-root", "sender": {"key": "bbbb2222"}, "ts": "T1"},
+        {
+            "id": "p1",
+            "conv": "general",
+            "reply_to": "missing-root",
+            "sender": {"key": "bbbb2222"},
+            "ts": "T1",
+        },
     )
     _rebuild_thread_metadata(store)
     # No root to update; just verify no exception and the orphan is unmodified
@@ -282,10 +330,24 @@ def test_rebuild_thread_metadata_orphan_reply_skipped() -> None:
 
 def test_rebuild_thread_metadata_stamps_thread_root_id_on_replies() -> None:
     store = MessageStore()
-    store.add("general", {"id": "r1", "conv": "general", "reply_to": None, "sender": {"key": "aaaa1111"}})
     store.add(
         "general",
-        {"id": "p1", "conv": "general", "reply_to": "r1", "sender": {"key": "bbbb2222"}, "ts": "T1"},
+        {
+            "id": "r1",
+            "conv": "general",
+            "reply_to": None,
+            "sender": {"key": "aaaa1111"},
+        },
+    )
+    store.add(
+        "general",
+        {
+            "id": "p1",
+            "conv": "general",
+            "reply_to": "r1",
+            "sender": {"key": "bbbb2222"},
+            "ts": "T1",
+        },
     )
     _rebuild_thread_metadata(store)
     reply = store.find_by_id("general", "p1")
@@ -297,9 +359,27 @@ def test_replay_jsonl_logs_runs_thread_metadata_pass(tmp_path: Path) -> None:
     _write_jsonl(
         log,
         [
-            {"id": "r1", "conv": "general", "reply_to": None, "sender": {"key": "aaaa1111"}, "ts": "T0"},
-            {"id": "p1", "conv": "general", "reply_to": "r1", "sender": {"key": "bbbb2222"}, "ts": "T1"},
-            {"id": "p2", "conv": "general", "reply_to": "r1", "sender": {"key": "cccc3333"}, "ts": "T2"},
+            {
+                "id": "r1",
+                "conv": "general",
+                "reply_to": None,
+                "sender": {"key": "aaaa1111"},
+                "ts": "T0",
+            },
+            {
+                "id": "p1",
+                "conv": "general",
+                "reply_to": "r1",
+                "sender": {"key": "bbbb2222"},
+                "ts": "T1",
+            },
+            {
+                "id": "p2",
+                "conv": "general",
+                "reply_to": "r1",
+                "sender": {"key": "cccc3333"},
+                "ts": "T2",
+            },
         ],
     )
     store = replay_jsonl_logs(tmp_path)

@@ -258,9 +258,7 @@ class PresenceManager:
                 removed = await self._sweep_once()
                 for key, conn_key in removed:
                     await self._publish_offline(key, conn_key)
-                    logger.info(
-                        "Expired stale connection %s for %s", conn_key, key
-                    )
+                    logger.info("Expired stale connection %s for %s", conn_key, key)
             except asyncio.CancelledError:
                 return
             except Exception:
