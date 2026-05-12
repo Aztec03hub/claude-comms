@@ -29,19 +29,79 @@
     onShowProfile,
   } = $props();
 
-  // Offline disclosure widget — collapsed by default to keep the sidebar
-  // focused on who's actually around. Expanded state persists in
-  // localStorage so users who care about offline context stay expanded.
-  let offlineExpanded = $state(
-    typeof localStorage !== 'undefined' &&
-      localStorage.getItem('claude-comms.offlineExpanded') === '1',
+  // Per-section disclosure widgets. M-FIX (v0.3.3): Phil's hard constraint —
+  // all three section headers (Active / Online elsewhere / Offline) always
+  // render with their chevron + count, regardless of row counts. Sections are
+  // stable UI surfaces; their existence is never gated on data. Body
+  // collapse state persists per-section in localStorage.
+  //
+  // Storage keys (v0.3.3):
+  //   claude-comms.memberListActiveExpanded          default true
+  //   claude-comms.memberListOnlineElsewhereExpanded default true
+  //   claude-comms.memberListOfflineExpanded         default false
+  //
+  // Migration: v0.3.2 shipped only an offline toggle under the legacy key
+  // ``claude-comms.offlineExpanded``. On first read we copy that value into
+  // ``claude-comms.memberListOfflineExpanded`` (if not already set) and
+  // delete the legacy key, so existing users keep their preference.
+  const STORAGE_KEYS = {
+    active: 'claude-comms.memberListActiveExpanded',
+    onlineElsewhere: 'claude-comms.memberListOnlineElsewhereExpanded',
+    offline: 'claude-comms.memberListOfflineExpanded',
+  };
+  const LEGACY_OFFLINE_KEY = 'claude-comms.offlineExpanded';
+
+  /**
+   * Read a boolean-as-"1"/"0" flag from localStorage with a fallback when
+   * the key is absent or storage is unavailable (SSR / privacy mode).
+   */
+  function readStoredBool(key, fallback) {
+    if (typeof localStorage === 'undefined') return fallback;
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === '1';
+  }
+
+  /**
+   * One-shot migration of the legacy ``claude-comms.offlineExpanded`` key
+   * onto the new namespaced key. Idempotent: a second call is a no-op.
+   */
+  function migrateLegacyOfflineKey() {
+    if (typeof localStorage === 'undefined') return;
+    const legacy = localStorage.getItem(LEGACY_OFFLINE_KEY);
+    if (legacy === null) return;
+    // Only copy if the new key hasn't been set already — never clobber
+    // a fresh preference written under the new name.
+    if (localStorage.getItem(STORAGE_KEYS.offline) === null) {
+      localStorage.setItem(STORAGE_KEYS.offline, legacy);
+    }
+    localStorage.removeItem(LEGACY_OFFLINE_KEY);
+  }
+
+  migrateLegacyOfflineKey();
+
+  let activeExpanded = $state(readStoredBool(STORAGE_KEYS.active, true));
+  let onlineElsewhereExpanded = $state(
+    readStoredBool(STORAGE_KEYS.onlineElsewhere, true),
   );
+  let offlineExpanded = $state(readStoredBool(STORAGE_KEYS.offline, false));
+
+  $effect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.active, activeExpanded ? '1' : '0');
+    }
+  });
   $effect(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(
-        'claude-comms.offlineExpanded',
-        offlineExpanded ? '1' : '0',
+        STORAGE_KEYS.onlineElsewhere,
+        onlineElsewhereExpanded ? '1' : '0',
       );
+    }
+  });
+  $effect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.offline, offlineExpanded ? '1' : '0');
     }
   });
 
@@ -233,42 +293,120 @@
     </div>
   {/if}
 
-  {#if filteredActive.length > 0}
-    <div class="members-section" data-testid="members-active-section">
-      In #{activeChannelName} ({filteredActive.length})
-    </div>
-    <div class="members-list">
-      {#each filteredActive as member (member.key)}
-        {@render onlineRow(member, false)}
-      {/each}
-    </div>
-  {/if}
+  <!--
+    M-FIX (v0.3.3): all three section headers ALWAYS render, regardless of
+    count. Headers are buttons with chevron + aria-expanded; the body region
+    is owned by aria-controls={bodyId}. When a section is empty, an inline
+    muted empty-state line stands in for the rows so the section still feels
+    inhabited. When collapsed, the body region is omitted from the DOM so
+    screen readers don't announce stale content.
+  -->
 
-  {#if filteredOnlineElsewhere.length > 0}
-    <div class="members-section" data-testid="members-online-elsewhere-section">
-      Online ({filteredOnlineElsewhere.length})
-    </div>
-    <div class="members-list">
-      {#each filteredOnlineElsewhere as member (member.key)}
-        {@render onlineRow(member, true)}
-      {/each}
-    </div>
-  {/if}
-
-  {#if filteredOffline.length > 0}
-    <button
-      class="members-section members-section-button"
-      data-testid="members-offline-section"
-      onclick={() => (offlineExpanded = !offlineExpanded)}
-      aria-expanded={offlineExpanded}
+  <!-- Active members in the current channel. -->
+  <button
+    class="members-section members-section-button"
+    data-testid="members-active-section"
+    onclick={() => (activeExpanded = !activeExpanded)}
+    aria-expanded={activeExpanded}
+    aria-controls="members-active-body"
+  >
+    <span
+      class="members-section-chevron"
+      class:expanded={activeExpanded}
+      aria-hidden="true"
+    >▶</span>
+    <span class="members-section-label">In #{activeChannelName}</span>
+    <span class="members-section-count" data-testid="members-active-count">
+      {filteredActive.length}
+    </span>
+  </button>
+  {#if activeExpanded}
+    <div
+      class="members-list"
+      id="members-active-body"
+      data-testid="members-active-body"
     >
-      <span class="members-section-chevron" aria-hidden="true">
-        {offlineExpanded ? '▼' : '▶'}
-      </span>
-      Offline ({filteredOffline.length})
-    </button>
-    {#if offlineExpanded}
-      <div class="members-list">
+      {#if filteredActive.length === 0}
+        <div
+          class="members-empty"
+          data-testid="members-active-empty"
+        >No one is here yet. Invite someone.</div>
+      {:else}
+        {#each filteredActive as member (member.key)}
+          {@render onlineRow(member, false)}
+        {/each}
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Online elsewhere: online globally, not joined to the active channel. -->
+  <button
+    class="members-section members-section-button"
+    data-testid="members-online-elsewhere-section"
+    onclick={() => (onlineElsewhereExpanded = !onlineElsewhereExpanded)}
+    aria-expanded={onlineElsewhereExpanded}
+    aria-controls="members-online-elsewhere-body"
+  >
+    <span
+      class="members-section-chevron"
+      class:expanded={onlineElsewhereExpanded}
+      aria-hidden="true"
+    >▶</span>
+    <span class="members-section-label">Online elsewhere</span>
+    <span
+      class="members-section-count"
+      data-testid="members-online-elsewhere-count"
+    >{filteredOnlineElsewhere.length}</span>
+  </button>
+  {#if onlineElsewhereExpanded}
+    <div
+      class="members-list"
+      id="members-online-elsewhere-body"
+      data-testid="members-online-elsewhere-body"
+    >
+      {#if filteredOnlineElsewhere.length === 0}
+        <div
+          class="members-empty"
+          data-testid="members-online-elsewhere-empty"
+        >No one is online elsewhere</div>
+      {:else}
+        {#each filteredOnlineElsewhere as member (member.key)}
+          {@render onlineRow(member, true)}
+        {/each}
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Offline: known participants with no live connection. -->
+  <button
+    class="members-section members-section-button"
+    data-testid="members-offline-section"
+    onclick={() => (offlineExpanded = !offlineExpanded)}
+    aria-expanded={offlineExpanded}
+    aria-controls="members-offline-body"
+  >
+    <span
+      class="members-section-chevron"
+      class:expanded={offlineExpanded}
+      aria-hidden="true"
+    >▶</span>
+    <span class="members-section-label">Offline</span>
+    <span class="members-section-count" data-testid="members-offline-count">
+      {filteredOffline.length}
+    </span>
+  </button>
+  {#if offlineExpanded}
+    <div
+      class="members-list"
+      id="members-offline-body"
+      data-testid="members-offline-body"
+    >
+      {#if filteredOffline.length === 0}
+        <div
+          class="members-empty"
+          data-testid="members-offline-empty"
+        >No one offline yet</div>
+      {:else}
         {#each filteredOffline as member (member.key)}
           <div
             class="member"
@@ -297,8 +435,8 @@
             </div>
           </div>
         {/each}
-      </div>
-    {/if}
+      {/if}
+    </div>
   {/if}
 </aside>
 
@@ -395,19 +533,32 @@
     text-transform: uppercase;
   }
 
-  /* Offline section's chevron toggle. Visually identical to a static
-     .members-section label so the only affordance cue is the chevron. */
+  /*
+   * Section header button. M-FIX (v0.3.3): all three section headers
+   * (Active / Online elsewhere / Offline) use this same button surface;
+   * each owns its own chevron + count badge. Visually identical to the
+   * legacy static .members-section label except for the chevron, which
+   * is the disclosure affordance.
+   */
   .members-section-button {
     width: 100%;
+    /* Match .members-section padding so headers align with the rest of
+       the sidebar — same 10px/16px/4px box, just rendered as a button. */
+    padding: 10px 16px 4px;
     text-align: left;
     background: none;
     border: none;
     cursor: pointer;
     font-family: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: var(--text-faint);
+    text-transform: uppercase;
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-top: 8px;
+    margin-top: 4px;
   }
   .members-section-button:hover { color: var(--text-secondary); }
   .members-section-button:focus-visible {
@@ -415,11 +566,55 @@
     box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
     border-radius: 4px;
   }
+
+  .members-section-label {
+    /* Push the count to the far right via auto-margin on the count
+       element, so the label hugs the chevron. */
+    flex: 0 0 auto;
+  }
+  .members-section-count {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    /* Slightly larger than the uppercase letter-spaced label for
+       readability of the badge digits. */
+    letter-spacing: 0;
+  }
+
+  /*
+   * Chevron rotates from 0deg (collapsed) to 90deg (expanded). 150ms
+   * transition matches the request; honors prefers-reduced-motion below.
+   */
   .members-section-chevron {
     font-size: 8px;
     line-height: 1;
     width: 8px;
     display: inline-block;
+    transform: rotate(0deg);
+    transform-origin: center;
+    transition: transform 150ms ease;
+  }
+  .members-section-chevron.expanded {
+    transform: rotate(90deg);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .members-section-chevron {
+      transition: none;
+    }
+  }
+
+  /*
+   * Empty-state placeholder for a section whose filtered count is 0.
+   * Muted, one line, sits in the same .members-list container so the
+   * vertical rhythm of the sidebar stays stable whether or not rows
+   * are present.
+   */
+  .members-empty {
+    padding: 6px 10px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
   /* "in #X +N more" inline location chip for Online (elsewhere) rows.
