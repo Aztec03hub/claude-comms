@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] -- 2026-05-12
+
+Minor release. Two distinct correctness fixes plus a polish piece. The headline change is **participant registry persistence** — the standing-agent use case (Claude Code agents that hold a key across daemon restarts) was structurally broken in 0.2.x and is now correct. Also lands the worker-src CSP fix (which the v0.2.3 web-UI brief flagged as the actual functional half of Bug 1) and the project's first favicon.
+
 ### Fixed
 
-- **Participant registry no longer evaporates on daemon restart** (Bug 3 from the user report; closes the "standing agent" use case). Prior to this change `ParticipantRegistry` was an in-memory dict — every `claude-comms stop && start` cycle silently invalidated every MCP-side participant key, so a Claude Code agent that joined and received key `96052c22` discovered after restart that its key was now "unknown" and had to call `comms_join` with `name` again. Fixed by adding a SQLite-backed `RegistryStore` at `~/.claude-comms/registry.db`. Schema covers participants, conversation memberships, per-conversation read cursors, and per-thread read cursors. WAL mode + `synchronous=NORMAL` + foreign keys ON; foreign key cascades clean up memberships and cursors when a participant is purged. **What is NOT persisted:** `Participant.connections` — that's ephemeral presence state. Rehydrated participants come back offline (`is_online == False`) and re-online via MQTT presence + `_ensure_mcp_connection` on next interaction.
+- **Bug 3 — Participant registry no longer evaporates on daemon restart** (closes the standing-agent use case). Prior to this change `ParticipantRegistry` was an in-memory dict — every `claude-comms stop && start` cycle silently invalidated every MCP-side participant key, so a Claude Code agent that joined and received key `96052c22` discovered after restart that its key was now "unknown" and had to call `comms_join` with `name` again. Fixed by adding a SQLite-backed `RegistryStore` at `~/.claude-comms/registry.db`. Schema covers participants, conversation memberships, per-conversation read cursors, and per-thread read cursors. WAL mode + `synchronous=NORMAL` + foreign keys ON; foreign key cascades clean up memberships and cursors when a participant is purged. **What is NOT persisted:** `Participant.connections` — that's ephemeral presence state. Rehydrated participants come back offline (`is_online == False`) and re-online via MQTT presence + `_ensure_mcp_connection` on next interaction.
+- **Bug 1 — MQTT Web Worker no longer blocked by CSP**. The daemon's CSP set `script-src 'self'` correctly strict but never set `worker-src` — per CSP spec, `worker-src` falls back to `script-src` when unset, and `script-src 'self'` does NOT permit `blob:` URIs. MQTT.js spawns its frame-parsing worker from a blob URL, so the worker was blocked. Symptom downstream: "Failed to parse MQTT message: SyntaxError: Unexpected end of JSON input" in DevTools console as the main-thread fallback choked on partial frames. Fixed by adding `worker-src 'self' blob:` to `build_csp()`. blob: URIs are same-origin by spec; this does not meaningfully widen the attack surface. New regression test `test_csp_worker_src_allows_blob` pins the directive.
+- **Bug 1 — `/favicon.ico` 404 closed**. Wheel previously shipped no favicon, so every browser load 404'd on `/favicon.ico`. Added `web/public/favicon.svg` (the Wave Stack design: ember-on-transparent 5-bar voice-wave silhouette, designed to read at 16×16). Vite copies `web/public/*` to the bundled `dist/` root automatically; `index.html` gains a `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`.
 
 ### Added
 
@@ -17,11 +23,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ParticipantRegistry(store=...)` kwarg** -- optional `RegistryStore` parameter on `__init__`. When provided, in-memory state is rehydrated from the store on construction and every mutating method (`join`, `leave`, `update_name`, `update_cursor`, `update_thread_cursor`, `advance_thread_cursors_to`) writes through atomically. Backward-compatible: `ParticipantRegistry()` with no kwarg keeps the legacy pure-in-memory behaviour the existing test suite relies on.
 - **`tests/test_registry_store.py`** -- 19 unit tests covering schema creation, WAL/FK PRAGMAs, round-trip persistence for participants/memberships/cursors, FK cascade on `purge_stale`, concurrent writes, idempotent close, and explicit assertion that `connections` has no schema column.
 - **`tests/test_registry_persistence.py`** -- 10 end-to-end tests covering the integrated `ParticipantRegistry(store=...)` path: participants survive restart, memberships survive restart, leave persists, name change persists, both cursor types persist, connections are NOT persisted (offline on rehydration), `tool_comms_join` with an existing key works after restart (the marquee bug-fix verification), `tool_comms_conversations` reflects pre-restart memberships, and `ParticipantRegistry()` without a store keeps pure-in-memory behaviour.
+- **`mockups/favicons/`** -- the 25-design picker page (`index.html` + individual SVGs under `svg/`) used to select the v0.3.0 favicon. Kept in-tree for future favicon iterations; the picked design lives at `mockups/favicons/svg/04-wave-stack.svg` and is copied to `web/public/favicon.svg` for the actual build.
+- **`web/scripts/screenshot-favicon-page.mjs`** -- Playwright helper that renders the picker page headlessly and dumps full-page + per-card screenshots for visual verification.
 
 ### Changed
 
 - **`src/claude_comms/mcp_server.py:create_server`** -- now constructs a `RegistryStore` (at `~/.claude-comms/registry.db` by default, overridable via `registry.data_dir` in `config.yaml`) and passes it to `ParticipantRegistry`. The store is closed in the daemon's `finally` block so WAL checkpoints back into the main DB before process exit.
 - **`README.md`** -- new "Where state lives" section above the CLI reference describes which paths under `~/.claude-comms/` survive restart, why `connections` is intentionally not persisted, and how to back up or reset `registry.db`.
+
+### Verified
+
+- `build_csp(default_config)` now emits 9 directives including `worker-src 'self' blob:` -- existing 17 CSP tests still pass, +1 for the worker-src assertion.
+- Wheel rebuild (`python -m build`) packages `claude_comms/web/dist/favicon.svg` (1304 bytes) alongside index.html and the asset bundle.
+- Fresh-clone full pytest suite: **1197 passed, 0 failed** (1167 baseline + 29 registry tests + 1 worker-src CSP test).
+- ruff check + ruff format --check both clean across `src/` and `tests/`.
+- A separate verification-run agent confirmed all CI gates green on the v0.3.0 working tree before tagging.
+
+### Notes for upgraders
+
+- **No migration needed.** The daemon creates `~/.claude-comms/registry.db` on first startup of v0.3.0; if you have agents still holding 0.2.x in-memory keys, they'll need to call `comms_join` with `name` once more after upgrade to seed the new registry. After that, restarts are transparent.
+- **Web UI must hard-refresh.** The CSP header is read once at page load; a soft refresh may use the cached old policy. Use Ctrl+Shift+R / Cmd+Shift+R to force.
+- **Standing-agent pattern** (worker that holds a key across many tasks) is now usable but not yet documented. A `comms_wait_for_message` MCP tool to make idle-worker polling cheap is on the roadmap for v0.4 — see the v0.3.0 PR thread for the design discussion.
 
 ## [0.2.3] -- 2026-05-12
 
