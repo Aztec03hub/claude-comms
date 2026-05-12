@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] -- 2026-05-12
+
+Docs-only patch release. Re-publishes the rendered README so PyPI's project page picks up README fixes that wouldn't otherwise reach the cached upload from 0.2.1. No code changes.
+
+### Fixed
+
+- **CI badge in README** -- switched from GitHub's native `actions/workflows/ci.yml/badge.svg` (which has a 5-minute cache and showed `failing` on PyPI for ~5 min after the v0.2.1 push while the lint job was being fixed) to a `shields.io` badge with an explicit `branch=main` filter and a click-through link to the workflow page. Independent cache layer + visible link target.
+- **README rich-text rendering** -- two occurrences of an over-escaped backtick pattern (`` `\`code\`` ``) rendered on PyPI as the literal text `\code\` instead of the intended inline-code chip. Fixed by wrapping with double-backticks per CommonMark (`` `` `code` `` ``), which is the proper way to embed literal backticks inside an inline code span. Touched `README.md` lines describing the Web UI's rich-text rendering and the `RichText.svelte` parser.
+- **CHANGELOG retroactive backtick fixes** -- same over-escape pattern in the `web/src/lib/rich-text-parser.js` entry (under v0.2.0) and the "Format help button" entry (older release) updated for consistency. CHANGELOG.md is repo-only / not rendered on PyPI but the fix preserves the audit trail.
+- **Name capitalization in README** -- the project credit at the bottom of the README read "Phil Lafayette" but Phil's canonical capitalization is mid-cap: "Phil LaFayette" (matches the `authors` field in `pyproject.toml` and git author on every commit). Fixed.
+
+### Verified
+
+- README audited for any remaining `\\\`` / over-escape patterns. The `\*` markers in the MCP-tools table (`` `name`\* `` for "required parameter") are correct markdown idiom and render as `name`* with a literal asterisk -- intentional, left as-is.
+- `grep -rn 'Lafayette'` across `*.md` / `*.toml` / `*.json` / `*.py` / `*.yml` / `*.yaml` returns nothing.
+
 ## [0.2.1] -- 2026-05-12
 
 Patch release. v0.2.0 shipped to PyPI cleanly (web/dist bundled, daemon binds, install round-trip works) but had a cosmetic bug: `claude-comms --version` reported `0.1.0` because the in-code constant lagged `pyproject.toml`. Also lands CI hygiene work that had been queued behind the v0.2.0 publish dance.
@@ -132,7 +148,7 @@ Headline change: a clean break separating broadcast highlights (`mentions`) from
 - **`_ts_after()` helper** in `mcp_tools.py` -- timezone-aware cursor comparison fixing a mixed-timezone string-compare bug that was filtering out otherwise-visible messages.
 - **`/dm @user[, @user2] body` slash command** -- composer parses recipient tokens against the §6.2-A grammar (whitespace OR comma OR comma+whitespace separates tokens; tokens end at first non-`@<name>`), resolves names to keys via `store.participants`, and sends a whisper. Wire `recipients` always carries keys.
 - **Profile-card "Send DM" button** -- pre-fills the composer with `/dm @<name> ` via store-mediated `composerPrefill`, watched by `MessageInput.svelte` through `$effect`. Replaces the previous fragile `document.querySelector` + `input.value =` pattern.
-- **`web/src/lib/rich-text-parser.js`** -- pure parser splitting message bodies into segments: plain text, inline `\`code\`` chips, triple-backtick fenced blocks, bold `**text**`, italic `*text*`, strikethrough `~~text~~`. Drives `RichText.svelte`.
+- **`web/src/lib/rich-text-parser.js`** -- pure parser splitting message bodies into segments: plain text, inline `` `code` `` chips, triple-backtick fenced blocks, bold `**text**`, italic `*text*`, strikethrough `~~text~~`. Drives `RichText.svelte`.
 - **`web/src/lib/compose-overlay-segments.js`** -- composer overlay segmenter so backticked text colors live as you type without disrupting the textarea/mirror alignment.
 - **`web/src/components/RichText.svelte`** -- segment renderer used by `MessageBubble.svelte`.
 - **`web/src/lib/dm-parser.js`** -- `parseDM` slash-command parser (single-responsibility; intentionally separate from `mentions.js` autocomplete).
@@ -552,7 +568,7 @@ Versioned shared documents for multi-agent collaboration. Participants can creat
 - **Member list toggle** -- header member count pill toggles `MemberList` visibility via `showMemberList` state
 - **Member search** -- search input in MemberList filters online/offline members by name with `$derived` reactive filtering
 - **Attach file button** -- hidden file input triggered by attach button; shows "File sharing coming soon" notice
-- **Format help button** -- toggles Markdown formatting reference popover (`**bold** *italic* \`code\``)
+- **Format help button** -- toggles Markdown formatting reference popover (`` **bold** *italic* `code` ``)
 - **Code snippet insertion** -- inserts fenced code block template at cursor position in message input
 - **Context menu Forward action** -- copies message body to clipboard with toast notification
 - **Context menu Mark Unread action** -- calls `store.markUnread(message)` setting `unreadFrom` cursor
