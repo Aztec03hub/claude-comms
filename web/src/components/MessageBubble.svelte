@@ -10,6 +10,10 @@
   @prop {Function} onShowProfile - Callback invoked with a participant to show their profile card.
   @prop {Function} onReact - Callback invoked when adding a reaction to a message.
   @prop {Function} onMore - Callback for the "more actions" button.
+  @prop {Function} [onRetry] - Callback invoked with `message.id` when the
+    user clicks the Retry affordance on a `status === 'failed'` bubble.
+    Optional (UX G-62) — older callers that don't wire this just won't
+    show a Retry link, and the visual `!` indicator stays.
 -->
 <script>
   import Avatar from './Avatar.svelte';
@@ -18,7 +22,7 @@
   import ReactionBar from './ReactionBar.svelte';
   import ReadReceipt from './ReadReceipt.svelte';
   import LinkPreview from './LinkPreview.svelte';
-  import { Lock } from 'lucide-svelte';
+  import { Lock, AlertCircle } from 'lucide-svelte';
   import { formatTime, parseMentions, getParticipantColor } from '../lib/utils.js';
   import { parseRich as parseRichText } from '../lib/rich-text-parser.js';
 
@@ -213,7 +217,16 @@
     return coalesced;
   }
 
-  let { message, consecutive = false, currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onMore } = $props();
+  let { message, consecutive = false, currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onMore, onRetry } = $props();
+
+  // UX G-62 status visualization. Derived booleans drive the bubble badges
+  // (spinner / failed indicator + retry link). Messages without a `status`
+  // field (anything that arrived via MQTT from another sender, or any
+  // legacy local-echo message) are treated as fully delivered — `isSent`
+  // collapses to a no-op. Only outgoing messages from this client carry
+  // the status field today.
+  let isSending = $derived(message.status === 'sending');
+  let isFailed = $derived(message.status === 'failed');
 
   let isHuman = $derived(message.sender.type === 'human');
   let isMine = $derived(message.sender.key === currentUser?.key);
@@ -353,6 +366,26 @@
 
     {#if isMine && message.read_by}
       <ReadReceipt count={message.read_by} />
+    {/if}
+
+    {#if isSending}
+      <div class="msg-status msg-status-sending" data-testid="msg-status-sending" aria-label="Sending">
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="msg-status-label">Sending…</span>
+      </div>
+    {:else if isFailed}
+      <div class="msg-status msg-status-failed" data-testid="msg-status-failed">
+        <AlertCircle size={12} aria-hidden="true" />
+        <span class="msg-status-label">Failed to send</span>
+        {#if onRetry}
+          <button
+            type="button"
+            class="msg-retry"
+            data-testid="msg-retry"
+            onclick={() => onRetry(message.id)}
+          >Retry</button>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -705,5 +738,67 @@
     border-style: dashed !important;
     border-color: rgba(148, 130, 100, 0.3) !important;
     background: rgba(148, 130, 100, 0.04) !important;
+  }
+
+  /* ── UX G-62: per-message delivery status ── */
+  .msg-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    padding: 2px 6px;
+    margin-top: 2px;
+    border-radius: var(--radius-sm, 6px);
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .msg-status-sending {
+    color: var(--text-faint);
+  }
+
+  .msg-status-failed {
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.07);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+
+  .msg-status-label {
+    /* nothing — kept as a hook for theming */
+  }
+
+  /* Inline spinner for the 'sending' state — pure-CSS rotation so we don't
+     drag in a runtime animation dependency. Sized to match the failed-
+     state AlertCircle (12px) for visual parity. */
+  .spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    border-top-color: var(--text-muted, #999);
+    border-radius: 50%;
+    animation: msg-status-spin 0.85s linear infinite;
+  }
+
+  @keyframes msg-status-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .msg-retry {
+    background: transparent;
+    border: 0;
+    padding: 0 4px;
+    margin-left: 2px;
+    color: #fbbf24;
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: rgba(251, 191, 36, 0.4);
+  }
+
+  .msg-retry:hover {
+    color: #fcd34d;
+    text-decoration-color: var(--ember-400, #fbbf24);
   }
 </style>

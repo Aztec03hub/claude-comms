@@ -95,11 +95,31 @@ export class MqttChatStore {
   typingUsers = $state({});
   pinnedMessages = $state([]);
   inAppToasts = $state(true);
+  /**
+   * Local user identity. `name` defaults to the sentinel `'(unset)'` rather
+   * than any real human name so a fresh web client never silently posts
+   * messages under a wrong identity (UX G-43). `connect()` attempts
+   * `/api/identity` first; on success the daemon's name replaces this
+   * sentinel. If the daemon returns blank/missing, the sentinel survives
+   * and `nameUnset` flips true so the UI can surface a banner prompting
+   * the user to set a real name (full prompt modal deferred to a later
+   * step).
+   */
   userProfile = $state({
     key: '',
-    name: 'Phil',
+    name: '(unset)',
     type: 'human'
   });
+
+  /**
+   * True iff the local userProfile.name is still the sentinel `(unset)` —
+   * i.e. neither `/api/identity` nor localStorage produced a real name.
+   * App.svelte reads this to render a one-line "Set your name" banner;
+   * once the user picks a name (via Settings or a future onboarding modal)
+   * this flips false. Plain $state boolean — App.svelte can subscribe via
+   * a `$derived(store.nameUnset)` if it wants.
+   */
+  nameUnset = $state(true);
 
   /**
    * Reactive tick counter bumped whenever a chat message carrying an
@@ -201,6 +221,26 @@ export class MqttChatStore {
    * @type {Map<string, number>}
    */
   #recentlySelfUpdated = new Map();
+
+  /**
+   * Outgoing messages queued while we were disconnected from the broker
+   * (UX G-62). Each entry is `{ messageId, topic, payload }`. On reconnect
+   * (`#client.on('connect')`) `#drainPendingSends()` flushes them in
+   * insertion order; failures or queue overflow flip the bubble status to
+   * `'failed'` via `#updateLocalMessageStatus`.
+   *
+   * Cap = 100 entries. When the cap is exceeded the OLDEST entry is
+   * dropped (FIFO) and its bubble is marked `failed` with reason
+   * `"queue full"`. We choose drop-oldest because a long offline session
+   * is more likely to want the user's most-recent thoughts delivered than
+   * messages composed hours earlier; matches mainstream chat-client
+   * conventions (Slack, iMessage).
+   *
+   * @type {Array<{ messageId: string, topic: string, payload: string }>}
+   */
+  #pendingSends = [];
+  /** Hard cap on `#pendingSends` queue length. See field doc above. */
+  static #PENDING_SENDS_CAP = 100;
 
   /**
    * Fetch message history from the REST API for a given channel.
@@ -378,13 +418,16 @@ export class MqttChatStore {
   }
 
   // ── Derived State ──
-  // $derived.by() with explicit dependency reads to ensure Svelte 5
-  // tracks mutations from async MQTT callbacks (Bug #4 fix).
+  // Svelte 5 $state proxies track every synchronous property read inside a
+  // $derived expression — including `.filter()`, `.find()`, `Object.values`,
+  // `Object.keys`, etc., because they all read the proxy. There is no need
+  // for explicit `_len = this.messages.length` "dependency-pinning" reads;
+  // the proxy intercepts the iteration. See the Svelte 5 `$derived` docs
+  // section "Understanding dependencies" for the precise model.
+  // A historical mis-fix here added `_len`/`_p` placeholder reads under the
+  // belief that array iteration didn't track; that was a cargo-cult and has
+  // been removed (eng R-1).
   activeMessages = $derived.by(() => {
-    // Read .length to ensure proxy dependency is registered
-    const _len = this.messages.length;
-    const _ch = this.activeChannel;
-    const _cursors = this.threadSeenCursors;
     // Top-level only: thread replies (reply_to !== null) live in the right-
     // side ThreadPanel data source (`activeChannelReplies` below), not the
     // main timeline. Plan §5 — channel feed is roots only; chip on the root
@@ -394,11 +437,13 @@ export class MqttChatStore {
     // cursor (client-side, mirrors the per-conv `ch.unreadFrom` / `ch.unread`
     // pattern at this:782,991-1015). Phoenix's `comms_check.thread_unread`
     // MCP field serves non-web clients; web computes the same shape locally.
-    const roots = this.messages.filter(m => m.channel === _ch && !m.reply_to);
-    const replies = this.messages.filter(m => m.channel === _ch && m.reply_to);
+    const ch = this.activeChannel;
+    const cursors = this.threadSeenCursors;
+    const roots = this.messages.filter(m => m.channel === ch && !m.reply_to);
+    const replies = this.messages.filter(m => m.channel === ch && m.reply_to);
     return roots.map(root => {
       if (!root.thread_reply_count) return root;
-      const cursorTs = _cursors[root.id] || null;
+      const cursorTs = cursors[root.id] || null;
       const unreadCount = cursorTs
         ? replies.filter(r => r.reply_to === root.id && r.ts > cursorTs).length
         : (root.thread_reply_count || 0);
@@ -412,33 +457,24 @@ export class MqttChatStore {
   // reply_to === root.id). Threads stay client-side derived because the
   // firehose MQTT topic carries all replies anyway and there is no per-
   // thread WebSocket in the web data path.
-  activeChannelReplies = $derived.by(() => {
-    const _len = this.messages.length;
-    const _ch = this.activeChannel;
-    return this.messages.filter(m => m.channel === _ch && m.reply_to);
-  });
+  activeChannelReplies = $derived(
+    this.messages.filter(m => m.channel === this.activeChannel && m.reply_to)
+  );
 
-  activeChannelMeta = $derived.by(() => {
-    const _len = this.channels.length;
-    const _ch = this.activeChannel;
-    return this.channels.find(c => c.id === _ch);
-  });
+  activeChannelMeta = $derived(
+    this.channels.find(c => c.id === this.activeChannel)
+  );
 
-  starredChannels = $derived.by(() => {
-    const _len = this.channels.length;
-    return this.channels.filter(c => c.starred);
-  });
+  starredChannels = $derived(this.channels.filter(c => c.starred));
 
-  onlineParticipants = $derived.by(() => {
-    const _p = this.participants;
-    return Object.values(_p).filter(p => Object.keys(p.connections).length > 0);
-  });
+  onlineParticipants = $derived(
+    Object.values(this.participants).filter(p => Object.keys(p.connections).length > 0)
+  );
 
   // Offline = entry exists but connections is empty (kept briefly for display)
-  offlineParticipants = $derived.by(() => {
-    const _p = this.participants;
-    return Object.values(_p).filter(p => Object.keys(p.connections).length === 0);
-  });
+  offlineParticipants = $derived(
+    Object.values(this.participants).filter(p => Object.keys(p.connections).length === 0)
+  );
 
   /**
    * v0.3.2 — three-state MemberList feeds.
@@ -457,11 +493,10 @@ export class MqttChatStore {
    * Sort: alphabetical by name within each section. Stable under churn.
    */
   activeMembers = $derived.by(() => {
-    const _p = this.participants;
-    const _ch = this.activeChannel;
-    const _cm = this.channelMembers;
-    const memberKeys = _cm[_ch] ? new Set(Object.keys(_cm[_ch])) : new Set();
-    return Object.values(_p)
+    const ch = this.activeChannel;
+    const cm = this.channelMembers;
+    const memberKeys = cm[ch] ? new Set(Object.keys(cm[ch])) : new Set();
+    return Object.values(this.participants)
       .filter(
         (p) =>
           memberKeys.has(p.key) && Object.keys(p.connections).length > 0,
@@ -470,15 +505,14 @@ export class MqttChatStore {
   });
 
   onlineElsewhere = $derived.by(() => {
-    const _p = this.participants;
-    const _ch = this.activeChannel;
-    const _cm = this.channelMembers;
-    const _self = this.userProfile.key;
-    const memberKeys = _cm[_ch] ? new Set(Object.keys(_cm[_ch])) : new Set();
-    return Object.values(_p)
+    const ch = this.activeChannel;
+    const cm = this.channelMembers;
+    const self = this.userProfile.key;
+    const memberKeys = cm[ch] ? new Set(Object.keys(cm[ch])) : new Set();
+    return Object.values(this.participants)
       .filter(
         (p) =>
-          p.key !== _self &&
+          p.key !== self &&
           !memberKeys.has(p.key) &&
           Object.keys(p.connections).length > 0,
       )
@@ -503,12 +537,12 @@ export class MqttChatStore {
    * @returns {string[]}
    */
   getMemberConversations(key) {
-    const _cm = this.channelMembers;
-    const _ch = this.activeChannel;
+    const cm = this.channelMembers;
+    const activeCh = this.activeChannel;
     const out = [];
-    for (const conv of Object.keys(_cm)) {
-      if (conv === _ch) continue;
-      if (_cm[conv] && _cm[conv][key]) {
+    for (const conv of Object.keys(cm)) {
+      if (conv === activeCh) continue;
+      if (cm[conv] && cm[conv][key]) {
         out.push(conv);
       }
     }
@@ -517,14 +551,13 @@ export class MqttChatStore {
   }
 
   activeTypingUsers = $derived.by(() => {
-    const _t = this.typingUsers;
-    const _ch = this.activeChannel;
-    const _key = this.userProfile.key;
-    return Object.entries(_t)
+    const ch = this.activeChannel;
+    const selfKey = this.userProfile.key;
+    return Object.entries(this.typingUsers)
       .filter(([key, info]) => {
-        return info.channel === _ch
+        return info.channel === ch
           && info.typing
-          && key !== _key
+          && key !== selfKey
           && (Date.now() - new Date(info.ts).getTime()) < TYPING_TTL_MS;
       })
       .map(([key, info]) => ({
@@ -547,13 +580,14 @@ export class MqttChatStore {
    * connections (matching the MemberList.getActivity selection logic).
    */
   activeActivities = $derived.by(() => {
-    const _p = this.participants;
-    const _ch = this.activeChannel;
-    const _key = this.userProfile.key;
+    // Read activeChannel so the derived recomputes on channel switches even
+    // though the current return value is global (see the trailing note).
+    void this.activeChannel;
+    const selfKey = this.userProfile.key;
     const now = Date.now();
     const out = [];
-    for (const [key, p] of Object.entries(_p)) {
-      if (key === _key) continue;
+    for (const [key, p] of Object.entries(this.participants)) {
+      if (key === selfKey) continue;
       // Scope to current channel: participant must be a member.
       // (Use the same membership check the rest of the store relies on —
       // online + connections present.)
@@ -584,23 +618,17 @@ export class MqttChatStore {
     // MCP claudes the way it does for typing. This matches the v4 spec
     // ("activity is always per-conversation broadcast"); we surface it
     // only when the participant is also online.
-    return _ch ? out : out;
+    return out;
   });
 
-  activePinnedMessages = $derived.by(() => {
-    const _len = this.pinnedMessages.length;
-    const _ch = this.activeChannel;
-    return this.pinnedMessages.filter(m => m.channel === _ch);
-  });
+  activePinnedMessages = $derived(
+    this.pinnedMessages.filter(m => m.channel === this.activeChannel)
+  );
 
-  onlineCount = $derived.by(() => {
-    return this.onlineParticipants.length;
-  });
+  onlineCount = $derived(this.onlineParticipants.length);
 
   /** Total number of messages across all channels. */
-  messageCount = $derived.by(() => {
-    return this.messages.length;
-  });
+  messageCount = $derived(this.messages.length);
 
   /**
    * Look up a channel by its ID.
@@ -631,14 +659,23 @@ export class MqttChatStore {
     this.#restoreUnreadMarkers();
 
     // Fetch identity from the daemon config so web + TUI share the same key.
-    // Falls back to localStorage if the daemon is not running.
+    // Falls back to localStorage if the daemon is not running. UX G-43:
+    // never silently default to a real human name — the sentinel `(unset)`
+    // survives if no source produces a real name, and `nameUnset` drives a
+    // banner instead.
     try {
       const res = await fetch(API_BASE + '/api/identity');
       if (res.ok) {
         const identity = await res.json();
         this.userProfile.key = identity.key;
-        this.userProfile.name = identity.name;
-        this.userProfile.type = identity.type;
+        // Adopt the daemon's name ONLY if it's non-empty. A blank daemon
+        // identity should not overwrite our sentinel — that would silently
+        // empty the displayed name without surfacing the unset state.
+        if (typeof identity.name === 'string' && identity.name.trim().length > 0) {
+          this.userProfile.name = identity.name;
+          this.nameUnset = false;
+        }
+        if (identity.type) this.userProfile.type = identity.type;
       }
     } catch {
       console.error('[claude-comms] Failed to fetch identity from', API_BASE + '/api/identity');
@@ -646,16 +683,23 @@ export class MqttChatStore {
 
     // If identity fetch failed (shouldn't happen — daemon serves this page),
     // generate a temporary key. No localStorage caching — the daemon config
-    // is the single source of truth for identity.
+    // is the single source of truth for identity. Name stays `(unset)` so
+    // the UI banner fires.
     if (!this.userProfile.key) {
       this.userProfile.key = generateKey();
-      this.userProfile.name = 'Anonymous';
     }
 
-    // Restore user name from localStorage only (not key — key comes from daemon)
-    if (!this.userProfile.name || this.userProfile.name === 'Phil') {
+    // Restore user name from localStorage only (not key — key comes from
+    // daemon). Only fall back to a stored name if the daemon didn't already
+    // provide one, AND the stored value is a real non-empty string. The
+    // legacy `'Phil'` hardcoded default is gone (UX G-43); we no longer
+    // need to special-case it here.
+    if (this.nameUnset) {
       const storedName = safeStorage.getItem('claude-comms-user-name');
-      if (storedName) this.userProfile.name = storedName;
+      if (storedName && storedName.trim().length > 0) {
+        this.userProfile.name = storedName;
+        this.nameUnset = false;
+      }
     }
 
     const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + this.#instanceId;
@@ -690,6 +734,13 @@ export class MqttChatStore {
       this.#backoffActive = false;
       this.#subscribeAll();
       this.#publishPresence('online');
+
+      // UX G-62: flush any messages the user composed while we were
+      // disconnected. Drains FIFO; each item carries its own (topic,
+      // payload) snapshot so the active channel at drain time doesn't
+      // matter. Done BEFORE history fetch so the user's queued sends are
+      // the first thing the broker sees on reconnect.
+      this.#drainPendingSends();
 
       // Self-add: create user entry with our web connection
       const now = new Date().toISOString();
@@ -922,20 +973,185 @@ export class MqttChatStore {
       recipients: recipients?.length ? [...recipients] : null,
       body: body.trim(),
       reply_to: replyTo,
-      conv: this.activeChannel
+      conv: this.activeChannel,
+      // Per-message delivery status (UX G-62). Outgoing local-echo bubbles
+      // start as 'sending'. On successful publish (or queued + drained on
+      // reconnect) → 'sent'. On publish error or queue-full eviction →
+      // 'failed' (then user can call retryMessage(id)).
+      status: 'sending',
     };
 
     const topic = TOPIC_PREFIX + '/conv/' + this.activeChannel + '/messages';
+    const payload = JSON.stringify(msg);
 
     // Local echo: add message immediately so it appears even without broker
     this.#handleChatMessage(this.activeChannel, msg);
 
     if (this.#client && this.connected) {
-      this.#client.publish(topic, JSON.stringify(msg), { qos: 1 });
+      this.#publishOutgoing(msg.id, topic, payload);
+    } else {
+      // Disconnected — queue instead of silently dropping (UX G-62, the
+      // previous behavior). The bubble stays in 'sending' until the
+      // queue drains on reconnect.
+      this.#queuePendingSend(msg.id, topic, payload);
     }
 
     // Stop typing indicator
     this.#publishTyping(false);
+  }
+
+  /**
+   * Publish an outgoing message to the broker and update its local-echo
+   * bubble status. On success → `'sent'`. On error (synchronous throw or
+   * async callback err) → `'failed'`. Used both by `sendMessage` for the
+   * happy path and by `#drainPendingSends` / `retryMessage` for queued
+   * messages.
+   *
+   * @param {string} messageId - Local-echo message id (the UUID stamped
+   *   onto the bubble at compose time).
+   * @param {string} topic - MQTT topic to publish on.
+   * @param {string} payload - Stringified JSON payload.
+   */
+  #publishOutgoing(messageId, topic, payload) {
+    if (!this.#client) {
+      this.#updateLocalMessageStatus(messageId, 'failed');
+      return;
+    }
+    try {
+      this.#client.publish(topic, payload, { qos: 1 }, (err) => {
+        if (err) {
+          this.#updateLocalMessageStatus(messageId, 'failed');
+        } else {
+          this.#updateLocalMessageStatus(messageId, 'sent');
+        }
+      });
+    } catch {
+      // mqtt.js shouldn't throw synchronously, but if a malformed payload
+      // somehow makes it here we surface the failure instead of silently
+      // leaving the bubble in 'sending' forever.
+      this.#updateLocalMessageStatus(messageId, 'failed');
+    }
+  }
+
+  /**
+   * Enqueue an outgoing send for later delivery (UX G-62). When the queue
+   * is full (`#PENDING_SENDS_CAP`), drops the OLDEST entry and marks its
+   * bubble `failed` so the user can retry / re-send. The new entry is
+   * always accepted — losing newest-on-overflow would be more surprising
+   * than losing the entry that has already been waiting longest.
+   *
+   * @param {string} messageId
+   * @param {string} topic
+   * @param {string} payload
+   */
+  #queuePendingSend(messageId, topic, payload) {
+    if (this.#pendingSends.length >= MqttChatStore.#PENDING_SENDS_CAP) {
+      const dropped = this.#pendingSends.shift();
+      if (dropped) {
+        this.#updateLocalMessageStatus(dropped.messageId, 'failed');
+      }
+    }
+    this.#pendingSends.push({ messageId, topic, payload });
+  }
+
+  /**
+   * Drain the pending-send queue in FIFO order. Called from the
+   * `'connect'` callback once the broker is back. Each entry goes through
+   * `#publishOutgoing`, which handles its own success/failure status
+   * update. Anything still in 'failed' afterwards keeps a `retryMessage`
+   * affordance via the bubble.
+   */
+  #drainPendingSends() {
+    if (this.#pendingSends.length === 0) return;
+    const queue = this.#pendingSends;
+    this.#pendingSends = [];
+    for (const item of queue) {
+      this.#publishOutgoing(item.messageId, item.topic, item.payload);
+    }
+  }
+
+  /**
+   * Mutate the `status` field of the locally-echoed message with the given
+   * id. No-op if the message has been deleted in the meantime (the user
+   * may have purged it or it may have aged out of the bounded array). The
+   * Svelte 5 `$state` proxy tracks the in-place property write — no
+   * immutable rebuild needed (the message object identity is what
+   * MessageBubble keys on).
+   *
+   * @param {string} messageId
+   * @param {'sending' | 'sent' | 'failed'} status
+   */
+  #updateLocalMessageStatus(messageId, status) {
+    const msg = this.messages.find((m) => m.id === messageId);
+    if (!msg) return;
+    msg.status = status;
+  }
+
+  /**
+   * Test-only seam: install a stub mqtt client + force the `connected`
+   * flag. Lets unit tests exercise `#publishOutgoing` and the retry path
+   * without standing up a real broker. Not part of the public production
+   * API — present here because the private `#client` slot isn't reachable
+   * from outside the class. Used by `tests/mqtt-store-pending-sends.spec.js`.
+   *
+   * @param {object} client - mqtt.js-compatible stub (must implement
+   *   `publish(topic, payload, opts, cb)`).
+   * @param {boolean} connected - whether to flag the store as connected
+   *   after installation.
+   */
+  _installTestClient(client, connected = true) {
+    this.#client = client;
+    this.connected = connected;
+  }
+
+  /**
+   * Test-only seam: simulate the `'connect'` event callback's queue
+   * flush, without actually opening a real broker socket. Mirrors what
+   * the production `#client.on('connect', …)` handler does for the
+   * G-62 path (subscribe/presence/history are not relevant for queue
+   * tests, so this seam covers only the drain step).
+   */
+  _drainPendingSendsForTest() {
+    this.#drainPendingSends();
+  }
+
+  /**
+   * Test-only inspector: returns the current pending-send queue size.
+   * Useful for asserting the queue is empty after a simulated drain.
+   */
+  _pendingSendsLengthForTest() {
+    return this.#pendingSends.length;
+  }
+
+  /**
+   * Retry a message previously marked `'failed'`. Flips status back to
+   * `'sending'` and either publishes (if connected) or re-queues (if not).
+   * No-op if the id is unknown or its status is anything other than
+   * `'failed'` — guards against double-publish if the user clicks Retry
+   * twice in quick succession.
+   *
+   * @param {string} messageId
+   */
+  retryMessage(messageId) {
+    const msg = this.messages.find((m) => m.id === messageId);
+    if (!msg) return;
+    if (msg.status !== 'failed') return;
+
+    const topic = TOPIC_PREFIX + '/conv/' + (msg.channel || msg.conv || this.activeChannel) + '/messages';
+    // Re-serialize without our internal `status` and `channel` fields —
+    // they're local-echo metadata only, not part of the wire format.
+    const wire = { ...msg };
+    delete wire.status;
+    delete wire.channel;
+    const payload = JSON.stringify(wire);
+
+    msg.status = 'sending';
+
+    if (this.#client && this.connected) {
+      this.#publishOutgoing(msg.id, topic, payload);
+    } else {
+      this.#queuePendingSend(msg.id, topic, payload);
+    }
   }
 
   /**
