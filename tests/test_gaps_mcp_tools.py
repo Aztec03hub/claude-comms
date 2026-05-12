@@ -276,9 +276,7 @@ class TestRegistryConcurrency:
 
         def join_thread(name, conv):
             try:
-                r = asyncio.run(
-                    tool_comms_join(registry, name=name, conversation=conv)
-                )
+                r = asyncio.run(tool_comms_join(registry, name=name, conversation=conv))
                 results[name] = r
             except Exception as e:
                 errors.append(e)

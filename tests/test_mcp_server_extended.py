@@ -185,7 +185,9 @@ class TestGetChannelParticipants:
         """After a participant leaves, they should not appear in the list."""
         import claude_comms.mcp_server as srv
 
-        join_result = await tool_comms_join(registry, name="alice", conversation="general")
+        join_result = await tool_comms_join(
+            registry, name="alice", conversation="general"
+        )
         key = join_result["key"]
         registry.leave(key, "general")
 

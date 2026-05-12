@@ -499,7 +499,9 @@ class TestParticipantRegistryIntegration:
     @pytest.mark.asyncio
     async def test_name_change_updates_resolution(self) -> None:
         registry = ParticipantRegistry()
-        result = await tool_comms_join(registry, name="old-name", conversation="general")
+        result = await tool_comms_join(
+            registry, name="old-name", conversation="general"
+        )
         key = result["key"]
 
         registry.update_name(key, "new-name")

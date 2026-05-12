@@ -67,7 +67,9 @@ class TestCommsJoin:
 
     @pytest.mark.asyncio
     async def test_invalid_name(self, registry: ParticipantRegistry):
-        result = await tool_comms_join(registry, name="has spaces", conversation="general")
+        result = await tool_comms_join(
+            registry, name="has spaces", conversation="general"
+        )
         assert result.get("error") is True
 
     @pytest.mark.asyncio

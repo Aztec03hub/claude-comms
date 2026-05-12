@@ -435,7 +435,9 @@ class TestPresencePublishingOnJoin:
             # We need to call comms_join from the MCP server wrapper
             # which triggers the presence publish. Let's test via the
             # tool_comms_join + manual presence simulation instead.
-            result = await tool_comms_join(registry, name="test-pub", conversation="general")
+            result = await tool_comms_join(
+                registry, name="test-pub", conversation="general"
+            )
             assert "error" not in result
 
             # Simulate the presence publish that comms_join does

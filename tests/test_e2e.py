@@ -199,7 +199,9 @@ class TestTargetedMessaging:
 
         r_alice = await tool_comms_join(registry, name="alice", conversation="general")
         r_bob = await tool_comms_join(registry, name="bob", conversation="general")
-        r_charlie = await tool_comms_join(registry, name="charlie", conversation="general")
+        r_charlie = await tool_comms_join(
+            registry, name="charlie", conversation="general"
+        )
 
         result = await tool_comms_send(
             registry,
@@ -227,7 +229,9 @@ class TestTargetedMessaging:
 
         r_alice = await tool_comms_join(registry, name="alice", conversation="general")
         r_bob = await tool_comms_join(registry, name="bob", conversation="general")
-        r_charlie = await tool_comms_join(registry, name="charlie", conversation="general")
+        r_charlie = await tool_comms_join(
+            registry, name="charlie", conversation="general"
+        )
 
         result = await tool_comms_send(
             registry,
