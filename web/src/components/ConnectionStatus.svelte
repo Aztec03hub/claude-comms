@@ -1,15 +1,23 @@
 <!--
   @component ConnectionStatus
-  @description Displays a top-of-page banner showing MQTT connection state: connected (with participant count, auto-hides after 3s), connecting (with animated dots), or error (with retry countdown). Dismissable by the user.
+  @description Displays a top-of-page banner showing MQTT connection state: connected (with participant count, auto-hides after 3s), connecting (with animated dots), or error (with retry countdown). Dismissable by the user. After 5 failed reconnect attempts the banner shifts to an actionable "Cannot reach broker — [Retry now] [Reload page]" state (UX G-27).
   @prop {boolean} connected - Whether the MQTT connection is currently established.
   @prop {number} onlineCount - Number of participants currently online.
   @prop {string|null} error - Error message string when connection fails, or null.
+  @prop {(() => void) | undefined} onRetry - Optional callback invoked when the user clicks "Retry now" after the failure threshold. Wire to `store.connect()` from the parent. If omitted, the button is rendered but is a no-op.
+  @prop {number} failureThreshold - Number of failed reconnect attempts before switching to the actionable failure banner. Defaults to 5; exposed as a prop so tests can drive the transition deterministically.
 -->
 <script>
   import { untrack } from 'svelte';
   import { RefreshCw, X } from 'lucide-svelte';
 
-  let { connected = false, onlineCount = 0, error = null } = $props();
+  let {
+    connected = false,
+    onlineCount = 0,
+    error = null,
+    onRetry = undefined,
+    failureThreshold = 5,
+  } = $props();
   let retryCount = $state(0);
   let retryTimer = $state(null);
   let retrySeconds = $state(0);
@@ -17,6 +25,13 @@
   let autoHide = $state(false);
   let autoHideTimer = $state(null);
   let prevConnected = $state(undefined);
+
+  // UX G-27: once `retryCount` crosses `failureThreshold`, the banner stops
+  // claiming it is "still reconnecting" and surfaces two explicit affordances
+  // (Retry / Reload). We derive this rather than mutating extra state so the
+  // computation stays tied to the same counter the existing error effect
+  // increments on each failed attempt.
+  let reconnectFailed = $derived(retryCount >= failureThreshold);
 
   // Reset dismissed state when connection status changes; auto-hide connected banner.
   // prevConnected is read inside untrack() to prevent circular dependency.
@@ -85,6 +100,26 @@
       autoHideTimer = null;
     }
   }
+
+  // UX G-27: "Retry now" button handler. Calls the parent-supplied callback
+  // (wired to `store.connect()` in App.svelte). The attempt counter is NOT
+  // reset eagerly — if the retry fails we want to stay in the failure state.
+  // Successful connection clears `retryCount` via the existing error effect
+  // (the `else if (connected)` branch sets it back to 0).
+  function handleRetry() {
+    if (typeof onRetry === 'function') {
+      onRetry();
+    }
+  }
+
+  // UX G-27: "Reload page" button handler. `location.reload()` is wrapped so
+  // tests can stub the location object. Guard against missing `location`
+  // (jsdom-without-window edge cases).
+  function handleReload() {
+    if (typeof location !== 'undefined' && typeof location.reload === 'function') {
+      location.reload();
+    }
+  }
 </script>
 
 {#if dismissed}
@@ -95,18 +130,49 @@
     Connected &mdash; {onlineCount} participant{onlineCount !== 1 ? 's' : ''} online
   </div>
 {:else if !connected && error}
-  <div class="connection-banner error" data-testid="connection-status" role="alert" aria-live="assertive">
+  <div
+    class="connection-banner error"
+    class:failed={reconnectFailed}
+    data-testid="connection-status"
+    data-failed={reconnectFailed ? 'true' : 'false'}
+    role={reconnectFailed ? 'status' : 'alert'}
+    aria-live={reconnectFailed ? 'polite' : 'assertive'}
+  >
     <div class="connection-dot error-dot" aria-hidden="true"></div>
-    <span class="error-text">{error}</span>
-    <span class="retry-info">
-      {#if retrySeconds > 0}
-        <RefreshCw size={10} strokeWidth={2} />
-        Retrying in {retrySeconds}s
-      {:else}
-        <RefreshCw size={10} strokeWidth={2} class="retry-spin" />
-        Reconnecting...
-      {/if}
-    </span>
+    {#if reconnectFailed}
+      <span class="error-text">Cannot reach broker</span>
+      <span class="retry-actions">
+        <button
+          type="button"
+          class="cta-btn"
+          data-testid="connection-retry-btn"
+          onclick={handleRetry}
+          aria-label="Retry MQTT broker connection"
+        >
+          Retry now
+        </button>
+        <button
+          type="button"
+          class="cta-btn"
+          data-testid="connection-reload-btn"
+          onclick={handleReload}
+          aria-label="Reload the page"
+        >
+          Reload page
+        </button>
+      </span>
+    {:else}
+      <span class="error-text">{error}</span>
+      <span class="retry-info">
+        {#if retrySeconds > 0}
+          <RefreshCw size={10} strokeWidth={2} />
+          Retrying in {retrySeconds}s
+        {:else}
+          <RefreshCw size={10} strokeWidth={2} class="retry-spin" />
+          Reconnecting...
+        {/if}
+      </span>
+    {/if}
     <button class="dismiss-btn" onclick={dismiss} aria-label="Dismiss">
       <X size={12} strokeWidth={2} />
     </button>
@@ -272,5 +338,49 @@
   .dismiss-btn:hover {
     opacity: 1;
     background: rgba(255,255,255,0.1);
+  }
+
+  /* UX G-27: failure-state action buttons. Visual weight is higher than
+     the dismiss button (these are the primary affordance), but still
+     restrained to keep the banner from dominating the page. */
+  .retry-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+    flex-shrink: 0;
+  }
+
+  .cta-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(239,68,68,0.16);
+    border: 1px solid rgba(248,113,113,0.4);
+    color: #fecaca;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    line-height: 1.4;
+  }
+
+  .cta-btn:hover {
+    background: rgba(239,68,68,0.28);
+    border-color: rgba(248,113,113,0.6);
+    color: #fff;
+  }
+
+  .cta-btn:focus-visible {
+    outline: 2px solid rgba(248,113,113,0.8);
+    outline-offset: 1px;
+  }
+
+  /* When the banner shifts to the failure variant the indeterminate
+     animation would imply progress that isn't happening — drop it. */
+  .connection-banner.error.failed {
+    animation: none;
   }
 </style>
