@@ -186,6 +186,9 @@ class TestMessageRoundtrip:
             conv="general",
         )
         data = json.loads(msg.to_mqtt_payload())
+        # Six thread_*/mentions fields were added to the Message schema in
+        # the mentions/whispers + threaded-replies ships. They serialize as
+        # null on plain top-level messages but the keys are always present.
         assert set(data.keys()) == {
             "id",
             "ts",
@@ -194,6 +197,12 @@ class TestMessageRoundtrip:
             "body",
             "reply_to",
             "conv",
+            "mentions",
+            "thread_root_id",
+            "thread_reply_count",
+            "thread_last_ts",
+            "thread_last_author",
+            "thread_participants",
         }
         assert set(data["sender"].keys()) == {"key", "name", "type"}
 

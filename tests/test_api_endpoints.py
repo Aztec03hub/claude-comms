@@ -208,8 +208,11 @@ class TestGetChannelParticipants:
             assert len(result) == 1
             p = result[0]
             assert p["name"] == "alice"
-            assert p["client"] == "unknown"  # fallback when no connections
-            assert p["status"] == "offline"  # no active connections
+            # Claude-typed join synthesizes an `mcp` ConnectionInfo via
+            # _ensure_mcp_connection so the participant has client=mcp and
+            # status=online even before any explicit MQTT presence.
+            assert p["client"] == "mcp"
+            assert p["status"] == "online"
             assert "connections" in p
             assert "online" in p
             assert "key" in p
@@ -492,7 +495,11 @@ class TestClientTypeInPresence:
 
             result = get_channel_participants("general")
             assert len(result) == 1
-            assert result[0]["client"] == "unknown"
+            # Claude-typed join synthesizes an `mcp` ConnectionInfo via
+            # _ensure_mcp_connection, so `client` resolves to "mcp" (the
+            # synthesized connection's client_type) -- matching this test's
+            # name "..._includes_client_mcp".
+            assert result[0]["client"] == "mcp"
         finally:
             mod._registry = original
 

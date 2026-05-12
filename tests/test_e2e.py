@@ -1051,8 +1051,16 @@ class TestMultiParticipantEdgeCases:
     """Test multi-participant scenarios with edge cases."""
 
     @pytest.mark.asyncio
-    async def test_targeted_to_self(self) -> None:
-        """Sending a targeted message to yourself."""
+    async def test_targeted_to_self_is_rejected(self) -> None:
+        """Sending a targeted message to only yourself is rejected.
+
+        The recipient resolver drops the sender from the resolved set (you
+        already receive your own broadcast via the conversation topic), so a
+        send whose only recipient is the sender resolves to an empty set
+        and `tool_comms_send` returns an error rather than publishing a
+        no-op targeted message. This is the contract since the
+        mentions/whispers ship (commit 04a0501).
+        """
         registry = ParticipantRegistry()
         broker = MockBroker()
         r = await tool_comms_join(registry, name="alice", conversation="general")
@@ -1065,9 +1073,10 @@ class TestMultiParticipantEdgeCases:
             message="Note to self",
             recipients=["alice"],
         )
-        assert result["status"] == "sent"
-        msg = Message.model_validate(broker.get_messages()[0])
-        assert msg.is_for(r["key"])
+        assert result.get("error") is True
+        assert "recipients" in result.get("message", "").lower()
+        # Nothing should have been published.
+        assert broker.get_messages() == []
 
     @pytest.mark.asyncio
     async def test_targeted_by_key_and_name(self) -> None:

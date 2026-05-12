@@ -139,11 +139,15 @@ class TestGetChannelParticipants:
                 "online",
             }
             assert p["name"] == "alice"
-            assert p["client"] == "unknown"  # fallback when no connections
-            assert p["status"] == "offline"  # no active connections
+            # Claude-typed joins synthesize an `mcp` ConnectionInfo via
+            # _ensure_mcp_connection so per-connection state (activity,
+            # last_seen) has somewhere to land. That shows up here as a
+            # populated connections dict, client=mcp, status=online.
+            assert p["client"] == "mcp"
+            assert p["status"] == "online"
             assert p["type"] == "claude"
-            assert p["connections"] == {}
-            assert p["online"] is False
+            assert "mcp" in p["connections"]
+            assert p["online"] is True
         finally:
             srv._registry = original
 
