@@ -7,14 +7,23 @@
   @prop {Function} onToggleTheme - Callback invoked to toggle between dark and light themes.
 -->
 <script>
-  import { untrack } from 'svelte';
+  import { untrack, onDestroy } from 'svelte';
   import { X, User, Bell, Palette, Wifi } from 'lucide-svelte';
+  import { updateName as apiUpdateName } from '../lib/api.js';
 
   let { store, theme = 'dark', onClose, onToggleTheme } = $props();
 
   const MAX_NAME_LENGTH = 50;
+  const DEBOUNCE_MS = 500;
+  const SAVED_FADE_MS = 1500;
+  const ERROR_FADE_MS = 3000;
 
-  let displayName = $state(untrack(() => store?.userProfile?.name || 'Anonymous'));
+  // The initial profile name when the panel was opened. Used to revert the
+  // input + the store on failure (UX G-9).
+  const initialName = untrack(() => store?.userProfile?.name || 'Anonymous');
+
+  let displayName = $state(initialName);
+  let lastSavedName = $state(initialName);
   let nameError = $derived.by(() => {
     if (!displayName.trim()) return 'Name cannot be empty.';
     if (displayName.length > MAX_NAME_LENGTH) return 'Name must be ' + MAX_NAME_LENGTH + ' characters or fewer.';
@@ -22,6 +31,96 @@
   });
   let desktopNotifications = $state(Notification?.permission === 'granted');
   let inAppToasts = $state(untrack(() => store?.inAppToasts ?? true));
+
+  /**
+   * Inline rename status surfaced near the name input under aria-live
+   * polite. `kind` discriminates style classes; `text` is the rendered
+   * copy. `kind` is one of: 'idle' | 'saving' | 'saved' | 'error' |
+   * 'blocked'. (UX G-9.)
+   */
+  let nameStatus = $state({ kind: 'idle', text: '' });
+
+  // Pending debounce + fade timers, cleared on each new keystroke or
+  // unmount to avoid stale state writes.
+  let debounceTimer = null;
+  let fadeTimer = null;
+
+  function clearTimers() {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (fadeTimer !== null) {
+      clearTimeout(fadeTimer);
+      fadeTimer = null;
+    }
+  }
+
+  function setStatus(kind, text, fadeMs = 0) {
+    nameStatus = { kind, text };
+    if (fadeTimer !== null) {
+      clearTimeout(fadeTimer);
+      fadeTimer = null;
+    }
+    if (fadeMs > 0) {
+      fadeTimer = setTimeout(() => {
+        nameStatus = { kind: 'idle', text: '' };
+        fadeTimer = null;
+      }, fadeMs);
+    }
+  }
+
+  /**
+   * Persist a confirmed-good rename to localStorage so a future session
+   * can re-seed before the daemon responds. Mirrors the pre-G-9 write
+   * behavior but moves it AFTER server confirmation so a failed rename
+   * never leaves the local store out of sync.
+   */
+  function persistLocally(name) {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('claude-comms-user-name', name);
+      }
+    } catch {
+      // localStorage unavailable -- silently ignore
+    }
+  }
+
+  async function commitNameChange(candidate) {
+    // Guard against keystrokes that landed during the in-flight POST and
+    // moved `displayName` somewhere new; only land the change if it still
+    // matches what we sent.
+    const inFlight = candidate;
+
+    setStatus('saving', 'Saving...');
+    const key = store?.userProfile?.key || '';
+    const result = await apiUpdateName(key, candidate);
+
+    // If the user kept typing while in-flight, abandon this result --
+    // the new value's debounce will issue its own POST.
+    if (displayName !== inFlight) {
+      return;
+    }
+
+    if (result && result.success) {
+      if (store?.userProfile) {
+        store.userProfile.name = result.name || candidate;
+      }
+      if (store && store.nameUnset) {
+        store.nameUnset = false;
+      }
+      lastSavedName = result.name || candidate;
+      persistLocally(lastSavedName);
+      setStatus('saved', 'Saved', SAVED_FADE_MS);
+    } else {
+      const reason = (result && result.error) || 'Unknown error.';
+      // Revert the input to the last server-confirmed name. The store's
+      // userProfile.name was not mutated (we wait for confirmation) so
+      // no rollback there is required.
+      displayName = lastSavedName;
+      setStatus('error', 'Error: ' + reason, ERROR_FADE_MS);
+    }
+  }
 
   function handleNameChange(e) {
     const val = e.target.value;
@@ -32,20 +131,43 @@
     } else {
       displayName = val;
     }
-    // Only persist valid names
-    if (displayName.trim()) {
-      if (store?.userProfile) {
-        store.userProfile.name = displayName;
-      }
-      try {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('claude-comms-user-name', displayName);
-        }
-      } catch {
-        // localStorage unavailable -- silently ignore
-      }
+
+    // Always cancel any pending debounce -- we restart the timer on
+    // every keystroke. (Also cancels any fading "Saved"/"Error" hint so
+    // the next status flips in cleanly.)
+    clearTimers();
+
+    const candidate = displayName.trim();
+    if (!candidate) {
+      // Empty / whitespace -- the derived nameError already surfaces the
+      // problem; do not call the backend.
+      return;
     }
+    if (candidate.length > MAX_NAME_LENGTH) {
+      return;
+    }
+    if (candidate === lastSavedName) {
+      // No-op rename (typed-then-erased back to the saved value).
+      setStatus('idle', '');
+      return;
+    }
+
+    // Offline guard. Block the backend call with a clear hint per the
+    // UX G-9 brief.
+    if (!store?.connected) {
+      setStatus('blocked', 'Cannot rename while disconnected. Reconnect first.');
+      return;
+    }
+
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      commitNameChange(candidate);
+    }, DEBOUNCE_MS);
   }
+
+  onDestroy(() => {
+    clearTimers();
+  });
 
   function toggleDesktopNotifications() {
     if (!desktopNotifications && Notification?.permission !== 'granted') {
@@ -94,6 +216,14 @@
         {:else}
           <span class="field-hint">{displayName.length}/{MAX_NAME_LENGTH}</span>
         {/if}
+        <span
+          class="name-status name-status-{nameStatus.kind}"
+          data-testid="settings-name-status"
+          data-status-kind={nameStatus.kind}
+          aria-live="polite"
+        >
+          {nameStatus.text}
+        </span>
       </div>
       <div class="setting-row">
         <label class="setting-label" for="settings-participant-key">Participant Key</label>
@@ -314,6 +444,34 @@
     color: var(--text-faint);
     margin-top: 2px;
     text-align: right;
+  }
+
+  .name-status {
+    font-size: 11px;
+    margin-top: 4px;
+    min-height: 14px;
+    transition: opacity 200ms ease;
+  }
+
+  .name-status-idle {
+    color: var(--text-faint);
+    opacity: 0;
+  }
+
+  .name-status-saving {
+    color: var(--text-faint);
+  }
+
+  .name-status-saved {
+    color: #22c55e;
+  }
+
+  .name-status-error {
+    color: var(--ember-400);
+  }
+
+  .name-status-blocked {
+    color: var(--ember-400);
   }
 
   .setting-readonly {

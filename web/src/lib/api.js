@@ -214,3 +214,114 @@ export async function apiPost(path, body) {
     }
   }
 }
+
+/**
+ * Update the local participant's display name via the daemon's MCP
+ * `comms_update_name` tool (UX G-9 showstopper — wires the SettingsPanel
+ * rename into the protocol layer instead of silently writing only to
+ * localStorage).
+ *
+ * Transport: the daemon's FastMCP server runs with `stateless_http=True`
+ * + `json_response=True`, so a one-shot JSON-RPC `tools/call` POST against
+ * the `/mcp` endpoint succeeds without an initialize handshake. The
+ * required `Accept` header includes both `application/json` and
+ * `text/event-stream` because FastMCP's Streamable HTTP transport
+ * negotiates against either; in JSON-response mode the body comes back
+ * as plain JSON.
+ *
+ * No bearer token is attached — `comms_update_name` is invoked exactly
+ * as an MCP client would invoke it, and the MCP layer authenticates by
+ * matching `key` against the registry. (The bearer token in `apiPost`
+ * gates writes against `/api/artifacts/*`, a separate surface.)
+ *
+ * Returns a stable result envelope rather than throwing, so the caller's
+ * UI state machine (Saving → Saved / Error) can branch on a single field:
+ *   - `{ success: true,  name, key }` on a successful rename.
+ *   - `{ success: false, error: <human-readable string> }` on any failure,
+ *     including network errors, HTTP non-2xx, JSON-RPC error objects, or
+ *     the `comms_update_name` tool returning `{ status: 'error', ... }`.
+ *
+ * Timeout is 5s via `AbortController`. A v0.4.0 follow-up should add a
+ * dedicated `POST /api/identity/name` REST endpoint so the browser does
+ * not have to speak MCP JSON-RPC directly — see worklog for v0.3.3
+ * Step 1.9 §9.
+ *
+ * @param {string} key      - The participant key (from `store.userProfile.key`).
+ * @param {string} newName  - The desired display name.
+ * @returns {Promise<{success: boolean, name?: string, key?: string, error?: string}>}
+ */
+export async function updateName(key, newName) {
+  if (!key || typeof key !== 'string') {
+    return { success: false, error: 'Missing participant key.' };
+  }
+  if (!newName || typeof newName !== 'string' || !newName.trim()) {
+    return { success: false, error: 'Name cannot be empty.' };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch(`${API_BASE}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'comms_update_name',
+          arguments: { key, new_name: newName },
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      return { success: false, error: `Server returned HTTP ${res.status}.` };
+    }
+
+    const body = await res.json();
+    if (body && body.error) {
+      const msg = body.error.message || 'Server rejected the rename.';
+      return { success: false, error: msg };
+    }
+
+    // FastMCP wraps tool returns in `result.structuredContent` (or
+    // `result.content[0].text` for older clients). Try both.
+    const result = body?.result || {};
+    let payload = result.structuredContent;
+    if (!payload && Array.isArray(result.content)) {
+      const textBlock = result.content.find((c) => c && c.type === 'text');
+      if (textBlock && typeof textBlock.text === 'string') {
+        try {
+          payload = JSON.parse(textBlock.text);
+        } catch {
+          payload = null;
+        }
+      }
+    }
+
+    if (!payload) {
+      return { success: false, error: 'Server returned an empty response.' };
+    }
+    if (payload.status === 'error') {
+      return { success: false, error: payload.error || 'Rename failed.' };
+    }
+    if (payload.status === 'updated' && payload.name) {
+      return { success: true, name: payload.name, key: payload.key };
+    }
+    return { success: false, error: 'Unexpected server response.' };
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return { success: false, error: 'Request timed out.' };
+    }
+    const msg = err && err.message ? err.message : 'Network error.';
+    return { success: false, error: msg };
+  } finally {
+    clearTimeout(timer);
+  }
+}
