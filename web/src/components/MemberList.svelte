@@ -12,7 +12,54 @@
   import { Search, Globe, Monitor, Plug, Terminal, Link } from 'lucide-svelte';
   import { getInitials, getParticipantColor } from '../lib/utils.js';
 
-  let { online = [], offline = [], typingUsers = {}, onShowProfile } = $props();
+  let {
+    /** Members of the currently-viewed channel who are online. */
+    active = [],
+    /** Online globally but NOT joined to the currently-viewed channel.
+     *  v0.3.2 — the new "Online (elsewhere)" section. */
+    onlineElsewhere = [],
+    /** Known participants with no live connections. */
+    offline = [],
+    /** Currently-viewed channel id, used in the "In #X" section header. */
+    activeChannelName = 'general',
+    /** ``(key) => string[]`` — channels this key is a member of, excluding
+     *  activeChannelName. Used for the "in #X +N more" inline location chip. */
+    getMemberConversations = () => [],
+    typingUsers = {},
+    onShowProfile,
+  } = $props();
+
+  // Offline disclosure widget — collapsed by default to keep the sidebar
+  // focused on who's actually around. Expanded state persists in
+  // localStorage so users who care about offline context stay expanded.
+  let offlineExpanded = $state(
+    typeof localStorage !== 'undefined' &&
+      localStorage.getItem('claude-comms.offlineExpanded') === '1',
+  );
+  $effect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(
+        'claude-comms.offlineExpanded',
+        offlineExpanded ? '1' : '0',
+      );
+    }
+  });
+
+  /** Relative "last seen 4m ago" for offline rows. ``lastOffline`` is set
+   *  by the store when the participant's last connection drops. */
+  function lastSeenRelative(p) {
+    if (!p.lastOffline) return '';
+    const then = Date.parse(p.lastOffline);
+    if (Number.isNaN(then)) return '';
+    const seconds = Math.max(1, Math.round((Date.now() - then) / 1000));
+    if (seconds < 60) return `last seen ${seconds}s ago`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `last seen ${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `last seen ${hours}h ago`;
+    const days = Math.round(hours / 24);
+    return `last seen ${days}d ago`;
+  }
 
   let showSearch = $state(false);
   let searchQuery = $state('');
@@ -62,18 +109,114 @@
     return best ? best.label : null;
   }
 
-  let filteredOnline = $derived(
-    searchQuery ? online.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())) : online
+  // ``(m.name || '')`` guards against `m.name` being null / undefined —
+  // the store records raw MQTT presence ``msg.name`` without defaulting,
+  // so a malformed publish (or a partially-rehydrated participant) can
+  // surface here with no name. ``.toLowerCase()`` on undefined throws.
+  let filteredActive = $derived(
+    searchQuery
+      ? active.filter((m) => (m.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
+      : active,
+  );
+  let filteredOnlineElsewhere = $derived(
+    searchQuery
+      ? onlineElsewhere.filter((m) =>
+          (m.name || '').toLowerCase().includes(searchQuery.toLowerCase()),
+        )
+      : onlineElsewhere,
   );
   let filteredOffline = $derived(
-    searchQuery ? offline.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase())) : offline
+    searchQuery
+      ? offline.filter((m) => (m.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
+      : offline,
+  );
+  let totalMembers = $derived(
+    active.length + onlineElsewhere.length + offline.length,
   );
 </script>
 
+{#snippet onlineRow(member, showLocation)}
+  {@const color = getParticipantColor(member.key)}
+  {@const isTyping = typingUsers[member.key]?.typing}
+  {@const clientTypes = getClientTypes(member)}
+  {@const activityLabel = getActivity(member)}
+  {@const memberConvs = showLocation ? getMemberConversations(member.key) : []}
+  {@const firstConv = memberConvs[0] || null}
+  {@const extraCount = Math.max(0, memberConvs.length - 1)}
+  <div
+    class="member"
+    onclick={() => onShowProfile(member)}
+    onkeydown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') onShowProfile(member);
+    }}
+    role="button"
+    tabindex="0"
+    data-testid="member-{member.key}"
+  >
+    <div class="member-avatar" style="background: {color.gradient}">
+      {getInitials(member.name)}
+      <div class="member-dot online"></div>
+    </div>
+    <div class="member-info">
+      <div class="member-name" style="color: {color.textColor}">{member.name}</div>
+      <div class="member-meta">
+        {#if member.type === 'human'}
+          <span class="member-badge admin">Admin</span>
+        {:else}
+          <span
+            class="member-badge agent"
+            class:working={isTyping || !!activityLabel}
+            title={isTyping || activityLabel ? 'Working' : 'Ready'}>Agent</span>
+        {/if}
+        {#if clientTypes.length > 0}
+          <div class="connection-icons">
+            {#each clientTypes as clientType (clientType)}
+              {#if CONNECTION_ICONS[clientType]}
+                {@const IconComponent = CONNECTION_ICONS[clientType]}
+                <span class="connection-icon" title="Connected via {CONNECTION_LABELS[clientType] || clientType}">
+                  <IconComponent size={11} />
+                </span>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+        {#if isTyping}
+          <span class="member-activity-inline typing" data-testid="member-typing-{member.key}">
+            <span class="member-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span class="member-activity-text">typing</span>
+          </span>
+        {:else if activityLabel}
+          <span class="member-activity-inline" data-testid="member-activity-{member.key}" title={activityLabel}>
+            <span class="member-activity-text">{activityLabel}</span>
+          </span>
+        {/if}
+      </div>
+      {#if showLocation && firstConv}
+        {@const tooltipText = memberConvs.length > 1
+          ? `Also in:\n${memberConvs.map(c => '#' + c).join('\n')}`
+          : ''}
+        <div class="member-location" title={tooltipText} data-testid="member-location-{member.key}">
+          in <span class="member-location-chan">#{firstConv}</span>{#if extraCount > 0}
+            <span class="member-location-more">+{extraCount} more</span>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
 <aside class="sidebar-right" data-testid="member-list">
   <div class="members-header">
-    <span>Members ({online.length + offline.length})</span>
-    <button class="members-search-btn" title="Search members" data-testid="members-search-btn" onclick={() => { showSearch = !showSearch; if (!showSearch) searchQuery = ''; }}>
+    <span>Members ({totalMembers})</span>
+    <button
+      class="members-search-btn"
+      title="Search members"
+      data-testid="members-search-btn"
+      onclick={() => {
+        showSearch = !showSearch;
+        if (!showSearch) searchQuery = '';
+      }}
+    >
       <Search size={12} />
     </button>
   </div>
@@ -90,107 +233,72 @@
     </div>
   {/if}
 
-  {#if filteredOnline.length > 0}
-    <div class="members-section" data-testid="members-online-section">Online ({filteredOnline.length})</div>
+  {#if filteredActive.length > 0}
+    <div class="members-section" data-testid="members-active-section">
+      In #{activeChannelName} ({filteredActive.length})
+    </div>
     <div class="members-list">
-      {#each filteredOnline as member (member.key)}
-        {@const color = getParticipantColor(member.key)}
-        {@const isTyping = typingUsers[member.key]?.typing}
-        {@const clientTypes = getClientTypes(member)}
-        {@const activityLabel = getActivity(member)}
-        <div
-          class="member"
-          onclick={() => onShowProfile(member)}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile(member); }}
-          role="button"
-          tabindex="0"
-          data-testid="member-{member.key}"
-        >
-          <div class="member-avatar" style="background: {color.gradient}">
-            {getInitials(member.name)}
-            <div class="member-dot online"></div>
-          </div>
-          <div class="member-info">
-            <div class="member-name" style="color: {color.textColor}">
-              {member.name}
-            </div>
-            <!--
-              Single meta-row: [badge] [icons] · [activity italic].
-              Badge + icons are anchored on the left (flex-shrink: 0) so
-              they're always fully visible — animated typing indicators or
-              changing custom activities never displace them. The activity
-              span comes AFTER (no separator) and ellipsizes when long.
-              Per Phil: activity must not hide the type badge or connection
-              icon, and should sit AFTER the badge/icons. No separator.
-            -->
-            <div class="member-meta">
-              {#if member.type === 'human'}
-                <span class="member-badge admin">Admin</span>
-              {:else}
-                <!--
-                  Per Phil's "is the agent ready or working?" UX: the agent
-                  badge is GREEN (default) when no activity is set, and
-                  AMBER when any activity is set (typing, drafting, coding,
-                  etc.). Reads as: green = idle/waiting, amber = busy.
-                  No server changes — the activity field is already broadcast
-                  via comms_status_set/clear on each agent's MCP session.
-                -->
-                <span class="member-badge agent" class:working={isTyping || !!activityLabel} title={isTyping || activityLabel ? 'Working' : 'Ready'}>Agent</span>
-              {/if}
-              {#if clientTypes.length > 0}
-                <div class="connection-icons">
-                  {#each clientTypes as clientType (clientType)}
-                    {#if CONNECTION_ICONS[clientType]}
-                      {@const IconComponent = CONNECTION_ICONS[clientType]}
-                      <span class="connection-icon" title="Connected via {CONNECTION_LABELS[clientType] || clientType}">
-                        <IconComponent size={11} />
-                      </span>
-                    {/if}
-                  {/each}
-                </div>
-              {/if}
-              {#if isTyping}
-<span class="member-activity-inline typing" data-testid="member-typing-{member.key}">
-                  <span class="member-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-                  <span class="member-activity-text">typing</span>
-                </span>
-              {:else if activityLabel}
-<span class="member-activity-inline" data-testid="member-activity-{member.key}" title={activityLabel}>
-                  <span class="member-activity-text">{activityLabel}</span>
-                </span>
-              {/if}
-            </div>
-          </div>
-        </div>
+      {#each filteredActive as member (member.key)}
+        {@render onlineRow(member, false)}
+      {/each}
+    </div>
+  {/if}
+
+  {#if filteredOnlineElsewhere.length > 0}
+    <div class="members-section" data-testid="members-online-elsewhere-section">
+      Online ({filteredOnlineElsewhere.length})
+    </div>
+    <div class="members-list">
+      {#each filteredOnlineElsewhere as member (member.key)}
+        {@render onlineRow(member, true)}
       {/each}
     </div>
   {/if}
 
   {#if filteredOffline.length > 0}
-    <div class="members-section" style="margin-top: 8px" data-testid="members-offline-section">Offline ({filteredOffline.length})</div>
-    <div class="members-list">
-      {#each filteredOffline as member (member.key)}
-        <div
-          class="member"
-          onclick={() => onShowProfile(member)}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile(member); }}
-          role="button"
-          tabindex="0"
-          data-testid="member-{member.key}"
-        >
-          <div class="member-avatar" style="background: var(--bg-elevated)">
-            {getInitials(member.name)}
-            <div class="member-dot offline"></div>
-          </div>
-          <div class="member-info">
-            <div class="member-name" style="color: var(--text-muted)">
-              {member.name}
+    <button
+      class="members-section members-section-button"
+      data-testid="members-offline-section"
+      onclick={() => (offlineExpanded = !offlineExpanded)}
+      aria-expanded={offlineExpanded}
+    >
+      <span class="members-section-chevron" aria-hidden="true">
+        {offlineExpanded ? '▼' : '▶'}
+      </span>
+      Offline ({filteredOffline.length})
+    </button>
+    {#if offlineExpanded}
+      <div class="members-list">
+        {#each filteredOffline as member (member.key)}
+          <div
+            class="member"
+            onclick={() => onShowProfile(member)}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') onShowProfile(member);
+            }}
+            role="button"
+            tabindex="0"
+            data-testid="member-{member.key}"
+          >
+            <div class="member-avatar" style="background: var(--bg-elevated)">
+              {getInitials(member.name)}
+              <div class="member-dot offline"></div>
             </div>
-            <span class="member-badge member-tag">Member</span>
+            <div class="member-info">
+              <div class="member-name" style="color: var(--text-muted)">{member.name}</div>
+              <div class="member-meta">
+                <span class="member-badge member-tag">Member</span>
+                {#if member.lastOffline}
+                  <span class="member-lastseen" data-testid="member-lastseen-{member.key}">
+                    {lastSeenRelative(member)}
+                  </span>
+                {/if}
+              </div>
+            </div>
           </div>
-        </div>
-      {/each}
-    </div>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </aside>
 
@@ -285,6 +393,63 @@
     letter-spacing: 0.8px;
     color: var(--text-faint);
     text-transform: uppercase;
+  }
+
+  /* Offline section's chevron toggle. Visually identical to a static
+     .members-section label so the only affordance cue is the chevron. */
+  .members-section-button {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .members-section-button:hover { color: var(--text-secondary); }
+  .members-section-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+    border-radius: 4px;
+  }
+  .members-section-chevron {
+    font-size: 8px;
+    line-height: 1;
+    width: 8px;
+    display: inline-block;
+  }
+
+  /* "in #X +N more" inline location chip for Online (elsewhere) rows.
+     Sits BELOW the member-meta line on a second row, dimmed and small
+     to stay subordinate to the name + badge + connection icons. */
+  .member-location {
+    margin-top: 2px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .member-location-chan {
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+  .member-location-more {
+    color: var(--text-faint);
+    margin-left: 4px;
+    font-style: italic;
+    cursor: help;  /* tooltip affordance */
+  }
+
+  /* "last seen Nm ago" relative-time stamp on Offline rows. */
+  .member-lastseen {
+    font-size: 10.5px;
+    color: var(--text-faint);
+    font-style: italic;
   }
 
   .members-list {

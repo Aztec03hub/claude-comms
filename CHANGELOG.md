@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] -- 2026-05-12
+
+Patch release. Closes Issues A and B from the v0.3.1 follow-up brief + extends the member list to a three-section model (active / online elsewhere / offline) with inline "in #X +N more" location chips for cross-channel visibility. Issue C (structured MQTT parse logger + empty-payload guard) already shipped in v0.3.1 — downstream users who still see the old `Failed to parse MQTT message:` floods are running the cached pre-v0.3.1 bundle and need a daemon restart plus a hard browser refresh.
+
+### Fixed
+
+- **Issue A — multi-channel members no longer get pruned when viewing a single channel** (`web/src/lib/mqtt-store.svelte.js:#fetchParticipants`). Prior behavior: the 30-second REST poll for the active channel ran a global prune that deleted every local participant not in the active channel's response. A worker who was a member of both `#general` and `#svelte-work` would vanish from a phil-viewing-`#general` session the moment the REST poll for `#general` landed — because the prune treated the active-channel snapshot as the source of truth for the **global** participant map. New behavior: the prune now skips any local participant who has at least one live connection (`Object.keys(p.connections).length > 0`). Ghosts from stale retained presence (the original reason the prune existed) still have empty connections and remain pruned correctly. Members of other channels stay visible because they have live MQTT connection records.
+- **Issue B — new conversations created by another participant now appear in connected sidebars within ~1 second instead of requiring a full page refresh** (`src/claude_comms/mcp_server.py:publish_conversation_event` + `web/src/lib/mqtt-store.svelte.js:#handleSystemConversation`). Daemon now broadcasts conversation lifecycle events on a single non-retained MQTT topic `claude-comms/system/conversations` with payload `{type, name, topic?, creator_key?, ts}` where `type` is one of `conversation_created` / `conversation_topic_changed` / `conversation_deleted`. The web UI subscribes on connect and applies each event to the in-store `channels` array (immutable reassignment for Svelte 5 reactivity).
+  - **Not retained** by design — these are point-in-time deltas. Retaining them would cause every reconnecting browser to re-process every historical event, including ones whose effects have since been undone. The REST `/api/conversations` snapshot remains authoritative for cold start.
+  - Wired in: `comms_conversation_create` and `comms_conversation_update`. The `conversation_deleted` event is defined in the wire-format but not yet wired in — there's no `tool_comms_conversation_delete` endpoint to hook from. Will surface when delete is added.
+
+### Added
+
+- **Three-section MemberList** (`web/src/components/MemberList.svelte`). Replaces the prior binary online/offline split with:
+  - **In #{channel}** — members of the currently-viewed channel who are online. The primary "who can I address right now" view.
+  - **Online** (elsewhere) — participants connected globally but NOT joined to the active channel. Each row carries an inline `in #X` location chip showing the first (alphabetical) other channel they're a member of, plus a `+N more` cursor:`help` chip when N > 0. Hovering the row surfaces a multi-line `title` tooltip listing every channel they're in. Resolves the confusion Issue A's fix would otherwise introduce: now the user explicitly knows *why* a member is shown.
+  - **Offline** — known participants with no live connections. Collapsed-by-default disclosure widget (`▶ Offline (N)`) — state persisted in `localStorage` under `claude-comms.offlineExpanded` so users who care about offline context stay expanded. Each offline row carries a `last seen Nm ago` relative-time stamp computed from `member.lastOffline`.
+  - Within each section: alphabetical sort by name. Stable under churn; no visual jitter when many agents join / leave.
+- **`channelMembers` reactive store state** (`mqtt-store.svelte.js`). Per-channel `{convId: {key: lastSeenTs}}` map, populated by two sources:
+  1. REST poll of `/api/participants/{channel}` now returns a per-member `conversations` field (server-side change below). On each poll, every conv in each member's list gets the key recorded.
+  2. Live MQTT presence — the conversation is extracted from the topic (`claude-comms/conv/{conv}/presence/{key}`) and passed to `#handlePresence(msg, conversation)` which records membership incrementally.
+- **`/api/participants/{channel}` includes `conversations: string[]` per member** (`mcp_server.py:get_channel_participants`). Sorted list of every conversation each participant is a member of, from `ParticipantRegistry.conversations_for`. Drives the inline "in #X" chips without requiring a separate global endpoint.
+- **`MqttChatStore.activeMembers` / `onlineElsewhere` `$derived.by()` derivations** + **`getMemberConversations(key)` helper method** — the data feeds for the three-section MemberList. The existing `onlineParticipants` / `offlineParticipants` derivations are kept; they back `onlineCount` and a few other consumers.
+- **`publish_conversation_event` module-level helper** (`src/claude_comms/mcp_server.py`). Sibling to `publish_mcp_presence_on_join`. Accepts `event_type`, `name`, optional `topic`, optional `creator_key`. Constructs the canonical wire-format payload, publishes to `claude-comms/system/conversations` non-retained, swallows publish-side exceptions. Public surface; importable for tests.
+- **`tests/test_conversation_events.py`** -- 6 tests pinning the wire format (topic, type field discrimination, optional-field handling for each of the 3 event types) and the non-retained + exception-swallowing contracts.
+
+### Changed
+
+- **MemberList props signature** — was `{online, offline, typingUsers, onShowProfile}`; now `{active, onlineElsewhere, offline, activeChannelName, getMemberConversations, typingUsers, onShowProfile}`. App.svelte's invocation updated to feed the three new arrays from the store's derivations.
+- **App.svelte 500ms snapshot pump** — copies `store.activeMembers` + `store.onlineElsewhere` + `store.offlineParticipants` into local `$state` arrays (length + connection-key fingerprint diff to avoid noisy reassignments). Replaces the prior single-array online + single-array offline pump.
+- **Member-row rendering shared via Svelte 5 snippet** — `{#snippet onlineRow(member, showLocation)}` at the top of MemberList renders both the "In #channel" and "Online (elsewhere)" sections from one template. The `showLocation` flag toggles the inline location chip on for the elsewhere section.
+
+### Notes for upgraders
+
+The structured MQTT parse logger and empty-payload guard from v0.3.1 are already live in the wheel. If your DevTools console is still spamming `Failed to parse MQTT message: SyntaxError: Unexpected end of JSON input`, the stack trace will show an asset hash other than `index-BWeN2qtA.js` (v0.3.1) or the v0.3.2 hash. That means either:
+
+1. The daemon process is still pre-v0.3.1 in memory — run `claude-comms stop && claude-comms start --background --web` after the pip / pipx upgrade.
+2. The browser cached the old `index.html` and is loading stale asset hashes — hard-refresh (`Ctrl+Shift+R`) or use an incognito window. After the daemon serves the new `index.html`, the new asset hashes will load fresh.
+
+The v0.3.1 fix correctly silences empty-payload "parse failures" (retained-clear cleanups) and logs structured `[claude-comms] MQTT message parse failed` objects on real failures. Confirmed by inspecting the published wheel.
+
 ## [0.3.1] -- 2026-05-12
 
 Patch release. Two correctness fixes surfaced during smoke testing of MCP-driven worker agents on v0.3.0, plus a structured-logging upgrade for future bug-report quality.

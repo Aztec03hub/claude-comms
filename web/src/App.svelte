@@ -57,31 +57,12 @@
 
   // Reactive bridges — poll store state to work around Svelte 5
   // class-based $state not flushing DOM updates from async callbacks.
-  let onlineMembers = $state([]);
-  let offlineMembers = $state([]);
-
   // Connect on mount
   $effect(() => {
     store.connect();
     requestPermission();
 
-    // Poll participants every 500ms for MemberList reactivity
-    const memberPoll = setInterval(() => {
-      const newOnline = store.onlineParticipants;
-      const newOffline = store.offlineParticipants;
-      // Update on count change OR content change (connection add/remove)
-      const onlineChanged = newOnline.length !== onlineMembers.length ||
-        JSON.stringify(newOnline.map(p => Object.keys(p.connections || {})).flat()) !==
-        JSON.stringify(onlineMembers.map(p => Object.keys(p.connections || {})).flat());
-      const offlineChanged = newOffline.length !== offlineMembers.length;
-      if (onlineChanged || offlineChanged) {
-        onlineMembers = newOnline;
-        offlineMembers = newOffline;
-      }
-    }, 500);
-
     return () => {
-      clearInterval(memberPoll);
       store.disconnect();
     };
   });
@@ -405,9 +386,22 @@
   </main>
 
   {#if showMemberList}
+    <!--
+      v0.3.2: bind the store derivations directly. The previous version
+      kept a 500ms setInterval snapshot pump (a Svelte 5 anti-pattern for
+      state sync — flagged by svelte-autofixer). The store's
+      `activeMembers` / `onlineElsewhere` / `offlineParticipants` are
+      already `$derived.by()`, so Svelte's reactivity handles propagation
+      without an explicit pump; this also fixes the "channelMembers
+      churn doesn't trigger re-render" issue since the derivations read
+      that state and recompute when it mutates.
+    -->
     <MemberList
-      online={onlineMembers}
-      offline={offlineMembers}
+      active={store.activeMembers}
+      onlineElsewhere={store.onlineElsewhere}
+      offline={store.offlineParticipants}
+      activeChannelName={store.activeChannel}
+      getMemberConversations={(key) => store.getMemberConversations(key)}
       typingUsers={store.typingUsers}
       onShowProfile={handleShowProfile}
     />

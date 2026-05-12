@@ -129,6 +129,9 @@ class TestGetChannelParticipants:
             result = srv.get_channel_participants("general")
             assert len(result) == 1
             p = result[0]
+            # v0.3.2 added `conversations` — the full membership set per
+            # participant — so the web UI can render "in #X +N" for
+            # online-elsewhere members.
             assert set(p.keys()) == {
                 "key",
                 "name",
@@ -137,6 +140,7 @@ class TestGetChannelParticipants:
                 "status",
                 "connections",
                 "online",
+                "conversations",
             }
             assert p["name"] == "alice"
             # Claude-typed joins synthesize an `mcp` ConnectionInfo via

@@ -197,6 +197,11 @@ def get_channel_participants(channel: str) -> list[dict]:
             "client": m.client
             or (m.active_client_types[0] if m.active_client_types else "unknown"),
             "status": "online" if m.is_online else "offline",
+            # v0.3.2: the full set of conversations this participant is a
+            # member of, so the web UI can render "in #X +N more" inline
+            # for participants who appear in the global member list but
+            # are not joined to the currently-active channel.
+            "conversations": sorted(_registry.conversations_for(m.key)),
         }
         for m in members
     ]
@@ -209,6 +214,61 @@ def get_conversation_artifacts(conversation: str) -> list[dict]:
     from claude_comms.artifact import list_artifacts
 
     return list_artifacts(conversation, _data_dir)
+
+
+async def publish_conversation_event(
+    publish_fn: PublishFn,
+    *,
+    event_type: str,
+    name: str,
+    topic: str | None = None,
+    creator_key: str | None = None,
+) -> None:
+    """Publish a conversation lifecycle event to ``claude-comms/system/conversations``.
+
+    Bug B fix from the v0.3.1 follow-up brief: prior to v0.3.2, conversation
+    create / update / delete were only discoverable via the REST
+    ``/api/conversations`` snapshot at page-bootstrap time. A new
+    conversation created by another participant did not appear in
+    connected browsers' sidebars until the user reloaded the page.
+
+    Single broadcast topic for all conversation-lifecycle deltas; the
+    payload's ``type`` field discriminates. Topic is non-conv-scoped so a
+    single subscription covers every event class.
+
+    Wire format::
+
+        {
+          "type": "conversation_created" | "conversation_topic_changed"
+                  | "conversation_deleted",
+          "name": "<conv-id>",
+          "topic": "<optional new topic>",          # present on create + topic_changed
+          "creator_key": "<8-hex>",                 # present on create
+          "ts": "<ISO8601>"
+        }
+
+    Best-effort: any exception is suppressed (the user-visible mutation
+    already succeeded; the broadcast is just the live-update hint).
+    """
+    from claude_comms.message import now_iso
+
+    payload = {
+        "type": event_type,
+        "name": name,
+        "ts": now_iso(),
+    }
+    if topic is not None:
+        payload["topic"] = topic
+    if creator_key is not None:
+        payload["creator_key"] = creator_key
+    try:
+        await publish_fn(
+            "claude-comms/system/conversations",
+            json.dumps(payload).encode(),
+        )
+    except Exception:
+        # Non-critical -- REST still returns authoritative state on next page load.
+        pass
 
 
 async def publish_mcp_presence_on_join(
@@ -1276,7 +1336,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """Create a new conversation with optional topic. Auto-joins you and all human participants."""
         _touch(key)
         assert _publish_fn is not None
-        return await tool_comms_conversation_create(
+        result = await tool_comms_conversation_create(
             _get_registry(),
             _publish_fn,
             key=key,
@@ -1284,6 +1344,17 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             topic=topic,
             conv_data_dir=_get_conv_data_dir(),
         )
+        # Broadcast conversation-lifecycle event so connected browsers
+        # incrementally update their sidebar (Bug B fix). Best-effort.
+        if result.get("status") == "created" and _publish_fn is not None:
+            await publish_conversation_event(
+                _publish_fn,
+                event_type="conversation_created",
+                name=conversation,
+                topic=topic,
+                creator_key=key,
+            )
+        return result
 
     @mcp.tool()
     async def comms_conversation_update(
@@ -1294,7 +1365,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """Update a conversation's topic. System message rate-limited to 1/min."""
         _touch(key)
         assert _publish_fn is not None
-        return await tool_comms_conversation_update(
+        result = await tool_comms_conversation_update(
             _get_registry(),
             _publish_fn,
             key=key,
@@ -1303,6 +1374,16 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             conv_data_dir=_get_conv_data_dir(),
             rate_limit_state=_topic_rate_limit,
         )
+        # Broadcast topic-changed so connected browsers refresh the channel's
+        # topic line without waiting for the rate-limited system message.
+        if result.get("status") == "updated" and _publish_fn is not None:
+            await publish_conversation_event(
+                _publish_fn,
+                event_type="conversation_topic_changed",
+                name=conversation,
+                topic=topic,
+            )
+        return result
 
     @mcp.tool()
     async def comms_invite(

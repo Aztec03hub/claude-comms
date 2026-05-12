@@ -65,6 +65,31 @@ export class MqttChatStore {
   ]);
   activeChannel = $state('general');
   participants = $state({});
+
+  /**
+   * Per-channel membership: ``{channelId: { key: lastSeenTs }, ...}``.
+   * Populated by two sources:
+   *
+   * 1. REST poll of ``/api/participants/{channel}`` — the daemon now
+   *    returns each member's full ``conversations`` list (v0.3.2+).
+   *    On every poll we update entries for every channel each returned
+   *    member is a part of.
+   * 2. Live MQTT presence — topic ``claude-comms/conv/{conv}/presence/
+   *    {key}`` is parsed by ``#handleMessage`` and the conversation
+   *    name is passed to ``#handlePresence``, which records the
+   *    presence event under ``channelMembers[conv][key]``.
+   *
+   * Drives the three MemberList sections (``activeMembers``,
+   * ``onlineElsewhere``, ``offlineParticipants``) and the
+   * "in #X +N more" inline location chip for participants who are
+   * online but not joined to the currently-viewed channel.
+   *
+   * NOT trimmed when a participant leaves a channel (no leave-presence
+   * event is published today). Stale entries get corrected on the next
+   * REST poll which is authoritative for the active channel; for other
+   * channels this is best-effort.
+   */
+  channelMembers = $state({});
   connected = $state(false);
   connectionError = $state(null);
   typingUsers = $state({});
@@ -231,6 +256,22 @@ export class MqttChatStore {
       const serverKeys = new Set();
       for (const p of data.participants) {
         serverKeys.add(p.key);
+
+        // v0.3.2: record each member's full conversation set into
+        // channelMembers. The server includes a ``conversations`` field
+        // per member (sorted list of conv ids). For each conv in that
+        // list, mark this key as a member. Treats REST as authoritative
+        // -- on each poll we set the most-recent timestamp.
+        if (Array.isArray(p.conversations)) {
+          const nowTs = new Date().toISOString();
+          for (const conv of p.conversations) {
+            if (!this.channelMembers[conv]) {
+              this.channelMembers[conv] = {};
+            }
+            this.channelMembers[conv][p.key] = nowTs;
+          }
+        }
+
         if (p.key === this.userProfile.key) {
           // For self: merge connections from API but don't overwrite any connection
           // we're currently managing locally (our own web instance(s))
@@ -267,33 +308,42 @@ export class MqttChatStore {
       }
 
       // Prune stale local participants the server no longer recognizes for the
-      // active channel. The server's participant list is the source of truth
-      // for this channel's membership — any local-only MQTT presence state is
-      // from a previous session (typical cause: daemon restart leaves retained
-      // presence messages on the broker, which the web client sees on
-      // reconnect and ghosts as "offline" forever).
+      // active channel — but ONLY if the local entry has no live connections.
       //
-      // Pruning here removes the participant entry entirely. We also publish
-      // an empty retained presence for any of their stale MQTT connections so
-      // the broker's retained store gets cleaned up too — otherwise the next
-      // page load would re-ghost the same key.
+      // Background (Issue A from the v0.3.1 follow-up brief): the previous
+      // version of this code pruned every local participant not present in
+      // /api/participants/<activeChannel>. That broke multi-channel
+      // membership: if a worker was a member of both #general and
+      // #svelte-work, viewing #general would prune the worker the moment
+      // a REST poll landed because /api/participants/general only returns
+      // the worker IF they're in #general -- but the prune ran globally
+      // against the local map, deleting them from view entirely even
+      // though their membership in BOTH channels was valid server-side.
       //
-      // Guards: only prune when polling for the active channel, and never the
-      // local user's own entry. Unlike the previous version, we DO prune even
-      // when local connections are non-empty — those connections are stale
-      // retained-presence messages, not live participants.
+      // The genuine "ghost cleanup" case is a participant whose retained
+      // MQTT presence stuck around from a previous session, but who is no
+      // longer in any channel server-side. Such ghosts always have an
+      // empty connections dict (their retained presence got applied but
+      // the broker delivers nothing newer). So we only prune when:
+      //   1. Channel being polled is the active channel
+      //   2. Local participant is not in server's response for this channel
+      //   3. Local participant has NO active connections
+      //
+      // A participant with active connections is, by definition, still
+      // online somewhere -- they may simply be a member of a DIFFERENT
+      // channel than the one we're polling. Leave them alone.
       if (channel === this.activeChannel) {
         for (const localKey of Object.keys(this.participants)) {
           if (localKey === this.userProfile.key) continue;
           if (serverKeys.has(localKey)) continue;
           const local = this.participants[localKey];
           if (!local) continue;
-          // Clean up any retained presence on the broker for this ghost.
-          if (this.#client && local.connections) {
-            for (const ck of Object.keys(local.connections)) {
-              const staleTopic = TOPIC_PREFIX + '/presence/' + localKey + '/' + ck;
-              this.#client.publish(staleTopic, '', { retain: true });
-            }
+          if (Object.keys(local.connections || {}).length > 0) {
+            // Live elsewhere — keep them in the global map. The OTHER
+            // channel's REST poll (when the user switches to that channel)
+            // will confirm their membership, and the global MemberList
+            // continues showing them as online.
+            continue;
           }
           delete this.participants[localKey];
         }
@@ -389,6 +439,82 @@ export class MqttChatStore {
     const _p = this.participants;
     return Object.values(_p).filter(p => Object.keys(p.connections).length === 0);
   });
+
+  /**
+   * v0.3.2 — three-state MemberList feeds.
+   *
+   * activeMembers: participants who are members of the currently-viewed
+   * channel AND online. The primary "who can I address right now" list.
+   *
+   * onlineElsewhere: participants online globally but NOT joined to the
+   * active channel. They're around the server but not in this room.
+   * Rendered with an "in #X +N more" location chip so the user can see
+   * where they actually are.
+   *
+   * (offlineParticipants stays as-is above — no channel filter, just
+   * "has empty connections.")
+   *
+   * Sort: alphabetical by name within each section. Stable under churn.
+   */
+  activeMembers = $derived.by(() => {
+    const _p = this.participants;
+    const _ch = this.activeChannel;
+    const _cm = this.channelMembers;
+    const memberKeys = _cm[_ch] ? new Set(Object.keys(_cm[_ch])) : new Set();
+    return Object.values(_p)
+      .filter(
+        (p) =>
+          memberKeys.has(p.key) && Object.keys(p.connections).length > 0,
+      )
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  });
+
+  onlineElsewhere = $derived.by(() => {
+    const _p = this.participants;
+    const _ch = this.activeChannel;
+    const _cm = this.channelMembers;
+    const _self = this.userProfile.key;
+    const memberKeys = _cm[_ch] ? new Set(Object.keys(_cm[_ch])) : new Set();
+    return Object.values(_p)
+      .filter(
+        (p) =>
+          p.key !== _self &&
+          !memberKeys.has(p.key) &&
+          Object.keys(p.connections).length > 0,
+      )
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  });
+
+  /**
+   * Helper for the "in #X +N more" inline location chip. Returns the
+   * sorted list of channels this participant is a member of, EXCLUDING
+   * the currently-viewed channel. Empty list means the participant has
+   * no known channel membership (e.g. transient registration that
+   * hasn't joined anywhere yet); the UI should render no location chip.
+   *
+   * Channel set is determined by:
+   *   1. channelMembers[conv] (built from REST + live MQTT presence)
+   *   2. excluding the active channel
+   *
+   * Sort: alphabetical by channel id. The chip displays the first entry
+   * and "+N more" if N > 0 remaining; the tooltip lists all entries.
+   *
+   * @param {string} key
+   * @returns {string[]}
+   */
+  getMemberConversations(key) {
+    const _cm = this.channelMembers;
+    const _ch = this.activeChannel;
+    const out = [];
+    for (const conv of Object.keys(_cm)) {
+      if (conv === _ch) continue;
+      if (_cm[conv] && _cm[conv][key]) {
+        out.push(conv);
+      }
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }
 
   activeTypingUsers = $derived.by(() => {
     const _t = this.typingUsers;
@@ -1194,6 +1320,12 @@ export class MqttChatStore {
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/deletions', { qos: 1 });
 
     // New global presence topic
+    // Conversation lifecycle events broadcast by the daemon on mutate.
+    // Issue B fix from the v0.3.1 follow-up brief: previously the channel
+    // sidebar only refreshed on full page reload because conversation
+    // creates / topic changes / deletes had no live channel. This
+    // subscription pairs with #handleSystemConversation below.
+    this.#client.subscribe(TOPIC_PREFIX + '/system/conversations', { qos: 1 });
     this.#client.subscribe(TOPIC_PREFIX + '/presence/+/+', { qos: 1 });
     // Old topics for migration compatibility (dual subscription)
     this.#client.subscribe(TOPIC_PREFIX + '/conv/+/presence/+', { qos: 1 });
@@ -1207,11 +1339,15 @@ export class MqttChatStore {
     if (topicParts[0] === 'conv' && topicParts[2] === 'messages') {
       this.#handleChatMessage(topicParts[1], msg);
     } else if (topicParts[0] === 'presence') {
-      // New global presence: presence/{key}/{client}-{instanceId}
-      this.#handlePresence(msg);
+      // Global presence: presence/{key}/{client}-{instanceId}. No
+      // conversation context — pass null and the handler won't touch
+      // channelMembers.
+      this.#handlePresence(msg, null);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'presence') {
-      // Old per-conversation presence (migration compat)
-      this.#handlePresence(msg);
+      // Per-conversation presence: conv/{convId}/presence/{key}. The
+      // conversation is encoded in the topic; pass it through so the
+      // handler can record channelMembers[convId][key].
+      this.#handlePresence(msg, topicParts[1]);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'typing') {
       this.#handleTyping(topicParts[1], msg);
     } else if (topicParts[0] === 'conv' && topicParts[2] === 'meta') {
@@ -1227,6 +1363,75 @@ export class MqttChatStore {
     } else if (topicParts[0] === 'system' && topicParts[1] === 'participants') {
       // Old system/participants topic (migration compat)
       this.#handleParticipantRegistry(msg);
+    } else if (topicParts[0] === 'system' && topicParts[1] === 'conversations') {
+      // Conversation lifecycle event (v0.3.2+).
+      this.#handleSystemConversation(msg);
+    }
+  }
+
+  /**
+   * React to a ``claude-comms/system/conversations`` broadcast.
+   *
+   * Wire format (set by ``publish_conversation_event`` in mcp_server.py)::
+   *
+   *     { type: "conversation_created" | "conversation_topic_changed"
+   *             | "conversation_deleted",
+   *       name: "<conv-id>",
+   *       topic: "<optional>",
+   *       creator_key: "<8-hex on create>",
+   *       ts: "<ISO8601>" }
+   *
+   * Updates the in-store ``channels`` array so the left sidebar reflects
+   * remote conversation mutations live, instead of waiting for the next
+   * page reload. The REST snapshot remains the authoritative source on
+   * page bootstrap; this handler is the live-delta layer on top.
+   */
+  #handleSystemConversation(msg) {
+    if (!msg || typeof msg !== 'object' || typeof msg.name !== 'string') return;
+    const name = msg.name;
+    switch (msg.type) {
+      case 'conversation_created': {
+        // Insert if not present. Don't clobber unread / starred state if
+        // the user had previously cached this channel locally.
+        if (!this.channels.some((c) => c.id === name)) {
+          this.channels = [
+            ...this.channels,
+            {
+              id: name,
+              topic: typeof msg.topic === 'string' ? msg.topic : '',
+              starred: false,
+              unread: 0,
+            },
+          ];
+        }
+        break;
+      }
+      case 'conversation_topic_changed': {
+        const idx = this.channels.findIndex((c) => c.id === name);
+        if (idx >= 0 && typeof msg.topic === 'string') {
+          // Immutable update -- Svelte 5 $state arrays track identity on
+          // reassignment, not in-place mutation.
+          this.channels = this.channels.map((c, i) =>
+            i === idx ? { ...c, topic: msg.topic } : c,
+          );
+        }
+        break;
+      }
+      case 'conversation_deleted': {
+        const filtered = this.channels.filter((c) => c.id !== name);
+        if (filtered.length !== this.channels.length) {
+          this.channels = filtered;
+        }
+        // If the user was viewing the deleted channel, fall back to general.
+        if (this.activeChannel === name) {
+          this.activeChannel = 'general';
+        }
+        break;
+      }
+      default:
+        // Unknown event type — ignore. Forward-compat: a newer daemon
+        // could add types this web build doesn't recognize.
+        break;
     }
   }
 
@@ -1349,7 +1554,7 @@ export class MqttChatStore {
     }
   }
 
-  #handlePresence(msg) {
+  #handlePresence(msg, conversation = null) {
     const { key, name, type, status, client, instanceId, ts } = msg;
 
     // Extract base client type and validate
@@ -1380,6 +1585,17 @@ export class MqttChatStore {
       // Update name/type in case they changed
       this.participants[key].name = name;
       this.participants[key].type = type;
+
+      // v0.3.2: if this presence arrived on a conv-scoped topic, the
+      // sender is a member of that conversation. Record it so the
+      // 3-section MemberList can show "in #X" for participants who
+      // appear globally but aren't in the active channel.
+      if (conversation) {
+        if (!this.channelMembers[conversation]) {
+          this.channelMembers[conversation] = {};
+        }
+        this.channelMembers[conversation][key] = ts || new Date().toISOString();
+      }
     } else if (status === 'offline') {
       if (this.participants[key]) {
         delete this.participants[key].connections[connKey];
@@ -1388,6 +1604,8 @@ export class MqttChatStore {
           this.participants[key].lastOffline = new Date().toISOString();
         }
       }
+      // Don't prune channelMembers on offline — membership outlasts
+      // a single online/offline cycle. REST poll authoritative.
     }
   }
 
