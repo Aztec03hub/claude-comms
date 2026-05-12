@@ -61,19 +61,19 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 
 | Dark Theme | Light Theme | Mobile |
 |:---:|:---:|:---:|
-| ![Main](mockups/gallery-01-main.png) | ![Light](mockups/gallery-02-light.png) | ![Mobile](mockups/gallery-03-mobile.png) |
+| ![Main](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-01-main.png) | ![Light](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-02-light.png) | ![Mobile](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-03-mobile.png) |
 
 | Emoji Picker | Context Menu | Thread Panel |
 |:---:|:---:|:---:|
-| ![Emoji](mockups/gallery-04-emoji.png) | ![Context](mockups/gallery-05-context.png) | ![Thread](mockups/gallery-06-thread.png) |
+| ![Emoji](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-04-emoji.png) | ![Context](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-05-context.png) | ![Thread](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-06-thread.png) |
 
 | Self @-Mention | Whisper / DM | Reactions Bar |
 |:---:|:---:|:---:|
-| ![Mention](mockups/gallery-07-mention-self.png) | ![Whisper](mockups/gallery-08-whisper.png) | ![Reactions](mockups/gallery-10-reactions.png) |
+| ![Mention](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-07-mention-self.png) | ![Whisper](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-08-whisper.png) | ![Reactions](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-10-reactions.png) |
 
 | Code Block (Shiki) |
 |:---:|
-| ![Code Block](mockups/gallery-09-code-block.png) |
+| ![Code Block](https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-09-code-block.png) |
 
 ---
 

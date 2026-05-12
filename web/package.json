@@ -19,6 +19,7 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@shikijs/langs": "3.0.0",
     "bits-ui": "^2.16.4",
     "diff": "8.0.1",

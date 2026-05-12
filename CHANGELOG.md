@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] -- 2026-05-12
+
+Patch release fixing two production bugs that made the web UI unusable for any user who typed `http://localhost:9921` (the natural URL) instead of `http://127.0.0.1:9921`, plus a PyPI gallery rendering fix.
+
+### Fixed
+
+- **Web UI MQTT/REST connections blocked by CSP when loaded via `localhost`** (`src/claude_comms/cli.py:build_csp`). The web client builds its broker URL from `window.location.hostname`, so loading the page via `http://localhost:9921` produces `ws://localhost:9001/mqtt`. The daemon's CSP only listed `ws://127.0.0.1:9001`, so the browser blocked the connection — the top banner stayed on "Reconnecting to broker..." forever and no realtime messages arrived. Fixed by expanding loopback bind addresses (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`) to both `127.0.0.1` AND `localhost` variants in `connect-src`. Also now includes `https://` and `wss://` variants for future TLS deployment.
+- **External Google Fonts dependency** (`web/index.html`, `web/src/app.css`). Inter font was loaded from `fonts.googleapis.com` / `fonts.gstatic.com`, which required relaxing `style-src` and adding `font-src` for those CDN origins. Replaced with `@fontsource-variable/inter` bundled into the wheel — `font-src 'self' data:` is now strict and the UI renders offline. Adds ~50 KB to the wheel but eliminates an external CDN dependency.
+- **Gallery images broken on PyPI** (`README.md`). The 10 gallery image references used relative paths (`mockups/gallery-XX.png`), which GitHub auto-resolves but PyPI does not — PyPI's project description showed broken-image placeholders for the whole gallery. Switched to absolute `https://raw.githubusercontent.com/Aztec03hub/claude-comms/main/mockups/gallery-XX.png` URLs. Renders on both GitHub and PyPI.
+
+### Added
+
+- **`font-src` CSP directive** (`'self' data:`). Was previously absent; fell back to the `default-src 'self'` value, which blocked the external Google Fonts. Now explicit + tight.
+- **`tests/test_csp.py`** -- 17 unit tests pinning the CSP contract. Covers loopback alias expansion (parametrized over `127.0.0.1` / `localhost` / `0.0.0.0` / `::1`), default-config emission, LAN-IP bind, `0.0.0.0` bind, `api_base` reverse-proxy mode, and the `csp_extra_connect_src` escape hatch for Tailscale / public-DNS deployments. Hardening assertions: no `unsafe-eval`, no `*` wildcards in source lists, strict `script-src`.
+- **`web/e2e/csp-violations.spec.js`** -- Playwright regression guard. Asserts (1) `Content-Security-Policy` is delivered as a response header, not a `<meta>` tag, (2) the header contains both `localhost` and `127.0.0.1` variants for broker + REST, (3) no CSP violations fire on the console during page load. Runs against the live daemon at `127.0.0.1:9921`.
+
+### Changed
+
+- **`web/index.html`** -- removed the `preconnect` hints + `<link>` stylesheet load for Google Fonts. Inter is now self-hosted; comment in source explains why.
+
+### Verified
+
+- `build_csp(default_config)` emits a connect-src containing all 8 expected origins: `http://127.0.0.1:9920`, `https://127.0.0.1:9920`, `http://localhost:9920`, `https://localhost:9920`, `ws://127.0.0.1:9001`, `wss://127.0.0.1:9001`, `ws://localhost:9001`, `wss://localhost:9001`. Plus `'self'`.
+- `grep -E 'googleapis|gstatic'` on `src/claude_comms/web/dist/index.html` returns nothing -- the bundle is fully self-hosted.
+- Full pytest suite: `0 failed, 1166 passed` (1149 pre-existing + 17 new CSP tests).
+- ruff check + ruff format: clean across `src/` and `tests/`.
+
+### Followup (not blocking, not yet shipped)
+
+- **`Reconnecting to broker...` banner timeout.** After N failed reconnect attempts (5? 10?), the banner should switch to a definitive "Cannot connect to broker -- check the daemon logs" with a manual retry button. Indefinite "reconnecting" is user-hostile. Tracked as a separate web-UX task; not part of v0.2.3 because the CSP fix already resolves the headline symptom.
+
 ## [0.2.2] -- 2026-05-12
 
 Docs-only patch release. Re-publishes the rendered README so PyPI's project page picks up README fixes that wouldn't otherwise reach the cached upload from 0.2.1. No code changes.

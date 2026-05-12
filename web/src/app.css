@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Self-host Inter via @fontsource so the CSP can stay strict
+ * (font-src 'self' data:) — no external Google Fonts dependency. */
+@import "@fontsource-variable/inter";
 
 @theme {
   /* -- Carbon Ember Palette -- */

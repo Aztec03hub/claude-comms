@@ -170,47 +170,91 @@ def _cors_headers(
     return headers
 
 
+_LOOPBACK_BIND_ADDRESSES = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1"})
+
+
+def _expand_loopback_aliases(host: str) -> list[str]:
+    """Return browser-visible aliases for a host that binds the loopback iface.
+
+    Browsers treat ``127.0.0.1``, ``localhost``, ``0.0.0.0``, and ``::1`` as
+    DIFFERENT origins for Content-Security-Policy purposes. The web UI
+    builds its broker / REST URLs from ``window.location.hostname``, which
+    is whichever of these aliases the user typed into the address bar.
+
+    For loopback bind addresses, return ``[127.0.0.1, localhost]`` so the
+    same daemon works whether the user navigated to ``http://localhost:9921``
+    or ``http://127.0.0.1:9921``. For non-loopback hosts (LAN IP, Tailscale
+    name, public DNS), return the host unchanged — those have one canonical
+    form and the user is responsible for typing it correctly.
+
+    Cross-network deployments where the user accesses the daemon via a
+    Tailscale magic-DNS name or LAN IP that the config doesn't know about
+    should populate ``web.csp_extra_connect_src`` with the external URLs.
+    """
+    if host in _LOOPBACK_BIND_ADDRESSES:
+        return ["127.0.0.1", "localhost"]
+    return [host]
+
+
 def build_csp(config: dict) -> str:
     """Construct a Content-Security-Policy header value from config.
 
-    ``connect-src`` is derived dynamically from ``web.api_base`` (if set)
-    plus the daemon's MCP / broker ports. ``web.csp_extra_connect_src``
-    is merged in as a rollback escape hatch.
+    ``connect-src`` is derived dynamically from the configured MCP / broker
+    host+port. For loopback binds the policy includes BOTH the ``127.0.0.1``
+    AND ``localhost`` variants (browsers treat them as distinct origins).
+    When ``web.api_base`` is set the policy switches to reverse-proxy mode
+    and uses that origin authoritatively. ``web.csp_extra_connect_src`` is
+    merged in as an escape hatch for LAN / Tailscale deployments the daemon
+    can't auto-discover at startup.
     """
     web_cfg = config.get("web", {}) or {}
+    mcp_cfg = config.get("mcp", {}) or {}
+    broker_cfg = config.get("broker", {}) or {}
+
     api_base = web_cfg.get("api_base")
-    mcp_port = config.get("mcp", {}).get("port", 9920)
-    ws_port = config.get("broker", {}).get("ws_port", 9001)
+    mcp_host = mcp_cfg.get("host", "127.0.0.1")
+    mcp_port = mcp_cfg.get("port", 9920)
+    ws_host = broker_cfg.get("ws_host", "127.0.0.1")
+    ws_port = broker_cfg.get("ws_port", 9001)
 
-    api_origin = api_base or f"http://127.0.0.1:{mcp_port}"
+    connect_origins: list[str] = ["'self'"]
 
-    ws_url = web_cfg.get("ws_url")
-    if ws_url:
-        ws_origin = ws_url
-    elif api_base:
-        # Replace only the scheme prefix, not any 'http' substring elsewhere.
-        if api_origin.startswith("https://"):
-            ws_origin = "wss://" + api_origin[len("https://") :] + "/mqtt"
-        elif api_origin.startswith("http://"):
-            ws_origin = "ws://" + api_origin[len("http://") :] + "/mqtt"
-        else:
-            ws_origin = f"ws://127.0.0.1:{ws_port}"
+    if api_base:
+        # Reverse-proxy mode: api_base is authoritative.
+        connect_origins.append(api_base)
+        ws_url = web_cfg.get("ws_url")
+        if ws_url:
+            connect_origins.append(ws_url)
+        elif api_base.startswith("https://"):
+            connect_origins.append("wss://" + api_base[len("https://") :] + "/mqtt")
+        elif api_base.startswith("http://"):
+            connect_origins.append("ws://" + api_base[len("http://") :] + "/mqtt")
     else:
-        ws_origin = f"ws://127.0.0.1:{ws_port}"
+        # Direct mode: include http/https + ws/wss variants for every
+        # browser-visible alias of the configured loopback bind. Both
+        # schemes are included so future TLS deployment is covered.
+        for h in _expand_loopback_aliases(mcp_host):
+            connect_origins.append(f"http://{h}:{mcp_port}")
+            connect_origins.append(f"https://{h}:{mcp_port}")
+        for h in _expand_loopback_aliases(ws_host):
+            connect_origins.append(f"ws://{h}:{ws_port}")
+            connect_origins.append(f"wss://{h}:{ws_port}")
 
-    extra = " ".join(web_cfg.get("csp_extra_connect_src") or [])
-    connect_src = f"'self' {api_origin} {ws_origin}".strip()
-    if extra:
-        connect_src = f"{connect_src} {extra}"
+    extra = web_cfg.get("csp_extra_connect_src") or []
+    connect_origins.extend(extra)
+
+    connect_src = " ".join(connect_origins)
+
     return (
-        f"default-src 'self'; "
-        f"script-src 'self'; "
-        f"style-src 'self' 'unsafe-inline'; "
-        f"img-src 'self' data:; "
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self' data:; "
         f"connect-src {connect_src}; "
-        f"frame-ancestors 'none'; "
-        f"base-uri 'self'; "
-        f"form-action 'self'"
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
     )
 
 

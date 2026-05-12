@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claude-comms"
-version = "0.2.2"
+version = "0.2.3"
 description = "Distributed inter-Claude messaging platform"
 requires-python = ">=3.10"
 license = "MIT"
