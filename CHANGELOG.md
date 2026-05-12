@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] -- 2026-05-12
+
+Polish-and-safety release. Closes 4 UX showstoppers (no member-list section ever disappears; name changes propagate; over-limit sends are no longer silent; reconnect failures are actionable), the engineering critical from the v0.3.2 advisory (phantom-reactivity workarounds removed), and 8 long-tail UX gaps. Net 10 commits, 9 implementation steps + 1 prop-wiring follow-up. **vitest grew from 375 → 434 (+59 tests, +16%)** without a single pytest regression. Includes the Wave D race-condition incident that taught the orchestration framework about worktree isolation — surfaced as a process improvement, not a code bug.
+
+### Fixed
+
+- **Phantom-reactivity workarounds removed** (`web/src/components/ChatView.svelte`, `web/src/lib/mqtt-store.svelte.js`). A 100 ms `setInterval` pump in `ChatView` and two `this.messages = this.messages` self-assignment kicks in `mqtt-store` were cargo-cult workarounds for a Svelte 5 reactivity bug that doesn't exist. The principal-engineer Svelte advisory validated this via the official MCP autofixer; Svelte 5's class-based `$state` proxy tracks every read in a consuming `$derived`. ChatView now uses a single `$derived(store.activeMessages)`; the self-assignments are gone. (Eng C-1)
+- **`web/src/lib/mqtt-store.svelte.js` `_len` cargo-cult reads** removed from inside `$derived.by` blocks. Same misunderstanding of Svelte 5 dependency tracking. Comments now reference the actual `$derived` semantics. (Eng R-1)
+- **Default display name no longer "Phil"** for every new web client. Now `(unset)` until either `/api/identity` returns a non-empty name or the user sets one. App.svelte surfaces a one-line "Set a display name so others can recognize you" banner with a dismissible × (persisted under `claude-comms.nameBanner.dismissed`). (UX G-43)
+- **Sending while disconnected no longer silently drops messages.** New `#pendingSends` FIFO queue (cap 100; drop-oldest with `failed` marker on overflow). On reconnect, drain in order. Each local message carries a `status: 'sending' | 'sent' | 'failed'` field; `MessageBubble.svelte` visualizes spinner / nothing / error icon + Retry button. Retry wires through App → ChatView → MessageGroup → MessageBubble to `store.retryMessage(id)`. (UX G-62)
+- **Member list always shows three sections** (Active / Online elsewhere / Offline), even when empty. Phil's "M-FIX" constraint — sections are stable UI surfaces, not data-conditional. Each empty section renders friendly inline copy in `--text-muted`. Per-section collapse state persists in `localStorage` under three namespaced keys; the legacy `claude-comms.offlineExpanded` key migrates on first read.
+- **Sidebar star toggle** now actually toggles. `handleStarToggle` was defined but never invoked from the channel-row template; hover-visible star icon now calls it with `event.stopPropagation()` to prevent the channel-switch from firing. `onStarToggle` prop drilling from App.svelte added; store-fallback ensures the button works even if a parent forgets to pass the prop. (UX G-4)
+- **Sidebar version label** now derives from `web/package.json` via Vite's native JSON import, no more stale literal. Bumped `web/package.json` to 0.3.3 in lockstep. (UX G-5)
+- **Sidebar `ustatus` binding** now reflects `store.connected` / `store.connectionError` via the same three-state palette as `ConnectionStatus.svelte` (online green, connecting amber, offline red). Was a hardcoded "Online" string. (UX G-25)
+- **Notification toasts are clickable.** The card surface is now a `<button>`; click → `store.switchChannel(toast.channel)` + (if applicable) `store.goToMessage(toast.messageId)`. Close-X handler uses `stopPropagation` to keep its semantics. (UX G-13)
+- **Toast cap and coalesce.** Maximum 3 visible toasts at any time. A 4th from the same channel coalesces in place to `"<sender> and N others sent messages"`; 5+ collapse to a compact `+N new in #channel` pill. Cross-channel 4th evicts the oldest visible toast (FIFO). 5-second self-destruct resets on each coalesce. (UX G-14)
+- **MessageInput over-limit no longer silently no-ops.** When `inputValue.length > MAX_MESSAGE_LENGTH`, the send button is disabled, the textarea border turns `--ember-400`, and an inline error message above the composer surfaces `"Message too long ({over} over limit) - split or convert to artifact"` with a "Convert to artifact" CTA that copies the textarea contents to clipboard (the full artifact-create flow lands in v0.4.x). (UX G-28)
+- **ConnectionStatus retry button** appears after 5 failed reconnects. Banner content shifts from indeterminate "Reconnecting to broker..." to actionable "Cannot reach broker - [Retry now] [Reload page]". Retry calls `store.connect()`; Reload calls `location.reload()`. Counter resets on successful connect. ARIA: `role="status" aria-live="polite"`. Wired from App.svelte. (UX G-27)
+- **Display-name changes now propagate to the daemon** via the `comms_update_name` MCP tool. SettingsPanel's `handleNameChange` debounces (500 ms), guards on `store.connected`, calls the new `api.updateName(key, newName)` helper which POSTs JSON-RPC to the FastMCP `/mcp` endpoint, and reflects inline `Saving... -> Saved` / `Error: <reason>` status. Success path clears `nameUnset` + updates `store.userProfile.name`; failure reverts the input. Closes the silent identity-divergence showstopper. (UX G-9)
+
+### Added
+
+- **`#pendingSends` queue + per-message status** in `mqtt-store.svelte.js`, with public `retryMessage(messageId)` method and three test-only seam methods (`_installTestClient`, `_drainPendingSendsForTest`, `_pendingSendsLengthForTest`).
+- **`Sidebar` `onStarToggle` prop**, **`ConnectionStatus` `onRetry` prop**, **`ChatView` `onRetryMessage` prop**, **`MessageGroup` `onRetryMessage` prop** — explicit callback props through the App → child chain, replacing implicit store-method calls.
+- **`api.updateName(key, newName)` helper** (`web/src/lib/api.js`). POSTs JSON-RPC `tools/call` to `/mcp`. 5-second `AbortController` timeout. Handles both `result.structuredContent` and `result.content[0].text` response shapes. Returns `{success, name?, key?, error?}` envelope.
+- **`store.nameUnset` reactive flag** — initialized `true`, cleared on successful identity fetch or successful `updateName`. Drives the App.svelte "Set a display name" banner.
+- **Test coverage**: +59 vitest specs across 8 new spec files (`mqtt-store-pending-sends`, `sidebar-fixes`, `toast-improvements`, `member-list`, `message-input`, `connection-status`, `prop-drilling`, `settings-panel`). Each step's verification gate included Svelte MCP autofixer at zero issues.
+
+### Changed
+
+- **`MessageBubble.svelte`** — new visual states for `sending` / `sent` / `failed`. Failed state shows an icon + "Failed to send" + Retry link that fires `onRetry(message.id)`.
+- **Removed `web/src/lib/_alt/` directory** — abandoned `mqtt-store-v2.svelte.js` exploration. Reader-confusion liability flagged in the principal-engineer advisory; gone now. (Eng O-2)
+
+### Verified
+
+- Full pytest suite: **1207 passed** (unchanged from v0.3.2; no backend changes in v0.3.3).
+- vitest: **434 passed** (was 375; +59 net new across 8 new spec files).
+- ruff check + format both clean.
+- `pnpm build` produces `src/claude_comms/web/dist/` without warnings.
+- Svelte autofixer: zero issues attributable to any v0.3.3 change across all edited files.
+
+### Notes for upgraders
+
+- The "Set a display name" banner appears on first load when `userProfile.name === '(unset)'`. Dismiss is persisted; once you set a name, the flag clears.
+- If you see the banner after upgrading from v0.3.2 with a previously-set name in localStorage, your daemon-side identity didn't return a name. Set one via Settings → it'll propagate via the new `comms_update_name` wiring.
+- v0.3.3 ships with a Wave D race-condition recovery in the commit log: `952f427` carries Step 1.4's commit message but contains Step 1.5's files (toast improvements). Code state is correct; the misattribution is a permanent artifact per the "no amend" rule. Mitigation for future releases codified in the orchestration plan as worktree isolation for parallel agent waves.
+
 ## [0.3.2] -- 2026-05-12
 
 Patch release. Closes Issues A and B from the v0.3.1 follow-up brief + extends the member list to a three-section model (active / online elsewhere / offline) with inline "in #X +N more" location chips for cross-channel visibility. Issue C (structured MQTT parse logger + empty-payload guard) already shipped in v0.3.1 — downstream users who still see the old `Failed to parse MQTT message:` floods are running the cached pre-v0.3.1 bundle and need a daemon restart plus a hard browser refresh.
