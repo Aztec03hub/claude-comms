@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
-import { API_BASE } from './api.js';
+import { API_BASE, apiGet } from './api.js';
 
 // Derive the MQTT broker URL from the current page hostname.
 // API origin derivation now lives in lib/api.js (exported as API_BASE);
@@ -57,13 +57,36 @@ const safeStorage = {
 export class MqttChatStore {
   // ── Reactive State ──
   messages = $state([]);
-  channels = $state([
-    { id: 'general', topic: 'Main discussion channel for the team', starred: false, unread: 0 },
-    { id: 'project-alpha', topic: 'Project Alpha development', starred: true, unread: 0 },
-    { id: 'lora-training', topic: 'LoRA training runs and results', starred: true, unread: 0 },
-    { id: 'random', topic: 'Off-topic and fun', starred: false, unread: 0 },
-  ]);
+  /**
+   * Channel list. v0.4.0 S-FIX: no hardcoded seed.
+   *
+   * Bootstrap path: ``connect()`` invokes ``#bootstrapChannels()`` after the
+   * MQTT broker handshake completes. That helper calls
+   * ``/api/conversations`` (the daemon's authoritative list per Step 2.1)
+   * and maps each row into the store-internal shape used throughout this
+   * file. On 0 rows, on 404/500, or on network failure, ``channels``
+   * stays empty and ``serverUnreachable`` flips true on failure so the
+   * UI can render a banner (consumer wiring deferred to Step 2.6).
+   *
+   * Field name mapping vs the wire payload (Step 2.1 contract,
+   * camelCase ``my``-prefix → unprefixed store-internal):
+   *   - ``myUnread`` → ``unread``
+   *   - ``myStarred`` → ``starred``
+   *   - ``myMuted`` → ``muted``
+   * All other fields (``id``, ``name``, ``topic``, ``member``, ...) pass
+   * through as-is.
+   */
+  channels = $state([]);
   activeChannel = $state('general');
+  /**
+   * Reactive flag indicating the daemon's ``/api/conversations`` endpoint
+   * was unreachable during bootstrap. ``true`` when the bootstrap fetch
+   * threw or returned non-2xx. Drives a one-line "Server unreachable —
+   * channels unavailable" banner in App.svelte (banner wiring lands in
+   * Step 2.6's wave per architecture spec §III.4). Resets to ``false`` on
+   * a successful subsequent bootstrap (e.g. after reconnect).
+   */
+  serverUnreachable = $state(false);
   participants = $state({});
 
   /**
@@ -241,6 +264,111 @@ export class MqttChatStore {
   #pendingSends = [];
   /** Hard cap on `#pendingSends` queue length. See field doc above. */
   static #PENDING_SENDS_CAP = 100;
+
+  /**
+   * Bootstrap the channel list from the daemon's ``/api/conversations``
+   * endpoint (v0.4.0 S-FIX). Single source of truth at startup — replaces
+   * the prior hardcoded seed list. Maps the v0.4.0 ChannelRow payload
+   * (Step 2.1 contract, Design Spec §13.4) into the store-internal shape,
+   * applying the ``my``-prefix → unprefixed rename so Step 2.6 can read
+   * the cleaner names directly.
+   *
+   * Edge cases (architecture spec §III.4):
+   *   - 0 rows  → ``channels = []``; sidebar derivations return empty.
+   *   - non-array body or wrong shape → treat like 0 rows; no crash.
+   *   - 404 / 500 / network throw → ``serverUnreachable = true``;
+   *     ``channels = []``; parse-failure counter bumped via the same
+   *     v0.3.1 helper used for MQTT parse failures.
+   *
+   * Success path explicitly flips ``serverUnreachable`` back to ``false``
+   * so a reconnect after a transient outage clears the banner.
+   *
+   * Idempotent: safe to call on every ``'connect'`` event. Currently
+   * REPLACES ``channels`` wholesale on success; Step 2.6 will refine the
+   * merge semantics once local-only state (starred/muted) lands.
+   */
+  async #bootstrapChannels() {
+    let rows;
+    try {
+      rows = await apiGet('/api/conversations');
+    } catch (err) {
+      this.serverUnreachable = true;
+      this.channels = [];
+      this.#recordParseFailure();
+      console.warn(
+        '[claude-comms] /api/conversations bootstrap failed',
+        {
+          status: err && err.status,
+          message: err && err.message,
+          timestamp: new Date().toISOString(),
+        },
+      );
+      return;
+    }
+
+    // Tolerate either a bare array (current daemon shape) or a wrapped
+    // ``{ conversations: [...] }`` envelope (future-compat). Anything
+    // else is treated as 0 rows.
+    let list = rows;
+    if (rows && !Array.isArray(rows) && Array.isArray(rows.conversations)) {
+      list = rows.conversations;
+    }
+    if (!Array.isArray(list)) {
+      this.channels = [];
+      this.serverUnreachable = false;
+      return;
+    }
+
+    this.channels = list.map((row) => this.#channelRowFromPayload(row));
+    this.serverUnreachable = false;
+  }
+
+  /**
+   * Map a single ``/api/conversations`` row → store-internal channel
+   * shape. Renames the caller-personalized ``my``-prefix fields and
+   * defaults every other field so the store never carries ``undefined``
+   * leaks (Design Spec §13.4 preamble: "no undefined leaks"). Defensive
+   * against partial rows so a future daemon dropping a field doesn't
+   * crash the bootstrap.
+   *
+   * @param {object} row - Single ChannelRow-shaped row from the daemon.
+   * @returns {object} Store-internal channel object.
+   */
+  #channelRowFromPayload(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    return {
+      id: typeof r.id === 'string' ? r.id : '',
+      name: typeof r.name === 'string' ? r.name : (typeof r.id === 'string' ? r.id : ''),
+      topic: typeof r.topic === 'string' ? r.topic : '',
+      member: r.member === true,
+      memberCount: typeof r.memberCount === 'number' ? r.memberCount : 0,
+      lastActivity: r.lastActivity ?? null,
+      mode: typeof r.mode === 'string' ? r.mode : 'public',
+      visibility: typeof r.visibility === 'string' ? r.visibility : 'listed',
+      createdAt: r.createdAt ?? null,
+      createdBy: r.createdBy ?? null,
+      // my-prefix → unprefixed rename (architecture spec §III.4 preamble)
+      unread: typeof r.myUnread === 'number' ? r.myUnread : 0,
+      starred: r.myStarred === true,
+      muted: r.myMuted === true,
+      // Archive fields default to non-archived when absent (the daemon
+      // does not emit them yet as of v0.4.0 Step 2.1; reserved for the
+      // archive-aware payload in a later step).
+      archived: r.archived === true,
+      archived_at: r.archived_at ?? null,
+      archived_by: r.archived_by ?? null,
+    };
+  }
+
+  /**
+   * Test-only seam: run the channel-bootstrap helper directly. Mirrors
+   * what the production ``'connect'`` callback does. Used by
+   * ``tests/mqtt-store-bootstrap.spec.js`` to exercise the 0-row,
+   * populated-row, and error paths without standing up a live daemon.
+   */
+  async _bootstrapChannelsForTest() {
+    await this.#bootstrapChannels();
+  }
 
   /**
    * Fetch message history from the REST API for a given channel.
@@ -734,6 +862,15 @@ export class MqttChatStore {
       this.#backoffActive = false;
       this.#subscribeAll();
       this.#publishPresence('online');
+
+      // v0.4.0 S-FIX: hydrate the channel list from the daemon's
+      // authoritative /api/conversations endpoint. Fire-and-forget — the
+      // helper handles its own errors (404/500/network) by flipping
+      // `serverUnreachable` and leaving `channels` empty. Channels must
+      // be populated BEFORE any per-channel work (history fetch,
+      // participant polling) so derivations that read `channels` see
+      // the real set rather than the empty initial `[]`.
+      this.#bootstrapChannels();
 
       // UX G-62: flush any messages the user composed while we were
       // disconnected. Drains FIFO; each item carries its own (topic,
