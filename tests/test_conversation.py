@@ -436,7 +436,7 @@ class TestToolCommsConversationCreate:
         assert "claude-comms/conv/general/messages" in topics
 
         # Verify system message content
-        for _, payload in spy.calls:
+        for _, payload, _retain in spy.calls:
             msg = json.loads(payload)
             assert "alice" in msg["body"]
             assert "design" in msg["body"]
@@ -552,7 +552,7 @@ class TestToolCommsConversationUpdate:
         )
 
         assert spy.call_count == 1
-        _, payload = spy.calls[0]
+        _, payload, _retain = spy.calls[0]
         msg = json.loads(payload)
         assert "alice" in msg["body"]
         assert "New topic" in msg["body"]
@@ -627,7 +627,7 @@ class TestToolCommsInvite:
 
         assert result["status"] == "invited"
         assert spy.call_count == 1
-        _, payload = spy.calls[0]
+        _, payload, _retain = spy.calls[0]
         msg = json.loads(payload)
         assert "bob" in msg["body"]
         assert "design" in msg["body"]

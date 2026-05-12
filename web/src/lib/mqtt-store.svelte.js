@@ -112,6 +112,17 @@ export class MqttChatStore {
   composerPrefill = $state(null);
 
   /**
+   * Rolling count of MQTT message-parse failures in the last 30 seconds.
+   * Drives the "Message decoding errors detected" banner. Updated by
+   * `#receiveMqttFrame`; pruned on every update so stale entries age out
+   * without a timer. Threshold ≥ 5 → banner visible.
+   *
+   * Empty payloads (retained-clear presence cleanups) are NOT counted —
+   * those are routine broker-state ops, not real parse failures.
+   */
+  parseFailureRate = $state(0);
+
+  /**
    * Reactive payload mirroring the last `artifact_ref` chat message that
    * landed in the active channel. Consumers (ArtifactPanel) watch this to
    * decide whether to surface the remote-update banner during an edit.
@@ -132,6 +143,13 @@ export class MqttChatStore {
 
   /** @type {mqtt.MqttClient | null} */
   #client = null;
+
+  /**
+   * Timestamps (ms) of recent MQTT parse failures, used to compute
+   * ``parseFailureRate`` over a 30s rolling window. See ``#recordParseFailure``.
+   * @type {number[]}
+   */
+  #parseFailureTimestamps = [];
   #seenIds = new Set();
   #typingTimers = {};
   #myTypingTimer = null;
@@ -625,13 +643,79 @@ export class MqttChatStore {
     });
 
     this.#client.on('message', (topic, payload) => {
-      try {
-        const msg = JSON.parse(payload.toString());
-        this.#handleMessage(topic, msg);
-      } catch (e) {
-        console.error('Failed to parse MQTT message:', e);
-      }
+      this.#receiveMqttFrame(topic, payload);
     });
+  }
+
+  /**
+   * Decode a single MQTT frame and dispatch it to `#handleMessage`.
+   *
+   * Replaces the previous inline `try { JSON.parse(...) }` that logged
+   * `"Failed to parse MQTT message:"` with no context, making every
+   * downstream report a dead end. This variant:
+   *
+   * - **Silently skips empty payloads** — retained-clear publishes (e.g.
+   *   `publish(presenceTopic, '', {retain: true})`) are intentional broker
+   *   state-clears; they're not parse failures.
+   * - **Logs structured context** when JSON.parse fails: topic, payload
+   *   length, a 500-char preview (with a `[truncated, total=N]` tail when
+   *   the payload was longer), error name + message, and a timestamp. Makes
+   *   "parse failed" bug reports root-cause-able without a re-pro.
+   * - **Tracks failure rate** over a 30s rolling window via
+   *   `#recordParseFailure`. Threshold ≥ 5 → the App.svelte banner appears.
+   * - **Continues** rather than letting the exception bubble — one bad
+   *   message never freezes the message stream.
+   *
+   * @param {string} topic - MQTT topic the frame arrived on.
+   * @param {Uint8Array | Buffer | string} payload - Raw payload from mqtt.js.
+   */
+  #receiveMqttFrame(topic, payload) {
+    const text =
+      typeof payload === 'string' ? payload : payload.toString();
+
+    // Empty payloads are intentional broker-state clears (e.g. retained-
+    // presence cleanup). Not a parse failure.
+    if (text.length === 0) return;
+
+    let msg;
+    try {
+      msg = JSON.parse(text);
+    } catch (err) {
+      const PREVIEW_LIMIT = 500;
+      const preview =
+        text.length > PREVIEW_LIMIT
+          ? text.slice(0, PREVIEW_LIMIT) +
+            `... [truncated, total=${text.length}]`
+          : text;
+      const errorName = err instanceof Error ? err.name : 'unknown';
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error('[claude-comms] MQTT message parse failed', {
+        topic,
+        payloadLength: text.length,
+        payloadPreview: preview,
+        errorName,
+        errorMessage,
+        timestamp: new Date().toISOString(),
+      });
+      this.#recordParseFailure();
+      return;
+    }
+    this.#handleMessage(topic, msg);
+  }
+
+  /**
+   * Record a parse failure timestamp and update the rolling 30s-window
+   * counter that drives the UI banner. Prunes stale entries on every call
+   * so we don't need a separate timer for aging.
+   */
+  #recordParseFailure() {
+    const now = Date.now();
+    const WINDOW_MS = 30_000;
+    this.#parseFailureTimestamps = this.#parseFailureTimestamps.filter(
+      (t) => now - t < WINDOW_MS,
+    );
+    this.#parseFailureTimestamps.push(now);
+    this.parseFailureRate = this.#parseFailureTimestamps.length;
   }
 
   /**

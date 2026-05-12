@@ -60,9 +60,16 @@ from claude_comms.registry_store import RegistryStore
 
 
 class PublishFn(Protocol):
-    """Async callable that publishes a message to an MQTT topic."""
+    """Async callable that publishes a message to an MQTT topic.
 
-    async def __call__(self, topic: str, payload: bytes) -> None: ...
+    ``retain`` defaults to False; pass True for presence / membership state
+    that should reach late-arriving subscribers via the broker's retained-
+    message store. Matches ``aiomqtt.Client.publish``'s ``retain`` kwarg.
+    """
+
+    async def __call__(
+        self, topic: str, payload: bytes, retain: bool = False
+    ) -> None: ...
 
 
 logger = logging.getLogger(__name__)

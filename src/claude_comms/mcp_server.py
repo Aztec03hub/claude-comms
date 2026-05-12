@@ -211,6 +211,58 @@ def get_conversation_artifacts(conversation: str) -> list[dict]:
     return list_artifacts(conversation, _data_dir)
 
 
+async def publish_mcp_presence_on_join(
+    publish_fn: PublishFn,
+    *,
+    conversation: str,
+    key: str,
+    name: str,
+    type_: str,
+) -> None:
+    """Publish retained MCP-client presence after a successful ``comms_join``.
+
+    Bug 2 fix from the v0.3.0 follow-up brief: web / TUI clients connecting
+    AFTER an MCP-side ``comms_join`` need to see the participant via the
+    broker's retained-message store. Without ``retain=True``, only clients
+    already subscribed when the live publish landed would learn about the
+    join, and any later reconnect / page-reload ghosted the MCP worker
+    until the 30-second REST poll caught up.
+
+    Publishes to BOTH:
+
+    - ``claude-comms/conv/{conversation}/presence/{key}`` -- the conv-scoped
+      presence topic the web UI subscribes to as ``conv/+/presence/+``.
+    - ``claude-comms/system/participants/{key}-mcp`` -- the legacy system-
+      scoped topic kept for backwards-compat with older subscribers.
+
+    Best-effort: any ``Exception`` is suppressed because presence is not a
+    correctness gate for the join itself. Surface failures via the caller's
+    logger if observability matters.
+    """
+    from claude_comms.message import now_iso
+
+    ts = now_iso()
+    payload = json.dumps(
+        {
+            "key": key,
+            "name": name,
+            "type": type_,
+            "status": "online",
+            "client": "mcp",
+            "ts": ts,
+        }
+    ).encode()
+    conv_topic = f"claude-comms/conv/{conversation}/presence/{key}"
+    system_topic = f"claude-comms/system/participants/{key}-mcp"
+    try:
+        await publish_fn(conv_topic, payload, retain=True)
+        await publish_fn(system_topic, payload, retain=True)
+    except Exception:
+        # Non-critical -- the in-memory registry + REST API still expose
+        # the participant; retained presence is just the freshness hint.
+        pass
+
+
 def get_artifact(
     conversation: str, name: str, version: int | None = None
 ) -> dict | None:
@@ -660,8 +712,14 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         port=port,
     )
 
-    # Placeholder publish function (replaced when MQTT subscriber starts)
-    async def _noop_publish(topic: str, payload: bytes) -> None:
+    # Placeholder publish function (replaced when MQTT subscriber starts).
+    # Signature MUST match `_do_publish` below — the `PublishFn` protocol
+    # declares ``retain: bool = False`` and presence.set_publish_fn type-
+    # checks the argument. Prior to v0.3.1 this was ``(topic, payload)``
+    # only, which Pyright flagged but Python accepted at runtime; the
+    # mismatch became load-bearing once MCP-side presence publishes
+    # started passing retain=True (Bug 2 from the v0.3.0 follow-up brief).
+    async def _noop_publish(topic: str, payload: bytes, retain: bool = False) -> None:
         raise ConnectionError(
             "MQTT broker unavailable. Run 'claude-comms start' to start the daemon."
         )
@@ -696,35 +754,18 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             publish_fn=_publish_fn,
             conv_data_dir=_get_conv_data_dir(),
         )
-        # Publish presence so TUI/web clients see this participant.
-        # Publishes to both conv-scoped and system-scoped topics to
-        # match the Web UI's dual-presence pattern.
-        if not result.get("error") and _publish_fn:
-            import json as _json
-            import asyncio as _asyncio
-            from claude_comms.message import now_iso as _now_iso
-
-            _ts = _now_iso()
-            presence_payload = _json.dumps(
-                {
-                    "key": result["key"],
-                    "name": result["name"],
-                    "type": result["type"],
-                    "status": "online",
-                    "client": "mcp",
-                    "ts": _ts,
-                }
-            ).encode()
-            presence_topic = (
-                f"claude-comms/conv/{conversation}/presence/{result['key']}"
+        # Publish retained MCP presence so TUI / web clients (including
+        # those connecting after this join) see the participant. The
+        # module-level helper is used so it can be unit-tested
+        # independently of the FastMCP wiring (tests/test_mcp_presence.py).
+        if not result.get("error") and _publish_fn is not None:
+            await publish_mcp_presence_on_join(
+                _publish_fn,
+                conversation=conversation,
+                key=result["key"],
+                name=result["name"],
+                type_=result["type"],
             )
-            system_topic = f"claude-comms/system/participants/{result['key']}-mcp"
-            try:
-                loop = _asyncio.get_event_loop()
-                loop.create_task(_publish_fn(presence_topic, presence_payload))
-                loop.create_task(_publish_fn(system_topic, presence_payload))
-            except Exception:
-                pass  # Non-critical — presence is best-effort
         if not result.get("error"):
             _touch(result.get("key"))
         return result

@@ -432,7 +432,7 @@ class TestSenderKeyDedupRecipients:
         assert result["recipients"] == [ember]
 
         # Verify the published wire payload also reflects the dedup
-        topic, payload = publish_spy.last_call
+        topic, payload, _retain = publish_spy.last_call
         assert topic == "claude-comms/conv/general/messages"
         msg = json.loads(payload)
         assert msg["recipients"] == [ember]
@@ -473,7 +473,7 @@ class TestSenderKeyNoDedupMentions:
         assert phil in result["mentions"]
 
         # Wire payload must round-trip the same shape
-        topic, payload = publish_spy.last_call
+        topic, payload, _retain = publish_spy.last_call
         msg = json.loads(payload)
         assert set(msg["mentions"]) == {ember, phil}
         assert phil in msg["mentions"]

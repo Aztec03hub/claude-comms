@@ -132,7 +132,7 @@ class TestCommsSend:
         assert result["status"] == "sent"
         assert result["recipients"] is None
         assert publish_spy.call_count == 1
-        topic, payload = publish_spy.last_call
+        topic, payload, _retain = publish_spy.last_call
         assert topic == "claude-comms/conv/general/messages"
         msg = json.loads(payload)
         assert msg["body"] == "Hello everyone!"
@@ -158,7 +158,7 @@ class TestCommsSend:
         assert result["status"] == "sent"
         assert r2["key"] in result["recipients"]
         # Body should have mention prefix
-        _, payload = publish_spy.last_call
+        _, payload, _retain = publish_spy.last_call
         msg = json.loads(payload)
         assert "[@bob]" in msg["body"]
 

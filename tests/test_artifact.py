@@ -376,7 +376,7 @@ class TestToolCommsArtifactCreate:
         )
 
         assert spy.call_count == 1
-        topic, payload = spy.calls[0]
+        topic, payload, _retain = spy.calls[0]
         assert "general" in topic
         msg = json.loads(payload)
         assert "[artifact]" in msg["body"]

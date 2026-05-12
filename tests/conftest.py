@@ -114,20 +114,26 @@ def sample_participant(registry: ParticipantRegistry) -> dict[str, Any]:
 
 
 class PublishSpy:
-    """Records async publish calls for assertion in tests."""
+    """Records async publish calls for assertion in tests.
+
+    Signature matches the `PublishFn` protocol in `src/claude_comms/`:
+    ``(topic, payload, retain=False)``. Tests that don't care about the
+    retain flag can ignore it; tests that DO care (e.g. presence-on-join
+    in test_mcp_presence.py) read each call's third element.
+    """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, bytes]] = []
+        self.calls: list[tuple[str, bytes, bool]] = []
 
-    async def __call__(self, topic: str, payload: bytes) -> None:
-        self.calls.append((topic, payload))
+    async def __call__(self, topic: str, payload: bytes, retain: bool = False) -> None:
+        self.calls.append((topic, payload, retain))
 
     @property
     def call_count(self) -> int:
         return len(self.calls)
 
     @property
-    def last_call(self) -> tuple[str, bytes] | None:
+    def last_call(self) -> tuple[str, bytes, bool] | None:
         return self.calls[-1] if self.calls else None
 
 

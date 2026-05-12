@@ -278,6 +278,17 @@
   <main class="center">
     <ConnectionStatus connected={store.connected} onlineCount={store.onlineCount} error={store.connectionError} />
 
+    {#if store.parseFailureRate >= 5}
+      <div class="parse-failure-banner" role="alert" data-testid="parse-failure-banner">
+        <span class="parse-failure-icon">⚠</span>
+        <span class="parse-failure-text">
+          Message decoding errors detected ({store.parseFailureRate} in the last 30s).
+          Open DevTools console for diagnostic details
+          (search for <code>[claude-comms] MQTT message parse failed</code>).
+        </span>
+      </div>
+    {/if}
+
     <header class="chat-header" data-testid="chat-header">
       <button class="mobile-menu-btn" type="button" data-testid="mobile-menu-btn" onclick={() => showMobileSidebar = !showMobileSidebar} aria-label="Open sidebar menu">
         <Menu size={20} strokeWidth={2} />
@@ -485,6 +496,38 @@
 {/each}
 
 <style>
+  /* Surfaced when the MQTT message-parse failure rate crosses 5 per 30s.
+   * Always sits below the connection-status row; never blocks the chat.
+   * Tone: warning, not error — most parse failures are recoverable noise
+   * but the user should know to check DevTools. */
+  .parse-failure-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 8px 16px 0;
+    padding: 8px 12px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary, #a8a098);
+  }
+  .parse-failure-icon {
+    color: var(--ember-400, #f59e0b);
+    font-size: 14px;
+    line-height: 1;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  .parse-failure-text code {
+    background: rgba(0, 0, 0, 0.25);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
+    font-size: 11px;
+  }
+
   .app-layout {
     display: flex;
     width: 100%;

@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] -- 2026-05-12
+
+Patch release. Two correctness fixes surfaced during smoke testing of MCP-driven worker agents on v0.3.0, plus a structured-logging upgrade for future bug-report quality.
+
+### Fixed
+
+- **Bug 2 — MCP-joined participants (e.g. `svelte-worker`) now appear in the web UI participant list reliably.** Root cause: `comms_join` over MCP published presence to `claude-comms/conv/{conv}/presence/{key}` with `retain=False`. A web UI that connected AFTER the worker joined saw no retained presence and ghosted the worker until the 30s REST poll caught up. Web UIs that crashed or were reloaded mid-session lost workers entirely. Fixed by passing `retain=True` to both the conv-scoped and system-scoped presence publishes in `mcp_server.py:publish_mcp_presence_on_join`. The retained message survives until the worker disconnects (or the next daemon restart wipes broker-side retain state).
+- **Latent `PublishFn` protocol mismatch** (`src/claude_comms/mcp_tools.py`, `src/claude_comms/presence.py`). The protocol declared `(topic: str, payload: bytes) -> None` but the real `_do_publish` implementation has `(topic, payload, retain=False)`. Pyright flagged this since 0.2.x but Python's duck typing accepted it at runtime. Became load-bearing once `retain=True` was actually being passed at MCP-side presence call sites. Protocol updated to match the real signature; `PublishSpy` test fixture in `tests/conftest.py` updated to record `(topic, payload, retain)` 3-tuples (and the six test sites that unpack from spy calls were migrated to 3-element unpacks).
+
+### Added
+
+- **Structured MQTT parse-failure logger** (`web/src/lib/mqtt-store.svelte.js`). Prior to this release every bad MQTT frame logged the same context-free `"Failed to parse MQTT message: <error>"` — undiagnosable. New `#receiveMqttFrame` method:
+  - Silently skips **empty payloads** (retained-clear publishes / presence cleanup — these are routine broker-state ops, not parse failures, but were polluting the previous log with `Unexpected end of JSON input`).
+  - On real JSON-parse failure, logs a structured object with `topic`, `payloadLength`, `payloadPreview` (first 500 chars + `[truncated, total=N]` if longer), `errorName`, `errorMessage`, and an ISO timestamp.
+  - Continues rather than letting the exception bubble — one bad frame never freezes the message stream.
+- **In-UI parse-failure banner** (`App.svelte`). Surfaces a soft-amber warning row when the parse-failure rate crosses ≥ 5 in any 30-second window. Pure observability; doesn't block the chat. Helps users notice connection issues / sender-side bugs without needing DevTools open.
+- **`MqttChatStore.parseFailureRate` reactive state** + `#parseFailureTimestamps` private rolling window. Pruned on every update so stale entries age out without a separate timer.
+- **`tests/test_mcp_presence.py`** (5 tests) — pins the retained-presence-on-join contract: publishes to both conv and system topics, every publish carries `retain=True`, payload contains all fields the web UI's `#handlePresence` destructures, helper swallows publish-side exceptions (best-effort).
+- **`publish_mcp_presence_on_join` helper** (module-level in `mcp_server.py`). Extracted from the closure body of `create_server`'s `comms_join` tool so it can be unit-tested independently of the FastMCP wiring. Public surface; callers pass `publish_fn` and the join's `key`/`name`/`type_`/`conversation`.
+
+### Changed
+
+- **`PublishSpy` test fixture** (`tests/conftest.py`) — `__call__` now accepts `retain: bool = False`; `calls` list records 3-tuples `(topic, payload, retain)`. Six test sites across `test_artifact.py`, `test_mcp_tools.py`, `test_message_visibility.py`, `test_gaps_mcp_tools.py`, `test_conversation.py` migrated to 3-element unpacks.
+
+### Verified
+
+- Full pytest suite: **1201 passed** (1196 from v0.3.0 + 5 new presence tests), 0 failed.
+- ruff check + ruff format both clean.
+- End-to-end probe (fresh isolated daemon + MQTT subscriber + simulated MCP join) confirms presence is published to `claude-comms/conv/svelte-work/presence/{key}` AND `claude-comms/system/participants/{key}-mcp`, both with `retain=True`, both carrying the correct wire-format payload (`key`, `name`, `type`, `status: "online"`, `client: "mcp"`, `ts`).
+- REST `/api/participants/{conv}` returns the MCP-joined participant with the synthesized MCP connection (`is_online: true`), so the web UI's 30-second REST poll path also resolves the worker correctly even if the live MQTT path missed.
+
+### Notes for upgraders
+
+- After upgrade, restart the daemon (`claude-comms stop && claude-comms start --background --web`). The fix lives in the daemon process; a stale pre-upgrade daemon will keep publishing non-retained presence.
+- Existing connected web clients may need a hard-reload (`Ctrl+Shift+R`) or browser site-data clear to pick up the new bundled `mqtt-store.svelte.js` (the parse-failure logger + banner ship in the dist JS).
+
 ## [0.3.0] -- 2026-05-12
 
 Minor release. Two distinct correctness fixes plus a polish piece. The headline change is **participant registry persistence** — the standing-agent use case (Claude Code agents that hold a key across daemon restarts) was structurally broken in 0.2.x and is now correct. Also lands the worker-src CSP fix (which the v0.2.3 web-UI brief flagged as the actual functional half of Bug 1) and the project's first favicon.

@@ -239,7 +239,7 @@ class TestCommsSendEdgeCases:
             message=long_msg,
         )
         assert result["status"] == "sent"
-        _, payload = publish_spy.last_call
+        _, payload, _retain = publish_spy.last_call
         parsed = json.loads(payload)
         assert len(parsed["body"]) == 100_000
 
