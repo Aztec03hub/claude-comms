@@ -400,6 +400,139 @@ def get_all_conversations(key: str | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# v0.4.0 full ChannelRow serialization for /api/conversations
+# ---------------------------------------------------------------------------
+#
+# Design Spec §13.4 ChannelRow contract:
+#   { id, name, topic, member, memberCount, lastActivity,
+#     mode, visibility, createdAt, createdBy,
+#     myUnread, myStarred, myMuted }
+#
+# Backward-compat fields preserved alongside (snake_case "joined",
+# "member_count", "last_activity", "created_at", "created_by",
+# "message_count") so v0.3.x web clients keep working during rollout.
+
+
+def _serialize_conversation_full(
+    meta: Any,
+    caller_key: str,
+    *,
+    registry: Any = None,
+    store: Any = None,
+    activity_tracker: Any = None,
+) -> dict:
+    """Serialize a :class:`ConversationMeta` into the v0.4.0 ChannelRow shape.
+
+    *caller_key* is the calling identity's 8-hex key. When empty, ``member``
+    is always ``False`` and unlisted channels MUST be filtered upstream
+    (this helper does NOT filter — callers do).
+
+    *registry*, *store*, *activity_tracker* default to the module-level
+    globals when omitted (production path). They're parameterized so unit
+    tests can inject fakes without monkey-patching module state.
+    """
+    reg = registry if registry is not None else _registry
+    msg_store = store if store is not None else _store
+    tracker = activity_tracker if activity_tracker is not None else _activity_tracker
+
+    # --- caller membership + total member count ---
+    is_member = False
+    member_count = 0
+    if reg is not None:
+        members = reg.members(meta.name)
+        member_count = len(members)
+        if caller_key:
+            convs = reg.conversations_for(caller_key)
+            is_member = meta.name in convs
+
+    # --- last activity: prefer in-memory tracker (live) over disk meta ---
+    # Tracker holds the most recent message ts that hasn't been flushed
+    # to meta.json yet. Fall back to meta.last_activity, then created_at.
+    last_activity = None
+    if tracker is not None:
+        last_activity = tracker.get(meta.name)
+    if not last_activity:
+        last_activity = meta.last_activity
+    if not last_activity:
+        last_activity = meta.created_at
+
+    # --- mode / visibility: ConversationMeta doesn't track these yet (v0.4.0
+    # follow-up). Read defensively via getattr so a future field add
+    # transparently surfaces. Defaults per Design Spec §13.4. ---
+    mode = getattr(meta, "mode", None) or "public"
+    visibility = getattr(meta, "visibility", None) or "listed"
+
+    # --- per-conv message count for back-compat ---
+    message_count = 0
+    if msg_store is not None:
+        message_count = len(msg_store.get(meta.name))
+
+    return {
+        # New ChannelRow fields (v0.4.0)
+        "id": meta.name,
+        "name": meta.name,
+        "topic": meta.topic,
+        "member": is_member,
+        "memberCount": member_count,
+        "lastActivity": last_activity,
+        "mode": mode,
+        "visibility": visibility,
+        "createdAt": meta.created_at,
+        "createdBy": meta.created_by,
+        # Per-user personalization — populated for real in v0.4.1 when
+        # per-user state lands. Always present so the web client never
+        # encounters undefined.
+        "myUnread": 0,
+        "myStarred": False,
+        "myMuted": False,
+        # Backward-compat (v0.3.x) fields — keep until v0.5.x deprecation
+        "joined": is_member,
+        "member_count": member_count,
+        "last_activity": last_activity,
+        "created_at": meta.created_at,
+        "created_by": meta.created_by,
+        "message_count": message_count,
+    }
+
+
+def get_all_conversations_full(caller_key: str = "") -> list[dict]:
+    """Return the daemon's full known conversation set, ChannelRow-shaped.
+
+    v0.4.0 S-FIX backend: the web sidebar's "Available" section bootstraps
+    from this list (the prior endpoint returned only the caller's
+    memberships, which is why the sidebar fell back to a hardcoded seed
+    list).
+
+    Visibility rules:
+      - Listed channels (``visibility == "listed"``) appear for everyone.
+      - Unlisted channels appear only for callers who are members.
+
+    *caller_key* is the calling identity's 8-hex key. When empty, all
+    unlisted channels are filtered out and every row's ``member`` is
+    ``False``.
+    """
+    if _conv_data_dir is None:
+        return []
+    metas = list_all_conversations(_conv_data_dir)
+
+    # Pre-compute caller's membership set once (avoids O(N) per-row lookups).
+    caller_memberships: set[str] = set()
+    if _registry is not None and caller_key:
+        caller_memberships = set(_registry.conversations_for(caller_key))
+
+    result: list[dict] = []
+    for meta in metas:
+        visibility = getattr(meta, "visibility", None) or "listed"
+        is_member = meta.name in caller_memberships
+        # Unlisted: only members see them. Listed: everyone sees them.
+        if visibility != "listed" and not is_member:
+            continue
+        row = _serialize_conversation_full(meta, caller_key)
+        result.append(row)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # MQTT subscriber background task
 # ---------------------------------------------------------------------------
 

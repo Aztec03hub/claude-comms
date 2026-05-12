@@ -846,7 +846,7 @@ def start(
                 get_channel_participants,
                 get_conversation_artifacts,
                 get_artifact,
-                get_all_conversations,
+                get_all_conversations_full,
             )
             from claude_comms.message import validate_conv_id
 
@@ -997,21 +997,27 @@ def start(
                 )
 
             async def _api_conversations(request: Request) -> JSONResponse:
-                """GET /api/conversations?all=true — list conversations."""
-                all_param = request.query_params.get("all", "false").lower() in (
-                    "true",
-                    "1",
-                    "yes",
-                )
-                # Get identity key for "joined" status
+                """GET /api/conversations?all=true — list conversations.
+
+                v0.4.0 S-FIX backend: returns the daemon's full known
+                conversation set, each row shaped as a Design Spec §13.4
+                ChannelRow ({ id, name, topic, member, memberCount,
+                lastActivity, mode, visibility, createdAt, createdBy,
+                myUnread, myStarred, myMuted }). Listed channels appear
+                for everyone; unlisted channels appear only to members.
+
+                The legacy v0.3.x snake_case fields (``joined``,
+                ``member_count``, ``last_activity``, ``created_at``,
+                ``created_by``, ``message_count``) are preserved on every
+                row for backward compatibility — see Spec §13.4.
+                """
+                # The ``?all=true`` query param is accepted for back-compat
+                # but is now a no-op: the endpoint always returns the
+                # daemon's full known set (visibility-filtered per caller).
+                _ = request.query_params.get("all", "false")
                 identity = config.get("identity", {})
                 identity_key = identity.get("key", "")
-                if all_param:
-                    conversations = get_all_conversations(key=identity_key)
-                else:
-                    conversations = get_all_conversations(
-                        key=identity_key
-                    )  # REST always returns all for now
+                conversations = get_all_conversations_full(caller_key=identity_key)
                 return JSONResponse(
                     {"conversations": conversations, "count": len(conversations)},
                     headers=_cors(request),
