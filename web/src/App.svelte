@@ -420,6 +420,23 @@
     {/if}
 
     <!--
+      v0.4.0 Step 2.6 — server-unreachable banner. Surfaces when the
+      ``/api/conversations`` bootstrap (Step 2.5) failed (404/500/network)
+      so the user understands why the sidebar is empty. Cleared
+      automatically by the store on the next successful bootstrap (e.g.
+      after MQTT reconnect re-fires the helper).
+    -->
+    {#if store.serverUnreachable}
+      <div class="parse-failure-banner" role="alert" data-testid="server-unreachable-banner">
+        <span class="parse-failure-icon">⚠</span>
+        <span class="parse-failure-text">
+          Server unreachable — channels unavailable. The page will refresh
+          the channel list once the daemon comes back online.
+        </span>
+      </div>
+    {/if}
+
+    <!--
       Set-your-name banner (UX G-43 follow-up). Surfaces ONLY when the
       store reports `nameUnset === true` and the user hasn't dismissed.
       Dismissal is persisted in localStorage so returning users aren't

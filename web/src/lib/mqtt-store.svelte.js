@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
-import { API_BASE, apiGet } from './api.js';
+import { API_BASE, apiGet, mcpCall } from './api.js';
 
 // Derive the MQTT broker URL from the current page hostname.
 // API origin derivation now lives in lib/api.js (exported as API_BASE);
@@ -20,6 +20,29 @@ const MAX_DISPLAY_NAME_LENGTH = 50;
 
 /** Allowed connection client types. Unknown types are rejected. */
 const CONNECTION_TYPES = ['web', 'tui', 'mcp', 'cli', 'api'];
+
+/**
+ * v0.4.0 Step 2.6 — destructive channel-lifecycle methods (``archiveChannel``,
+ * ``leaveChannel``) return ``{ done, cancel }`` and give the caller this
+ * many milliseconds to abort the underlying MCP call. Matches the Design
+ * Spec §10 "Undo" toast affordance. Exported only via the test seam to
+ * keep the public surface trim.
+ */
+const UNDO_WINDOW_MS = 15_000;
+
+/**
+ * Allowed mute levels per Design Spec §8.2. ``"off"`` is the default
+ * (no mute). ``"all"`` suppresses every notification including mentions;
+ * ``"mentions"`` only fires on @mentions. Q4 lock keeps mute persistence
+ * client-side (localStorage) in v0.4.0 — no MCP tool involved.
+ */
+const MUTE_LEVELS = ['off', 'mentions', 'all'];
+
+/** localStorage key prefix for per-channel star state (Q4-adjacent local lock). */
+const STAR_STORAGE_PREFIX = 'claude-comms.star.';
+
+/** localStorage key prefix for per-channel mute level (Q4 lock — local only). */
+const MUTE_STORAGE_PREFIX = 'claude-comms.mute.';
 
 /** How long a connection can go without a heartbeat before TTL cleanup removes it (ms). */
 const CONNECTION_TTL_MS = 120_000;
@@ -57,26 +80,49 @@ const safeStorage = {
 export class MqttChatStore {
   // ── Reactive State ──
   messages = $state([]);
+
   /**
-   * Channel list. v0.4.0 S-FIX: no hardcoded seed.
+   * Channel map keyed by channel id. v0.4.0 Step 2.6: the array shape from
+   * Step 2.5 is now backed by a map so lookups are O(1) and the per-row
+   * shape can carry the full ChannelRow data contract (Design Spec §13.4)
+   * without scanning a list. The legacy ``channels`` array surface stays
+   * as a ``$derived`` view (insertion-order ``Object.values``) so existing
+   * consumers (``Sidebar.svelte`` / ``ForwardPicker.svelte`` /
+   * ``ConversationBrowser.svelte`` / ``App.svelte``) continue to compile
+   * unchanged until Step 2.12 rewrites the sidebar.
    *
-   * Bootstrap path: ``connect()`` invokes ``#bootstrapChannels()`` after the
-   * MQTT broker handshake completes. That helper calls
-   * ``/api/conversations`` (the daemon's authoritative list per Step 2.1)
-   * and maps each row into the store-internal shape used throughout this
-   * file. On 0 rows, on 404/500, or on network failure, ``channels``
-   * stays empty and ``serverUnreachable`` flips true on failure so the
-   * UI can render a banner (consumer wiring deferred to Step 2.6).
+   * ChannelRow fields per Design Spec §13.4 (no ``undefined`` leaks):
+   *   - ``id``, ``name``, ``topic``: identity + UX labels
+   *   - ``member`` (bool): is the caller a member?
+   *   - ``memberCount`` (int): total members
+   *   - ``lastActivity`` (ISO string | null)
+   *   - ``mode``: ``"public" | "private"``
+   *   - ``visibility``: ``"listed" | "unlisted"``
+   *   - ``starred``, ``muted``, ``unread``, ``unreadHasMention``: caller's
+   *     per-row personalization
+   *   - ``unreadFrom`` (legacy v0.3.x marker, kept for back-compat)
+   *   - ``muteLevel``: ``"off" | "mentions" | "all"`` (Q4 lock — local)
+   *   - ``createdAt``, ``createdBy``
+   *   - ``archived`` (bool), ``archived_at``, ``archived_by`` (v0.4.0)
    *
-   * Field name mapping vs the wire payload (Step 2.1 contract,
-   * camelCase ``my``-prefix → unprefixed store-internal):
-   *   - ``myUnread`` → ``unread``
-   *   - ``myStarred`` → ``starred``
-   *   - ``myMuted`` → ``muted``
-   * All other fields (``id``, ``name``, ``topic``, ``member``, ...) pass
-   * through as-is.
+   * Wire-side rename (Step 2.1 contract): ``myUnread``/``myStarred``/
+   * ``myMuted`` lose the ``my`` prefix in the store-internal shape; see
+   * ``#channelRowFromPayload``.
+   *
+   * @type {Record<string, object>}
    */
-  channels = $state([]);
+  channelsById = $state({});
+
+  /**
+   * Back-compat array view of ``channelsById``. Preserves insertion order
+   * (``Object.values`` of a non-frozen object). Pre-Step-2.12 consumers
+   * call ``store.channels.filter(...)`` / ``.find(...)`` / ``.map(...)``;
+   * those continue to work unchanged here. Step 2.12's sidebar rewrite
+   * will switch to the four section ``$derived`` projections below.
+   *
+   * @type {object[]}
+   */
+  channels = $derived(Object.values(this.channelsById));
   activeChannel = $state('general');
   /**
    * Reactive flag indicating the daemon's ``/api/conversations`` endpoint
@@ -293,7 +339,7 @@ export class MqttChatStore {
       rows = await apiGet('/api/conversations');
     } catch (err) {
       this.serverUnreachable = true;
-      this.channels = [];
+      this.channelsById = {};
       this.#recordParseFailure();
       console.warn(
         '[claude-comms] /api/conversations bootstrap failed',
@@ -314,13 +360,87 @@ export class MqttChatStore {
       list = rows.conversations;
     }
     if (!Array.isArray(list)) {
-      this.channels = [];
+      this.channelsById = {};
       this.serverUnreachable = false;
+      this.#resetActiveChannelIfStale();
       return;
     }
 
-    this.channels = list.map((row) => this.#channelRowFromPayload(row));
+    // v0.4.0 Step 2.6: build a fresh map keyed by id. Preserves the order
+    // of the payload so `Object.values` (the back-compat `channels` array
+    // surface) maintains insertion order, matching pre-Step-2.6 behavior.
+    const nextMap = {};
+    for (const row of list) {
+      const ch = this.#channelRowFromPayload(row);
+      // Use the row's own id; collisions overwrite (later wins, matches
+      // the historical ``find``-based replacement pattern).
+      nextMap[ch.id] = ch;
+    }
+    this.channelsById = nextMap;
     this.serverUnreachable = false;
+    // Overlay local-only state (starred / muted level) so the user's
+    // page-refresh-persistent decorations survive bootstrap. Daemon-side
+    // ``myStarred`` / ``myMuted`` remain authoritative when present; this
+    // overlay only fills in when the daemon hasn't surfaced them yet
+    // (Q4 lock — mute is local-only in v0.4.0; star personalization lands
+    // server-side in v0.4.1).
+    this.#restoreLocalChannelState();
+    this.#resetActiveChannelIfStale();
+  }
+
+  /**
+   * Overlay localStorage-persisted ``starred`` and ``muted`` decorations
+   * onto the freshly bootstrapped channels map. Idempotent — safe to call
+   * multiple times. Uses the same per-id keys ``setStar`` / ``setMute``
+   * write to (``claude-comms.star.{id}`` / ``claude-comms.mute.{id}``)
+   * so the round-trip is symmetric.
+   *
+   * Bootstrap-time payload values (``myStarred`` / ``myMuted`` per the
+   * Step 2.1 contract) take precedence ONLY when they're explicitly
+   * ``true`` — a daemon emitting ``false`` does not clobber a stored
+   * local star. This is intentional: until per-user state lands
+   * server-side (v0.4.1), localStorage is the user's actual source of
+   * truth for these decorations.
+   */
+  #restoreLocalChannelState() {
+    for (const ch of Object.values(this.channelsById)) {
+      // Star: localStorage value of ``'true'`` flips the in-memory flag.
+      // Anything else (missing, ``'false'``, malformed) leaves the
+      // payload-derived value in place.
+      const starRaw = safeStorage.getItem(STAR_STORAGE_PREFIX + ch.id);
+      if (starRaw === 'true') {
+        ch.starred = true;
+      } else if (starRaw === 'false' && !ch.starred) {
+        // Explicit false survives only if the daemon didn't assert true.
+        ch.starred = false;
+      }
+      // Mute: levels are strings; map ``'off'`` → bool false, anything
+      // else (``'mentions'`` / ``'all'``) → bool true.
+      const muteRaw = safeStorage.getItem(MUTE_STORAGE_PREFIX + ch.id);
+      if (muteRaw && MUTE_LEVELS.includes(muteRaw)) {
+        ch.muteLevel = muteRaw;
+        ch.muted = muteRaw !== 'off';
+      }
+    }
+  }
+
+  /**
+   * After bootstrap, if ``activeChannel`` no longer corresponds to a real
+   * row in the map, fall back to the first member channel (alpha-sorted
+   * by name). Returns ``null`` when there are no member channels at all
+   * — the chat pane consumer renders an empty-state in that case.
+   *
+   * Fixes the Step 2.5 surfaced follow-up: ``activeChannel = $state('general')``
+   * default survives even when ``/api/conversations`` returns no row
+   * called ``general``; without this reset the chat pane stayed blank
+   * forever.
+   */
+  #resetActiveChannelIfStale() {
+    if (this.activeChannel && this.channelsById[this.activeChannel]) return;
+    const members = Object.values(this.channelsById)
+      .filter((c) => c.member)
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
+    this.activeChannel = members.length > 0 ? members[0].id : null;
   }
 
   /**
@@ -336,6 +456,7 @@ export class MqttChatStore {
    */
   #channelRowFromPayload(row) {
     const r = row && typeof row === 'object' ? row : {};
+    const muted = r.myMuted === true;
     return {
       id: typeof r.id === 'string' ? r.id : '',
       name: typeof r.name === 'string' ? r.name : (typeof r.id === 'string' ? r.id : ''),
@@ -349,8 +470,20 @@ export class MqttChatStore {
       createdBy: r.createdBy ?? null,
       // my-prefix → unprefixed rename (architecture spec §III.4 preamble)
       unread: typeof r.myUnread === 'number' ? r.myUnread : 0,
+      // Per-thread mention dot. Daemon emits this in v0.4.1; default
+      // false until then so the ChannelRow shape carries no undefined.
+      unreadHasMention: r.unreadHasMention === true,
+      // Legacy v0.3.x per-channel "first unread message id" cursor.
+      // Persisted in localStorage by ``#saveUnreadMarkers``; restored by
+      // ``#restoreUnreadMarkers``. Keep null by default.
+      unreadFrom: r.unreadFrom ?? null,
       starred: r.myStarred === true,
-      muted: r.myMuted === true,
+      muted,
+      // Mute LEVEL: ``"off" | "mentions" | "all"``. Default tracks ``muted``
+      // (true → ``"all"``, false → ``"off"``). Real level overrides this
+      // when the user picks one via ``setMute``; ``#restoreLocalChannelState``
+      // pulls it out of localStorage on bootstrap.
+      muteLevel: muted ? 'all' : 'off',
       // Archive fields default to non-archived when absent (the daemon
       // does not emit them yet as of v0.4.0 Step 2.1; reserved for the
       // archive-aware payload in a later step).
@@ -368,6 +501,20 @@ export class MqttChatStore {
    */
   async _bootstrapChannelsForTest() {
     await this.#bootstrapChannels();
+  }
+
+  /**
+   * Test-only seam: dispatch a synthetic ``claude-comms/system/conversations``
+   * event through ``#handleSystemConversation`` without standing up an
+   * MQTT broker. Mirrors what ``_bootstrapChannelsForTest`` does for the
+   * REST bootstrap path. Used by ``tests/mqtt-store-channels.spec.js`` to
+   * exercise the ``conversation_created`` / ``conversation_topic_changed``
+   * / ``conversation_deleted`` branches.
+   *
+   * @param {object} msg - System-event payload.
+   */
+  _handleSystemEventForTest(msg) {
+    this.#handleSystemConversation(msg);
   }
 
   /**
@@ -589,11 +736,56 @@ export class MqttChatStore {
     this.messages.filter(m => m.channel === this.activeChannel && m.reply_to)
   );
 
-  activeChannelMeta = $derived(
-    this.channels.find(c => c.id === this.activeChannel)
+  activeChannelMeta = $derived(this.channelsById[this.activeChannel]);
+
+  /**
+   * v0.4.0 Step 2.6 — three-section sidebar projections (Design Spec §13).
+   *
+   * Each section is alpha-sorted by ``name`` (SORT-LOCK; Phil's hard
+   * constraint per architecture spec §III.4 preamble). Falls back to ``id``
+   * when ``name`` is missing so legacy meta-only rows still sort
+   * deterministically. The sort comparator is locale-aware
+   * (``localeCompare``) so accent-bearing names alphabetize the way users
+   * expect them to.
+   *
+   * Sections (per architecture spec §III.4 step 2.6):
+   *   - ``starredChannels``   : ``member && starred``
+   *   - ``activeChannels``    : ``member && !starred && !archived``
+   *   - ``availableChannels`` : ``!member && visibility === 'listed' &&
+   *                              !archived``
+   *   - ``archivedChannels``  : ``archived === true`` (drives the
+   *                             directory modal's Archived sub-tab in
+   *                             Step 2.13)
+   *
+   * Step 2.12's sidebar rewrite consumes these directly. The legacy
+   * insertion-ordered ``channels`` array view above stays for back-compat
+   * (``Sidebar.svelte`` / ``ForwardPicker.svelte`` /
+   * ``ConversationBrowser.svelte`` / ``App.svelte`` haven't been migrated
+   * yet).
+   */
+  starredChannels = $derived(
+    Object.values(this.channelsById)
+      .filter((c) => c.member && c.starred)
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || '')),
   );
 
-  starredChannels = $derived(this.channels.filter(c => c.starred));
+  activeChannels = $derived(
+    Object.values(this.channelsById)
+      .filter((c) => c.member && !c.starred && !c.archived)
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || '')),
+  );
+
+  availableChannels = $derived(
+    Object.values(this.channelsById)
+      .filter((c) => !c.member && c.visibility === 'listed' && !c.archived)
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || '')),
+  );
+
+  archivedChannels = $derived(
+    Object.values(this.channelsById)
+      .filter((c) => c.archived === true)
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || '')),
+  );
 
   onlineParticipants = $derived(
     Object.values(this.participants).filter(p => Object.keys(p.connections).length > 0)
@@ -764,7 +956,7 @@ export class MqttChatStore {
    * @returns {object|undefined} The channel object, or undefined if not found.
    */
   getChannelById(id) {
-    return this.channels.find(c => c.id === id);
+    return this.channelsById[id];
   }
 
   /**
@@ -1300,7 +1492,7 @@ export class MqttChatStore {
     if (channelId === this.activeChannel) return;
 
     // Clear unread for old active
-    const ch = this.channels.find(c => c.id === channelId);
+    const ch = this.channelsById[channelId];
     if (ch) {
       ch.unread = 0;
       ch.unreadFrom = null;
@@ -1327,9 +1519,27 @@ export class MqttChatStore {
    * @param {string} topic - Short description shown in the channel header.
    */
   createChannel(id, topic = '') {
-    if (this.channels.find(c => c.id === id)) return;
+    if (this.channelsById[id]) return;
 
-    this.channels = [...this.channels, { id, topic, starred: false, unread: 0 }];
+    // v0.4.0 Step 2.6 — populate the full ChannelRow shape on local
+    // create. ``member`` defaults true because the creator implicitly
+    // joins. ``visibility`` defaults ``listed`` so the new channel
+    // surfaces in the directory's Browse tab for other users.
+    this.channelsById[id] = this.#channelRowFromPayload({
+      id,
+      name: id,
+      topic,
+      member: true,
+      memberCount: 1,
+      lastActivity: new Date().toISOString(),
+      mode: 'public',
+      visibility: 'listed',
+      createdAt: new Date().toISOString(),
+      createdBy: this.userProfile.key,
+      myUnread: 0,
+      myStarred: false,
+      myMuted: false,
+    });
 
     // Publish meta
     if (this.#client) {
@@ -1347,11 +1557,14 @@ export class MqttChatStore {
 
   /**
    * Toggle whether a channel is starred (pinned at the top of the sidebar).
+   * v0.4.0 Step 2.6 — back-compat shim that delegates to ``setStar``, which
+   * also handles the localStorage round-trip (Q4-adjacent local lock).
    * @param {string} channelId - The channel to star/unstar.
    */
   toggleStar(channelId) {
-    const ch = this.channels.find(c => c.id === channelId);
-    if (ch) ch.starred = !ch.starred;
+    const ch = this.channelsById[channelId];
+    if (!ch) return;
+    this.setStar(channelId, !ch.starred);
   }
 
   /**
@@ -1372,7 +1585,8 @@ export class MqttChatStore {
    * @param {object} message - A message object; its channel/conv field is used to find the channel.
    */
   markUnread(message) {
-    const ch = this.channels.find(c => c.id === (message.channel || message.conv || this.activeChannel));
+    const targetId = message.channel || message.conv || this.activeChannel;
+    const ch = this.channelsById[targetId];
     if (ch) {
       ch.unreadFrom = message.id;
       ch.unread = Math.max(ch.unread, 1);
@@ -1459,11 +1673,17 @@ export class MqttChatStore {
 
   /**
    * Toggle muted flag on a channel (muted channels suppress notifications).
+   * v0.4.0 Step 2.6 — back-compat shim that delegates to ``setMute`` so
+   * the localStorage round-trip stays consistent. Flips between
+   * ``"off"`` and ``"all"`` levels; the new directory-modal context menu
+   * exposes the finer ``"mentions"`` level directly via ``setMute``.
    * @param {string} channelId - The channel to mute/unmute.
    */
   muteChannel(channelId) {
-    const ch = this.channels.find(c => c.id === channelId);
-    if (ch) ch.muted = !ch.muted;
+    const ch = this.channelsById[channelId];
+    if (!ch) return;
+    const nextLevel = ch.muted ? 'off' : 'all';
+    this.setMute(channelId, nextLevel);
   }
 
   /**
@@ -1600,6 +1820,479 @@ export class MqttChatStore {
     }
   }
 
+  // ── v0.4.0 Step 2.6 — channel lifecycle methods ──
+  //
+  // Eight methods per architecture spec §III.4 step 2.6. Each is async
+  // (except the local-only ``setStar`` / ``setMute``), wraps the
+  // corresponding REST/MCP call, optimistically updates ``channelsById``,
+  // and reverts on error. ``archiveChannel`` and ``leaveChannel`` each
+  // return ``{ done, cancel }`` so the sidebar context-menu invoker
+  // (Step 2.12) can wire a 15-second undo toast.
+
+  /**
+   * Join a conversation. Calls ``comms_join`` over the MCP transport;
+   * on success, optimistically flips ``member = true`` and bumps
+   * ``memberCount``, then hydrates the last-N message history via the
+   * existing ``#fetchHistory`` helper so the chat pane is populated
+   * before the user even switches. On failure, reverts the optimistic
+   * state.
+   *
+   * Idempotent at the row level — a second call against the same id is a
+   * no-op if ``member`` is already true. (The MCP tool itself is also
+   * idempotent server-side; this guard just avoids the wasted round-trip.)
+   *
+   * @param {string} id - Channel id to join.
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async joinChannel(id) {
+    if (typeof id !== 'string' || !id) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    const ch = this.channelsById[id];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+    if (ch.member) return { success: true };
+
+    // Optimistic: flip member + bump count BEFORE the call so the
+    // sidebar updates immediately.
+    const prevMember = ch.member;
+    const prevCount = ch.memberCount;
+    ch.member = true;
+    ch.memberCount = prevCount + 1;
+
+    const result = await mcpCall('comms_join', {
+      key: this.userProfile.key,
+      conversation: id,
+      name: this.userProfile.name,
+    });
+    if (!result.success) {
+      // Roll back optimistic update.
+      ch.member = prevMember;
+      ch.memberCount = prevCount;
+      return { success: false, error: result.error };
+    }
+
+    // Hydrate last-N history so the chat pane has content the moment the
+    // user switches to this channel.
+    this.#fetchHistory(id);
+    return { success: true };
+  }
+
+  /**
+   * Leave a conversation. Returns ``{ done, cancel }`` so the caller can
+   * wire a 15-second Undo toast (Design Spec §10): if ``cancel()`` fires
+   * within the window the MCP call never goes out + local state stays
+   * unchanged. After the window the MCP call commits and ``cancel()``
+   * becomes a no-op.
+   *
+   * Side effects on the commit path:
+   *   - Optimistic ``member = false`` happens BEFORE the call so the
+   *     sidebar updates instantly.
+   *   - On MCP error, ``member`` flips back.
+   *   - On success, the local message buffer for that channel is cleared
+   *     (architecture spec §III.4 step 2.6: "clears local message buffer
+   *     for that channel").
+   *   - Auto-unstars per SORT-LOCK / Design Spec §2.6.
+   *
+   * @param {string} id - Channel id to leave.
+   * @returns {{ done: Promise<{success: boolean, error?: string, cancelled?: boolean}>, cancel: () => void }}
+   */
+  leaveChannel(id) {
+    const ch = this.channelsById[id];
+    if (!ch) {
+      // No channel to leave — return a settled-rejected envelope that
+      // matches the {done, cancel} shape so callers don't have to special-
+      // case the missing-id path.
+      return {
+        done: Promise.resolve({ success: false, error: 'Unknown channel.', cancelled: false }),
+        cancel: () => ({ tooLate: true }),
+      };
+    }
+
+    // Snapshot pre-change state for rollback on cancel OR MCP error.
+    const prevMember = ch.member;
+    const prevStarred = ch.starred;
+    const prevActiveChannel = this.activeChannel;
+
+    return this.#scheduleUndoable(
+      // optimistic: apply immediately so the row disappears from Active.
+      () => {
+        ch.member = false;
+        // Auto-unstar (Design Spec §2.6: star is a member-only decoration).
+        if (ch.starred) {
+          this.setStar(id, false);
+        }
+      },
+      // rollback (on cancel): restore the pre-change snapshot.
+      () => {
+        ch.member = prevMember;
+        if (prevStarred && !ch.starred) {
+          this.setStar(id, true);
+        }
+      },
+      // commitMcp (after 15s): fire the actual MCP call + finish local
+      // side effects, or roll back on MCP error.
+      async () => {
+        const result = await mcpCall('comms_leave', {
+          key: this.userProfile.key,
+          conversation: id,
+        });
+        if (!result.success) {
+          ch.member = prevMember;
+          if (prevStarred && !ch.starred) {
+            this.setStar(id, true);
+          }
+          return { success: false, error: result.error };
+        }
+        // Clear local message buffer for this channel.
+        this.messages = this.messages.filter((m) => m.channel !== id);
+        // If we were viewing this channel, pick a new active.
+        if (prevActiveChannel === id) {
+          this.activeChannel = null;
+          this.#resetActiveChannelIfStale();
+        }
+        return { success: true };
+      },
+    );
+  }
+
+  /**
+   * Archive a conversation (Q1 lock — "Close = archive + kick"). Returns
+   * ``{ done, cancel }`` for the 15-second Undo toast.
+   *
+   * Side effects on the commit path:
+   *   - Optimistic ``archived = true`` + ``member = false`` BEFORE the
+   *     call (the daemon will eject all members on commit anyway).
+   *   - On MCP error, both flags flip back.
+   *   - On success, the row stays in the map (so the directory's
+   *     Archived sub-tab can still surface it) but is removed from the
+   *     three live sections via the ``archived`` filter on each
+   *     ``$derived``.
+   *   - Stamps ``archived_at`` + ``archived_by`` locally so the row
+   *     surfaces the correct provenance even before the next bootstrap.
+   *
+   * @param {string} id - Channel id to archive.
+   * @returns {{ done: Promise<{success: boolean, error?: string, cancelled?: boolean}>, cancel: () => void }}
+   */
+  archiveChannel(id) {
+    const ch = this.channelsById[id];
+    if (!ch) {
+      return {
+        done: Promise.resolve({ success: false, error: 'Unknown channel.', cancelled: false }),
+        cancel: () => ({ tooLate: true }),
+      };
+    }
+
+    const prev = {
+      archived: ch.archived,
+      archived_at: ch.archived_at,
+      archived_by: ch.archived_by,
+      member: ch.member,
+      memberCount: ch.memberCount,
+    };
+    const prevActiveChannel = this.activeChannel;
+
+    return this.#scheduleUndoable(
+      // optimistic
+      () => {
+        ch.archived = true;
+        ch.archived_at = new Date().toISOString();
+        ch.archived_by = this.userProfile.key;
+        ch.member = false;
+      },
+      // rollback
+      () => {
+        ch.archived = prev.archived;
+        ch.archived_at = prev.archived_at;
+        ch.archived_by = prev.archived_by;
+        ch.member = prev.member;
+        ch.memberCount = prev.memberCount;
+      },
+      // commitMcp
+      async () => {
+        const result = await mcpCall('comms_conversation_archive', {
+          key: this.userProfile.key,
+          conversation: id,
+          confirm: true,
+        });
+        if (!result.success) {
+          ch.archived = prev.archived;
+          ch.archived_at = prev.archived_at;
+          ch.archived_by = prev.archived_by;
+          ch.member = prev.member;
+          ch.memberCount = prev.memberCount;
+          return { success: false, error: result.error };
+        }
+        if (prevActiveChannel === id) {
+          this.activeChannel = null;
+          this.#resetActiveChannelIfStale();
+        }
+        return { success: true };
+      },
+    );
+  }
+
+  /**
+   * Delete a conversation. Destructive — no undo (per architecture spec
+   * §III.4 step 2.6: "destructive; no undo"). Wraps
+   * ``comms_conversation_delete`` with ``confirm=True``; the caller is
+   * expected to have already gated this behind the type-name
+   * confirmation modal (Design Spec §4.5).
+   *
+   * Local side effects: row removed from the map outright; clears the
+   * local message buffer for that channel; if it was the active channel,
+   * the active is reset to the first member channel.
+   *
+   * @param {string} id - Channel id to delete.
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async deleteChannel(id) {
+    if (typeof id !== 'string' || !id) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    const ch = this.channelsById[id];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    // Snapshot for rollback in case the MCP call fails.
+    const snapshot = { ...ch };
+    delete this.channelsById[id];
+
+    const result = await mcpCall('comms_conversation_delete', {
+      key: this.userProfile.key,
+      conversation: id,
+      confirm: true,
+    });
+    if (!result.success) {
+      // Re-insert at the same spot. Object.keys preserves the original
+      // insertion order; reinserting puts it at the end, which is
+      // acceptable for a rare error path (alpha sort on the section
+      // projections normalises the visible order anyway).
+      this.channelsById[id] = snapshot;
+      return { success: false, error: result.error };
+    }
+
+    this.messages = this.messages.filter((m) => m.channel !== id);
+    if (this.activeChannel === id) {
+      this.activeChannel = null;
+      this.#resetActiveChannelIfStale();
+    }
+    return { success: true };
+  }
+
+  /**
+   * "Close" is Phil's vocabulary in the context menu. Per the Q1 lock
+   * (Archive + kick), it delegates to ``archiveChannel``. If the project
+   * ever flips Q1 to Delete, swap the body — the sidebar consumer's
+   * contract stays the same.
+   *
+   * Returns the same ``{ done, cancel }`` envelope ``archiveChannel``
+   * does so the 15-second Undo toast wiring is transparent.
+   *
+   * @param {string} id - Channel id to close.
+   * @returns {{ done: Promise<{success: boolean, error?: string, cancelled?: boolean}>, cancel: () => void }}
+   */
+  closeChannel(id) {
+    return this.archiveChannel(id);
+  }
+
+  /**
+   * Update a channel's topic. Optimistic local update happens BEFORE the
+   * MCP call so the header line refreshes instantly; on error the prior
+   * topic is restored.
+   *
+   * @param {string} id - Channel id whose topic to update.
+   * @param {string} newTopic - The new topic string (server enforces its
+   *   own length cap — we don't pre-truncate here).
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async setTopic(id, newTopic) {
+    if (typeof id !== 'string' || !id) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof newTopic !== 'string') {
+      return { success: false, error: 'Missing topic.' };
+    }
+    const ch = this.channelsById[id];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    const prevTopic = ch.topic;
+    ch.topic = newTopic;
+
+    const result = await mcpCall('comms_conversation_update', {
+      key: this.userProfile.key,
+      conversation: id,
+      topic: newTopic,
+    });
+    if (!result.success) {
+      ch.topic = prevTopic;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Set the mute level for a channel. Q4 lock (v0.4.0) — local only;
+   * writes to ``localStorage['claude-comms.mute.{id}']`` and updates the
+   * in-memory ``muteLevel`` + ``muted`` (bool) fields. No MCP call goes
+   * out. Server-side per-user mute persistence is v0.4.1 work.
+   *
+   * Valid levels: ``"off" | "mentions" | "all"`` (Design Spec §8.2).
+   * Anything else is rejected.
+   *
+   * @param {string} id - Channel id.
+   * @param {"off"|"mentions"|"all"} level - Desired mute level.
+   * @returns {{ success: boolean, error?: string }}
+   */
+  setMute(id, level) {
+    if (typeof id !== 'string' || !id) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (!MUTE_LEVELS.includes(level)) {
+      return { success: false, error: 'Invalid mute level.' };
+    }
+    const ch = this.channelsById[id];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    ch.muteLevel = level;
+    ch.muted = level !== 'off';
+    safeStorage.setItem(MUTE_STORAGE_PREFIX + id, level);
+    return { success: true };
+  }
+
+  /**
+   * Set the starred flag for a channel. v0.4.0 Q4-adjacent local lock —
+   * writes to ``localStorage['claude-comms.star.{id}']`` and updates the
+   * in-memory ``starred`` field. No MCP call. Server-side star
+   * personalization is v0.4.1 work.
+   *
+   * Auto-unstar invariant (Design Spec §2.6): if the caller passes
+   * ``starred = true`` for a non-member channel, it still flips the
+   * local flag — but the ``starredChannels`` projection requires
+   * ``member && starred`` so the row stays out of the Starred section
+   * anyway. ``leaveChannel`` flips this back to ``false`` on commit so
+   * the localStorage state matches the user-visible state.
+   *
+   * @param {string} id - Channel id.
+   * @param {boolean} starred - Desired starred state.
+   * @returns {{ success: boolean, error?: string }}
+   */
+  setStar(id, starred) {
+    if (typeof id !== 'string' || !id) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    const ch = this.channelsById[id];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    ch.starred = !!starred;
+    safeStorage.setItem(STAR_STORAGE_PREFIX + id, ch.starred ? 'true' : 'false');
+    return { success: true };
+  }
+
+  /**
+   * Generic 15-second-undo wrapper used by ``leaveChannel`` and
+   * ``archiveChannel``. Returns ``{ done, cancel }``:
+   *
+   *   - ``done``  — Promise resolved to either:
+   *       * ``{ success, error?, cancelled: false }`` after the
+   *         ``commitMcp`` fn fires (post-15s window)
+   *       * ``{ success: true, cancelled: true }`` if ``cancel()``
+   *         was called inside the window
+   *   - ``cancel()`` — abort the pending commit:
+   *       * Inside the window: runs ``rollback``, prevents
+   *         ``commitMcp``, resolves ``done`` with
+   *         ``{ cancelled: true }``. Returns ``{ tooLate: false }``.
+   *       * After the window (commit already fired): no-op,
+   *         returns ``{ tooLate: true }`` so the caller can show
+   *         a "Too late to undo" toast.
+   *
+   * The three callbacks split responsibility cleanly so the row
+   * visually updates the moment the user clicks (optimistic), the
+   * MCP call is deferred (commitMcp), and the user has 15s to revert
+   * (rollback). Architecture spec §III.4 step 2.6 mandates the
+   * deferred-call behaviour: "If `cancel()` fires within 15s, the
+   * underlying MCP call is aborted."
+   *
+   * @param {() => void} optimisticFn - Apply the local visual change
+   *   immediately (sync). Runs before the 15s timer starts.
+   * @param {() => void} rollbackFn - Revert the optimistic change.
+   *   Runs when ``cancel()`` fires inside the window.
+   * @param {() => Promise<{success: boolean, error?: string}>} commitMcpFn -
+   *   Fire the actual MCP call. Runs after the 15s window if no cancel.
+   *   Responsible for its own error-path rollback.
+   * @returns {{ done: Promise<{success: boolean, error?: string, cancelled?: boolean}>, cancel: () => ({tooLate: boolean}) }}
+   */
+  #scheduleUndoable(optimisticFn, rollbackFn, commitMcpFn) {
+    // Optimistic side-effects happen synchronously so the caller's row
+    // visibly leaves the section the moment they click.
+    try {
+      optimisticFn();
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      return {
+        done: Promise.resolve({ success: false, error: msg, cancelled: false }),
+        cancel: () => ({ tooLate: true }),
+      };
+    }
+
+    let cancelled = false;
+    let committed = false;
+    let timer = null;
+    let resolveDone;
+    const done = new Promise((resolve) => {
+      resolveDone = resolve;
+    });
+
+    timer = setTimeout(async () => {
+      timer = null;
+      if (cancelled) return;
+      committed = true;
+      try {
+        const result = await commitMcpFn();
+        resolveDone({ ...result, cancelled: false });
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        resolveDone({ success: false, error: msg, cancelled: false });
+      }
+    }, UNDO_WINDOW_MS);
+
+    const cancel = () => {
+      if (committed) return { tooLate: true };
+      if (cancelled) return { tooLate: false };
+      cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      // Roll back the optimistic change. Don't let a thrown rollback
+      // corrupt the resolved value — log + carry on.
+      try {
+        rollbackFn();
+      } catch (err) {
+        console.error('[claude-comms] undo rollback threw', err);
+      }
+      resolveDone({ success: true, cancelled: true });
+      return { tooLate: false };
+    };
+
+    return { done, cancel };
+  }
+
+  /**
+   * Test-only seam: shorten the undo window so vitest specs don't have
+   * to literally wait 15 seconds for the commit timer. Mirrors
+   * ``_drainPendingSendsForTest`` / ``_bootstrapChannelsForTest`` —
+   * private slot wrapper for tests, not part of the production surface.
+   *
+   * @returns {Promise<void>} Resolves when any pending undoable commits
+   *   have finished (the next microtask, plus any pending timers).
+   */
+  async _flushUndoableCommitsForTest() {
+    // Bump the timer by faking the clock isn't possible without a vi.mock
+    // setup; instead, tests inject their own timer via vi.useFakeTimers
+    // and call vi.runAllTimers() before awaiting the done promise. This
+    // seam exists for any future test path that wants a sync flush hook.
+    await Promise.resolve();
+  }
+
   // ── Private Methods ──
 
   /**
@@ -1610,7 +2303,7 @@ export class MqttChatStore {
    */
   #saveUnreadMarkers() {
     const markers = {};
-    for (const ch of this.channels) {
+    for (const ch of Object.values(this.channelsById)) {
       if (ch.unreadFrom || ch.unread > 0) {
         markers[ch.id] = { unreadFrom: ch.unreadFrom || null, unread: ch.unread || 0 };
       }
@@ -1633,7 +2326,7 @@ export class MqttChatStore {
     if (raw) {
       try {
         const markers = JSON.parse(raw);
-        for (const ch of this.channels) {
+        for (const ch of Object.values(this.channelsById)) {
           if (markers[ch.id]) {
             ch.unreadFrom = markers[ch.id].unreadFrom || null;
             ch.unread = markers[ch.id].unread || 0;
@@ -1742,38 +2435,51 @@ export class MqttChatStore {
       case 'conversation_created': {
         // Insert if not present. Don't clobber unread / starred state if
         // the user had previously cached this channel locally.
-        if (!this.channels.some((c) => c.id === name)) {
-          this.channels = [
-            ...this.channels,
-            {
-              id: name,
-              topic: typeof msg.topic === 'string' ? msg.topic : '',
-              starred: false,
-              unread: 0,
-            },
-          ];
+        if (!this.channelsById[name]) {
+          // v0.4.0 Step 2.6 — populate the full ChannelRow shape so the
+          // new row carries all the fields the 3-section sidebar
+          // ($derived projections) needs. The lifecycle event only
+          // carries ``name``, ``topic``, ``creator_key``, ``ts`` — defaults
+          // fill the rest. ``member`` defaults FALSE (the creator's row
+          // gets flipped to true once their own ``comms_join`` confirms;
+          // before that, this row surfaces in Available for everyone
+          // including the creator, matching server-truth).
+          this.channelsById[name] = this.#channelRowFromPayload({
+            id: name,
+            name,
+            topic: typeof msg.topic === 'string' ? msg.topic : '',
+            member: false,
+            memberCount: 0,
+            lastActivity: typeof msg.ts === 'string' ? msg.ts : null,
+            mode: 'public',
+            visibility: 'listed',
+            createdAt: typeof msg.ts === 'string' ? msg.ts : null,
+            createdBy: typeof msg.creator_key === 'string' ? msg.creator_key : null,
+            myUnread: 0,
+            myStarred: false,
+            myMuted: false,
+          });
         }
         break;
       }
       case 'conversation_topic_changed': {
-        const idx = this.channels.findIndex((c) => c.id === name);
-        if (idx >= 0 && typeof msg.topic === 'string') {
-          // Immutable update -- Svelte 5 $state arrays track identity on
-          // reassignment, not in-place mutation.
-          this.channels = this.channels.map((c, i) =>
-            i === idx ? { ...c, topic: msg.topic } : c,
-          );
+        const existing = this.channelsById[name];
+        if (existing && typeof msg.topic === 'string') {
+          existing.topic = msg.topic;
         }
         break;
       }
       case 'conversation_deleted': {
-        const filtered = this.channels.filter((c) => c.id !== name);
-        if (filtered.length !== this.channels.length) {
-          this.channels = filtered;
+        if (this.channelsById[name]) {
+          delete this.channelsById[name];
         }
-        // If the user was viewing the deleted channel, fall back to general.
+        // If the user was viewing the deleted channel, fall back to the
+        // first member channel (alpha-sorted) per the post-Step-2.5
+        // follow-up. ``#resetActiveChannelIfStale`` finds a sensible
+        // target or leaves ``activeChannel = null`` for the empty-state.
         if (this.activeChannel === name) {
-          this.activeChannel = 'general';
+          this.activeChannel = null;
+          this.#resetActiveChannelIfStale();
         }
         break;
       }
@@ -1815,7 +2521,7 @@ export class MqttChatStore {
 
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
-      const ch = this.channels.find(c => c.id === channel);
+      const ch = this.channelsById[channel];
       if (ch) ch.unread++;
     }
 
@@ -1977,9 +2683,26 @@ export class MqttChatStore {
   }
 
   #handleMeta(channelId, msg) {
-    const existing = this.channels.find(c => c.id === channelId);
+    const existing = this.channelsById[channelId];
     if (!existing) {
-      this.channels = [...this.channels, { id: channelId, topic: msg.topic || '', starred: false, unread: 0 }];
+      // v0.4.0 Step 2.6 — populate the full ChannelRow shape so the new
+      // row plays nicely with the 3-section sidebar projections.
+      // ``member`` defaults FALSE — a meta broadcast doesn't imply
+      // membership; the row appears in Available until the user joins.
+      this.channelsById[channelId] = this.#channelRowFromPayload({
+        id: channelId,
+        name: channelId,
+        topic: typeof msg.topic === 'string' ? msg.topic : '',
+        member: false,
+        memberCount: 0,
+        mode: 'public',
+        visibility: 'listed',
+        createdAt: msg.created_at || null,
+        createdBy: msg.created_by || null,
+        myUnread: 0,
+        myStarred: false,
+        myMuted: false,
+      });
     } else if (msg.topic) {
       existing.topic = msg.topic;
     }

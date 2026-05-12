@@ -293,7 +293,16 @@ describe('MqttChatStore — v0.4.0 Step 2.5 bootstrap from /api/conversations', 
     expect(src).not.toContain('LoRA training runs and results');
     expect(src).not.toContain('Off-topic and fun');
 
-    // And `channels = $state([...])` MUST initialize to an empty array.
-    expect(src).toMatch(/channels\s*=\s*\$state\(\s*\[\s*\]\s*\)/);
+    // v0.4.0 Step 2.6 supersedes Step 2.5's "channels = $state([])"
+    // literal by converting the source-of-truth to a map, while keeping
+    // `channels` as a back-compat $derived array view. The shape
+    // assertions are:
+    //   - `channelsById = $state({})` is the empty-map seed (no seed
+    //     channels survive in source — the daemon's payload is the
+    //     single source of truth).
+    //   - `channels = $derived(Object.values(this.channelsById))`
+    //     preserves the legacy array surface for un-migrated consumers.
+    expect(src).toMatch(/channelsById\s*=\s*\$state\(\s*\{\s*\}\s*\)/);
+    expect(src).toMatch(/channels\s*=\s*\$derived\(\s*Object\.values\(this\.channelsById\)\s*\)/);
   });
 });

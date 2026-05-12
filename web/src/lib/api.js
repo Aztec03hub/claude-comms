@@ -325,3 +325,110 @@ export async function updateName(key, newName) {
     clearTimeout(timer);
   }
 }
+
+/**
+ * Generic FastMCP JSON-RPC `tools/call` helper used by v0.4.0+ channel
+ * lifecycle methods in the store. Mirrors the transport pattern proven in
+ * ``updateName`` (UX G-9 showstopper) but exposes a result envelope that
+ * is uniform across MCP tools:
+ *
+ *   - ``{ success: true,  payload }``  - tool returned a structured payload
+ *     in either ``result.structuredContent`` or
+ *     ``result.content[0].text`` (parsed as JSON).
+ *   - ``{ success: false, error }``    - any failure: network, HTTP non-2xx,
+ *     JSON-RPC error object, timeout, missing payload, or the tool's own
+ *     ``payload.status === 'error'``.
+ *
+ * No bearer token is attached. Authentication for MCP tools is via the
+ * participant ``key`` argument (matched against the registry), same as
+ * the rest of the MCP surface.
+ *
+ * Returns instead of throwing so callers' state machines (optimistic
+ * update + rollback) can branch on a single field without nested
+ * try/catch blocks.
+ *
+ * @param {string} toolName - MCP tool to invoke (e.g. ``comms_join``).
+ * @param {object} args      - Tool arguments (camelCase or snake_case
+ *   per the tool's signature).
+ * @param {object} [opts]    - Optional knobs.
+ * @param {number} [opts.timeoutMs=5000] - Abort timer in ms.
+ * @param {AbortSignal} [opts.signal] - External abort signal; when it
+ *   fires the underlying ``fetch`` aborts and the call resolves to a
+ *   ``{ success: false, error: 'Aborted' }`` envelope.
+ * @returns {Promise<{success: boolean, payload?: object, error?: string}>}
+ */
+export async function mcpCall(toolName, args, { timeoutMs = 5000, signal } = {}) {
+  if (!toolName || typeof toolName !== 'string') {
+    return { success: false, error: 'Missing tool name.' };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Bridge an externally supplied AbortSignal into the local controller so
+  // the caller can cancel mid-flight (used by the 15s undo machinery).
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: args || {},
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      return { success: false, error: `Server returned HTTP ${res.status}.` };
+    }
+
+    const body = await res.json();
+    if (body && body.error) {
+      const msg = body.error.message || 'Server rejected the call.';
+      return { success: false, error: msg };
+    }
+
+    // FastMCP wraps tool returns in `result.structuredContent` (preferred)
+    // or `result.content[0].text` (older clients). Try both.
+    const result = body?.result || {};
+    let payload = result.structuredContent;
+    if (!payload && Array.isArray(result.content)) {
+      const textBlock = result.content.find((c) => c && c.type === 'text');
+      if (textBlock && typeof textBlock.text === 'string') {
+        try {
+          payload = JSON.parse(textBlock.text);
+        } catch {
+          payload = null;
+        }
+      }
+    }
+
+    if (!payload) {
+      return { success: false, error: 'Server returned an empty response.' };
+    }
+    if (payload.status === 'error' || payload.error) {
+      return { success: false, error: payload.error || payload.message || 'Tool returned an error.' };
+    }
+    return { success: true, payload };
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return { success: false, error: 'Aborted' };
+    }
+    const msg = err && err.message ? err.message : 'Network error.';
+    return { success: false, error: msg };
+  } finally {
+    clearTimeout(timer);
+  }
+}
