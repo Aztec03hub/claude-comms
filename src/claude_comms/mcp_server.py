@@ -41,8 +41,10 @@ from claude_comms.mcp_tools import (
     tool_comms_artifact_list,
     tool_comms_artifact_delete,
     tool_comms_check,
+    tool_comms_conversation_archive,
     tool_comms_conversation_create,
     tool_comms_conversation_delete,
+    tool_comms_conversation_unarchive,
     tool_comms_conversation_update,
     tool_comms_conversations,
     tool_comms_history,
@@ -270,6 +272,75 @@ async def publish_conversation_event(
     except Exception:
         # Non-critical -- REST still returns authoritative state on next page load.
         pass
+
+
+async def _publish_archive_event(
+    publish_fn: PublishFn,
+    *,
+    event_type: str,
+    conversation_id: str,
+    archived_by: str | None = None,
+    evicted_keys: list[str] | None = None,
+) -> None:
+    """Publish an archive / unarchive event + retained-clear evicted presence.
+
+    v0.4.0 Step 2.3. Wraps three best-effort fan-outs around a single helper
+    so the MCP tool wrapper can call us once after the registry-side
+    transition completes:
+
+    1. Non-retained ``{"type": "archived" | "unarchived", "id": ...,
+       "archivedBy": ..., "timestamp": ...}`` event published on
+       ``claude-comms/system/conversations``. Mirrors the create / update /
+       delete event family added in v0.3.2 (see ``publish_conversation_event``).
+    2. For ``"archived"`` events only: retained-clear of each evicted
+       member's per-conversation presence topic
+       (``claude-comms/conv/{id}/presence/{key}``) so web / TUI clients
+       see the conversation disappear from their member-list on the next
+       broker round-trip without waiting for a full presence sweep.
+
+    Best-effort throughout; the on-disk meta and registry transitions
+    have already committed by the time we get here, and the next page
+    reload's REST snapshot is authoritative anyway. We swallow per-publish
+    exceptions individually so a single broker hiccup on one member's
+    presence-clear doesn't abort the rest of the fan-out.
+    """
+    from claude_comms.message import now_iso
+
+    ts = now_iso()
+    payload: dict[str, Any] = {
+        "type": event_type,
+        "id": conversation_id,
+        "timestamp": ts,
+    }
+    if archived_by is not None:
+        payload["archivedBy"] = archived_by
+
+    try:
+        await publish_fn(
+            "claude-comms/system/conversations",
+            json.dumps(payload).encode(),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to publish %s event for conversation %s",
+            event_type,
+            conversation_id,
+        )
+
+    # Retained-clear per-member presence on archive. Empty bytes payload
+    # with retain=True is the canonical "drop the retained value" wire
+    # contract (see PresenceManager._publish_offline).
+    if event_type == "archived" and evicted_keys:
+        for member_key in evicted_keys:
+            topic = f"claude-comms/conv/{conversation_id}/presence/{member_key}"
+            try:
+                await publish_fn(topic, b"", retain=True)
+            except Exception:
+                logger.exception(
+                    "Failed to retained-clear presence on archive for %s/%s",
+                    conversation_id,
+                    member_key,
+                )
 
 
 async def publish_mcp_presence_on_join(
@@ -1030,6 +1101,10 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             mentions=mentions,
             recipients=recipients,
             reply_to=reply_to,
+            # v0.4.0 Step 2.3: wire conv_data_dir so the archived-guard
+            # check in tool_comms_send blocks live sends into archived
+            # conversations at the MCP layer.
+            conv_data_dir=_get_conv_data_dir(),
         )
 
     @mcp.tool()
@@ -1546,6 +1621,83 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             confirm=confirm,
             conv_data_dir=_get_conv_data_dir(),
         )
+
+    @mcp.tool()
+    async def comms_conversation_archive(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation slug to archive")],
+        confirm: Annotated[
+            bool,
+            Field(
+                description=(
+                    "When False (default), return confirm_required + the "
+                    "message_count / member_count blast radius for the web "
+                    "client's confirmation modal. Pass True to commit."
+                )
+            ),
+        ] = False,
+    ) -> dict[str, Any]:
+        """Archive a conversation; preserve history, eject members, block new sends.
+
+        Creator-only in v0.4.0. Two-phase: call with ``confirm=False`` first
+        to surface the blast-radius modal, then with ``confirm=True`` to
+        commit. Archived conversations remain visible in the directory's
+        Archived sub-tab as read-only artifacts and reject any further
+        ``comms_send``.
+        """
+        _touch(key)
+        assert _publish_fn is not None
+        result = await tool_comms_conversation_archive(
+            _get_registry(),
+            _publish_fn,
+            _get_store(),
+            key=key,
+            conversation=conversation,
+            confirm=confirm,
+            conv_data_dir=_get_conv_data_dir(),
+        )
+        # Publish the system event + retained-clear evicted presence only
+        # on a real archive-commit. The two-phase confirm contract means
+        # confirm=False returns confirm_required with no state change.
+        if result.get("archived") is True and result.get("evicted_keys") is not None:
+            await _publish_archive_event(
+                _publish_fn,
+                event_type="archived",
+                conversation_id=conversation,
+                archived_by=result.get("archived_by"),
+                evicted_keys=result.get("evicted_keys") or [],
+            )
+        return result
+
+    @mcp.tool()
+    async def comms_conversation_unarchive(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[
+            str, Field(description="Conversation slug to unarchive")
+        ],
+    ) -> dict[str, Any]:
+        """Unarchive a conversation; reverse the archive state flip.
+
+        Creator-only in v0.4.0. Restores the conversation to the live
+        directory but does NOT auto-re-join previously evicted members;
+        they re-join via their own ``comms_join`` (Design Spec §4.4).
+        """
+        _touch(key)
+        assert _publish_fn is not None
+        result = await tool_comms_conversation_unarchive(
+            _get_registry(),
+            _publish_fn,
+            key=key,
+            conversation=conversation,
+            conv_data_dir=_get_conv_data_dir(),
+        )
+        if result.get("archived") is False and "error" not in result:
+            await _publish_archive_event(
+                _publish_fn,
+                event_type="unarchived",
+                conversation_id=conversation,
+            )
+        return result
 
     @mcp.tool()
     async def comms_invite(

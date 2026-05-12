@@ -12,6 +12,7 @@ import json
 import pytest
 
 from claude_comms.broker import MessageStore
+from claude_comms.mcp_server import _publish_archive_event
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_check,
@@ -774,3 +775,89 @@ class TestCommsConversationDelete:
         )
         assert result.get("error") is True
         assert publish_spy.call_count == 0
+
+
+class TestPublishArchiveEvent:
+    @pytest.mark.asyncio
+    async def test_publishes_archived_event_on_system_topic(self):
+        from conftest import PublishSpy
+
+        spy = PublishSpy()
+        await _publish_archive_event(
+            spy,
+            event_type="archived",
+            conversation_id="design",
+            archived_by="alice",
+            evicted_keys=[],
+        )
+        # First (and only, with empty evicted_keys) publish is the system event
+        assert spy.calls[0][0] == "claude-comms/system/conversations"
+        payload = json.loads(spy.calls[0][1])
+        assert payload["type"] == "archived"
+        assert payload["id"] == "design"
+        assert payload["archivedBy"] == "alice"
+        assert "timestamp" in payload
+
+    @pytest.mark.asyncio
+    async def test_publishes_unarchived_event(self):
+        from conftest import PublishSpy
+
+        spy = PublishSpy()
+        await _publish_archive_event(
+            spy,
+            event_type="unarchived",
+            conversation_id="design",
+        )
+        assert spy.call_count == 1
+        topic, raw, _retain = spy.calls[0]
+        assert topic == "claude-comms/system/conversations"
+        payload = json.loads(raw)
+        assert payload["type"] == "unarchived"
+        assert payload["id"] == "design"
+        # unarchive event has no archivedBy
+        assert "archivedBy" not in payload
+
+    @pytest.mark.asyncio
+    async def test_archive_retained_clears_member_presence(self):
+        from conftest import PublishSpy
+
+        spy = PublishSpy()
+        await _publish_archive_event(
+            spy,
+            event_type="archived",
+            conversation_id="design",
+            archived_by="alice",
+            evicted_keys=["aabbccdd", "11223344"],
+        )
+
+        # 1 system event + 2 presence clears = 3 publishes total
+        assert spy.call_count == 3
+        # Presence-clear topics
+        presence_calls = [
+            (topic, payload, retain)
+            for topic, payload, retain in spy.calls
+            if topic.startswith("claude-comms/conv/design/presence/")
+        ]
+        assert len(presence_calls) == 2
+        for _topic, payload, retain in presence_calls:
+            assert payload == b""  # retained-clear wire contract
+            assert retain is True
+        # And both member-key suffixes covered
+        topics = {c[0] for c in presence_calls}
+        assert "claude-comms/conv/design/presence/aabbccdd" in topics
+        assert "claude-comms/conv/design/presence/11223344" in topics
+
+    @pytest.mark.asyncio
+    async def test_unarchive_does_not_clear_presence(self):
+        from conftest import PublishSpy
+
+        spy = PublishSpy()
+        await _publish_archive_event(
+            spy,
+            event_type="unarchived",
+            conversation_id="design",
+            evicted_keys=["aabbccdd"],  # ignored on unarchive
+        )
+        # Only the system event — no presence retained-clear on unarchive
+        assert spy.call_count == 1
+        assert spy.calls[0][0] == "claude-comms/system/conversations"

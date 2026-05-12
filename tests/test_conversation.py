@@ -22,11 +22,14 @@ from claude_comms.conversation import (
 from claude_comms.message import now_iso
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
+    tool_comms_conversation_archive,
     tool_comms_conversation_create,
     tool_comms_conversation_delete,
+    tool_comms_conversation_unarchive,
     tool_comms_conversation_update,
-    tool_comms_invite,
     tool_comms_conversations,
+    tool_comms_invite,
+    tool_comms_send,
 )
 from claude_comms.broker import MessageStore
 
@@ -1294,3 +1297,573 @@ class TestToolCommsConversationDelete:
         )
         assert result.get("error") is True
         assert spy.call_count == 0
+
+
+class TestConversationMetaArchiveTransitions:
+    def _fresh_meta(self) -> ConversationMeta:
+        ts = now_iso()
+        return ConversationMeta(
+            name="design",
+            topic="Design discussion",
+            created_by="alice",
+            created_at=ts,
+            last_activity=ts,
+        )
+
+    def test_mark_archived_sets_flag(self):
+        meta = self._fresh_meta()
+        assert meta.archived is False
+        meta.mark_archived(archived_by="alice")
+        assert meta.archived is True
+
+    def test_mark_archived_stamps_timestamp_and_actor(self):
+        meta = self._fresh_meta()
+        before = now_iso()
+        meta.mark_archived(archived_by="alice")
+        after = now_iso()
+        assert meta.archived_at is not None
+        # ISO 8601 strings sort lexicographically when they share format
+        assert before <= meta.archived_at <= after
+        assert meta.archived_by == "alice"
+
+    def test_mark_unarchived_clears_state(self):
+        meta = self._fresh_meta()
+        meta.mark_archived(archived_by="alice")
+        assert meta.archived is True
+        meta.mark_unarchived()
+        assert meta.archived is False
+        assert meta.archived_at is None
+        assert meta.archived_by is None
+
+    def test_archive_unarchive_round_trip_through_disk(self, tmp_path: Path):
+        meta = self._fresh_meta()
+        meta.mark_archived(archived_by="alice")
+        save_meta(meta, tmp_path)
+
+        loaded = load_meta("design", tmp_path)
+        assert loaded is not None
+        assert loaded.archived is True
+        assert loaded.archived_at is not None
+        assert loaded.archived_by == "alice"
+
+        loaded.mark_unarchived()
+        save_meta(loaded, tmp_path)
+
+        re_loaded = load_meta("design", tmp_path)
+        assert re_loaded is not None
+        assert re_loaded.archived is False
+        assert re_loaded.archived_at is None
+        assert re_loaded.archived_by is None
+
+
+# ===================================================================
+# 2. save_meta + load_meta round-trip
+# ===================================================================
+
+
+
+
+class TestToolCommsConversationArchive:
+    @pytest.mark.asyncio
+    async def test_archive_requires_confirm(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+
+        # No confirm flag → confirm_required + blast radius
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") == "confirm_required"
+        assert "member_count" in result
+        assert "message_count" in result
+        # State on disk must NOT have flipped
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.archived is False
+
+    @pytest.mark.asyncio
+    async def test_archive_commits_with_confirm(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+        spy.calls.clear()
+
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result["archived"] is True
+        assert result["conversation_id"] == "design"
+        assert result["archived_by"] == "alice"
+        assert result["archived_at"] is not None
+
+        # Disk state must reflect archive
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.archived is True
+        assert meta.archived_by == "alice"
+        assert meta.archived_at is not None
+
+    @pytest.mark.asyncio
+    async def test_archive_preserves_history(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+        # Stash some history into the message store
+        for i in range(3):
+            store.add(
+                "design",
+                {
+                    "id": f"msg-{i}",
+                    "ts": f"2026-05-12T10:0{i}:00-05:00",
+                    "sender": {"key": key, "name": "alice", "type": "claude"},
+                    "body": f"hi {i}",
+                    "conv": "design",
+                },
+            )
+
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # History intact post-archive
+        msgs = store.get("design")
+        assert len(msgs) == 3
+        assert [m["id"] for m in msgs] == ["msg-0", "msg-1", "msg-2"]
+
+    @pytest.mark.asyncio
+    async def test_archive_ejects_all_members(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key_alice = _register(registry, name="alice")
+        key_bob = _register(registry, name="bob")
+
+        await tool_comms_conversation_create(
+            registry,
+            spy,
+            key=key_alice,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        # Manually join bob (claude) so we can verify eviction
+        registry.join("bob", "design", key=key_bob, participant_type="claude")
+
+        members_before = {m.key for m in registry.members("design")}
+        assert key_alice in members_before
+        assert key_bob in members_before
+
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key_alice,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # All members evicted, evicted_keys covers them
+        assert key_alice in result["evicted_keys"]
+        assert key_bob in result["evicted_keys"]
+        assert registry.members("design") == []
+        # And each member's conversation list no longer contains "design"
+        assert "design" not in registry.conversations_for(key_alice)
+        assert "design" not in registry.conversations_for(key_bob)
+
+    @pytest.mark.asyncio
+    async def test_archive_blocks_subsequent_sends(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # Even if the caller re-joins via registry, send should be rejected
+        # at the archived-guard since meta.archived is True on disk.
+        registry.join("alice", "design", key=key, participant_type="claude")
+        send_result = await tool_comms_send(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            message="hello to the dead",
+            conv_data_dir=tmp_path,
+        )
+        assert send_result.get("error") == "conversation_archived"
+        assert send_result.get("conversation_id") == "design"
+
+    @pytest.mark.asyncio
+    async def test_archive_creator_only(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key_alice = _register(registry, name="alice")
+        key_bob = _register(registry, name="bob")
+
+        await tool_comms_conversation_create(
+            registry,
+            spy,
+            key=key_alice,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        registry.join("bob", "design", key=key_bob, participant_type="claude")
+
+        # bob is a member but not the creator — archive must be rejected
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key_bob,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") == "not_authorized"
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.archived is False
+
+    @pytest.mark.asyncio
+    async def test_archive_reserved_name_rejected(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        # Reserved names cannot be archived even by a "creator" if their
+        # meta exists (general is auto-created by the daemon).
+        create_conversation_atomic(
+            "general", topic="", created_by="alice", data_dir=tmp_path
+        )
+
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="general",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") == "invalid_target"
+
+    @pytest.mark.asyncio
+    async def test_archive_unknown_conversation(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="nope",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") is True
+        assert "not found" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_archive_idempotent_when_already_archived(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        # Second archive call → already_archived, no new evicted_keys list
+        result = await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("archived") is True
+        assert result.get("status") == "already_archived"
+        assert "evicted_keys" not in result
+
+
+# ===================================================================
+# 14. tool_comms_conversation_unarchive (v0.4.0 Step 2.3)
+# ===================================================================
+
+
+class TestToolCommsConversationUnarchive:
+    @pytest.mark.asyncio
+    async def test_unarchive_reverses_state(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        result = await tool_comms_conversation_unarchive(
+            registry,
+            spy,
+            key=key,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        assert result["archived"] is False
+        assert result["conversation_id"] == "design"
+
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.archived is False
+        assert meta.archived_at is None
+        assert meta.archived_by is None
+
+    @pytest.mark.asyncio
+    async def test_unarchive_does_not_re_join_members(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key_alice = _register(registry, name="alice")
+        key_bob = _register(registry, name="bob")
+
+        await tool_comms_conversation_create(
+            registry,
+            spy,
+            key=key_alice,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        registry.join("bob", "design", key=key_bob, participant_type="claude")
+
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key_alice,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        await tool_comms_conversation_unarchive(
+            registry,
+            spy,
+            key=key_alice,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+
+        # Members were ejected on archive and unarchive does not re-join
+        assert "design" not in registry.conversations_for(key_alice)
+        assert "design" not in registry.conversations_for(key_bob)
+
+    @pytest.mark.asyncio
+    async def test_unarchive_creator_only(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key_alice = _register(registry, name="alice")
+        key_bob = _register(registry, name="bob")
+
+        await tool_comms_conversation_create(
+            registry,
+            spy,
+            key=key_alice,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key_alice,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # bob (not creator) cannot unarchive
+        result = await tool_comms_conversation_unarchive(
+            registry,
+            spy,
+            key=key_bob,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") == "not_authorized"
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.archived is True
+
+    @pytest.mark.asyncio
+    async def test_unarchive_idempotent_when_live(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+
+        # Conversation is already live → idempotent already_live response
+        result = await tool_comms_conversation_unarchive(
+            registry,
+            spy,
+            key=key,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("archived") is False
+        assert result.get("status") == "already_live"
+
+    @pytest.mark.asyncio
+    async def test_unarchive_allows_send_again(self, tmp_path: Path):
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=key, conversation="design", conv_data_dir=tmp_path
+        )
+        await tool_comms_conversation_archive(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        await tool_comms_conversation_unarchive(
+            registry,
+            spy,
+            key=key,
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+
+        # Re-join (eviction was permanent) and verify send is permitted
+        registry.join("alice", "design", key=key, participant_type="claude")
+        result = await tool_comms_send(
+            registry,
+            spy,
+            store,
+            key=key,
+            conversation="design",
+            message="we are back",
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("status") == "sent"
+
+
+# ===================================================================
+# 15. comms_conversations(all=True) surfaces archive flag (v0.4.0 Step 2.3)
+# ===================================================================
+
+
+class TestCommsConversationsArchiveFlag:
+    def test_all_conversations_entries_carry_archived_fields(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        store = MessageStore()
+        key = _register(registry, name="alice")
+
+        # Live conversation
+        create_conversation_atomic(
+            "live", topic="", created_by="alice", data_dir=tmp_path
+        )
+        # Archived conversation (synthesise on disk directly to avoid the
+        # full tool_comms_conversation_archive surface in this unit test)
+        meta_arch = ConversationMeta(
+            name="dead",
+            topic="",
+            created_by="alice",
+            created_at=now_iso(),
+            last_activity=now_iso(),
+        )
+        meta_arch.mark_archived(archived_by="alice")
+        save_meta(meta_arch, tmp_path)
+
+        result = tool_comms_conversations(
+            registry, store, key=key, all=True, conv_data_dir=tmp_path
+        )
+
+        by_name = {c["name"]: c for c in result["all_conversations"]}
+        assert by_name["live"]["archived"] is False
+        assert by_name["live"]["archived_at"] is None
+        assert by_name["live"]["archived_by"] is None
+
+        assert by_name["dead"]["archived"] is True
+        assert by_name["dead"]["archived_at"] is not None
+        assert by_name["dead"]["archived_by"] == "alice"

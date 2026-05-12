@@ -62,6 +62,14 @@ class ConversationMeta(BaseModel):
             "Pairs with ``deleted_at`` -- both fields move together."
         ),
     )
+    archived_at: str | None = Field(
+        default=None,
+        description="ISO 8601 timestamp the conversation was archived (None when not archived)",
+    )
+    archived_by: str | None = Field(
+        default=None,
+        description="Display name of the participant who archived the conversation",
+    )
 
     # ------------------------------------------------------------------
     # v0.4.0: soft-delete (step 2.2)
@@ -93,6 +101,38 @@ class ConversationMeta(BaseModel):
         recoverable instead of silently vanishing.
         """
         return self.deleted_at is not None and self.deleted_by is not None
+
+    # ----- Archive transitions (v0.4.0 Step 2.3) --------------------------
+    #
+    # These helpers mutate the model in place. They are intentionally tiny
+    # and self-contained so the MCP archive / unarchive tools can call them
+    # without re-implementing the timestamp + flag bookkeeping each time.
+    # Callers still own persistence (``save_meta``); these methods are
+    # pure metadata transitions on the in-memory model.
+
+    def mark_archived(self, archived_by: str) -> None:
+        """Flip the conversation into the archived state.
+
+        Sets ``archived=True``, stamps ``archived_at`` with the current
+        ISO 8601 timestamp, and records *archived_by* (the display name of
+        the participant who initiated the archive). Idempotent re-archive
+        refreshes the timestamp + actor so a second archive call wins.
+        """
+        self.archived = True
+        self.archived_at = now_iso()
+        self.archived_by = archived_by
+
+    def mark_unarchived(self) -> None:
+        """Revert the conversation to the live (non-archived) state.
+
+        Clears ``archived``, ``archived_at``, and ``archived_by`` so the
+        on-disk record is indistinguishable from a never-archived one
+        once persisted. Members are NOT auto-re-joined; by design, they
+        re-join via their own ``comms_join`` (see Design Spec §4.4).
+        """
+        self.archived = False
+        self.archived_at = None
+        self.archived_by = None
 
 
 # ---------------------------------------------------------------------------

@@ -628,6 +628,7 @@ async def tool_comms_send(
     mentions: list[str] | None = None,
     recipients: list[str] | None = None,
     reply_to: str | None = None,
+    conv_data_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Send a message to a conversation.
 
@@ -665,6 +666,24 @@ async def tool_comms_send(
         return _error(f"Invalid conversation ID {conversation!r}.")
     if not message or not message.strip():
         return _error("Message body cannot be empty.")
+
+    # Archived guard (v0.4.0 Step 2.3). When the caller wires conv_data_dir,
+    # block sends to an archived conversation at the MCP layer so the server
+    # never publishes a live message into a read-only archived channel.
+    # Legacy / unit-test call sites that don't pass conv_data_dir keep the
+    # historical non-checking behaviour; production wiring in mcp_server.py
+    # always passes it.
+    if conv_data_dir is not None:
+        meta = load_meta(conversation, conv_data_dir)
+        if meta is not None and meta.archived:
+            return {
+                "error": "conversation_archived",
+                "conversation_id": conversation,
+                "message": (
+                    f"Conversation {conversation!r} is archived. "
+                    "Unarchive it (comms_conversation_unarchive) before sending."
+                ),
+            }
 
     # Thread (reply_to) validation. When `store` is provided and reply_to
     # is non-null, enforce the three rules from plans/threaded-replies-plan
@@ -1385,6 +1404,13 @@ def tool_comms_conversations(
                     "message_count": len(msgs),
                     "last_activity": meta.last_activity,
                     "joined": meta.name in joined_set,
+                    # v0.4.0 Step 2.3: surface the archive flag + bookkeeping
+                    # so the web UI can sort archived conversations into the
+                    # directory's Archived sub-tab (Design Spec §4.4) without
+                    # a second round-trip. Step 2.1 reads these fields.
+                    "archived": meta.archived,
+                    "archived_at": meta.archived_at,
+                    "archived_by": meta.archived_by,
                 }
             )
         response["all_conversations"] = all_convs
@@ -2346,3 +2372,190 @@ async def tool_comms_conversation_delete(
         registry.leave(member.key, conversation)
 
     return {"deleted": True, "conversation_id": conversation}
+
+
+# ---------------------------------------------------------------------------
+# Conversation archive / unarchive (v0.4.0 Step 2.3)
+# ---------------------------------------------------------------------------
+
+
+async def tool_comms_conversation_archive(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    store: MessageStore,
+    *,
+    key: str,
+    conversation: str,
+    confirm: bool = False,
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Archive a conversation; preserve history, kick members, block new sends.
+
+    Authorization is creator-only for v0.4.0 (a broader admin pass lands in
+    v0.4.1). The creator is identified by ``ConversationMeta.created_by``
+    matching the caller's display name.
+
+    Two-phase confirmation contract:
+
+    * ``confirm=False`` (the default) returns
+      ``{"error": "confirm_required", "message_count": N, "member_count": M}``
+      so the web client can surface a confirmation modal that quotes the
+      blast radius before the destructive action lands.
+    * ``confirm=True`` performs the archive transition:
+
+      1. Flips ``archived=True`` + stamps ``archived_at`` / ``archived_by``
+         on the on-disk ``meta.json`` (history is preserved; this is
+         a soft state change, not a delete).
+      2. Ejects every member at the registry layer so the conversation
+         disappears from each member's joined-list. Returns the list of
+         evicted keys so the MCP wrapper can retained-clear their presence
+         topics at publish time.
+      3. The wrapper additionally publishes a non-retained ``"archived"``
+         event on ``claude-comms/system/conversations`` so connected
+         browsers update their sidebar live (see the
+         ``publish_conversation_event`` helper in ``mcp_server.py``).
+
+    Reserved-name guard: ``general`` is the system lobby and cannot be
+    archived. Reserved-name archives return an ``invalid_target`` error.
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if conversation in RESERVED_CONVERSATION_NAMES:
+        return {
+            "error": "invalid_target",
+            "conversation_id": conversation,
+            "message": (
+                f"Conversation {conversation!r} is reserved and cannot be archived."
+            ),
+        }
+
+    meta = load_meta(conversation, conv_data_dir)
+    if meta is None:
+        return _error(f"Conversation {conversation!r} not found.")
+
+    if meta.created_by != participant.name:
+        return {
+            "error": "not_authorized",
+            "conversation_id": conversation,
+            "message": (
+                "Only the conversation creator can archive it. "
+                f"Created by {meta.created_by!r}, you are {participant.name!r}."
+            ),
+        }
+
+    if meta.archived:
+        return {
+            "archived": True,
+            "conversation_id": conversation,
+            "status": "already_archived",
+        }
+
+    members = registry.members(conversation)
+    message_count = len(store.get(conversation))
+
+    if not confirm:
+        return {
+            "error": "confirm_required",
+            "conversation_id": conversation,
+            "message_count": message_count,
+            "member_count": len(members),
+            "message": (
+                f"Archive will eject {len(members)} member(s) and lock "
+                f"{message_count} message(s) as read-only history. "
+                "Re-call with confirm=True to proceed."
+            ),
+        }
+
+    meta.mark_archived(archived_by=participant.name)
+    save_meta(meta, conv_data_dir)
+
+    evicted_keys: list[str] = []
+    for member in members:
+        registry.leave(member.key, conversation)
+        evicted_keys.append(member.key)
+
+    return {
+        "archived": True,
+        "conversation_id": conversation,
+        "archived_by": participant.name,
+        "archived_at": meta.archived_at,
+        "evicted_keys": evicted_keys,
+        "message_count": message_count,
+    }
+
+
+async def tool_comms_conversation_unarchive(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Reverse an archive; restore the conversation to the live state.
+
+    Authorization mirrors the archive tool: creator-only for v0.4.0.
+
+    The unarchive is a pure state flip:
+
+    1. Clears ``archived`` / ``archived_at`` / ``archived_by`` on the
+       on-disk ``meta.json``.
+    2. The MCP wrapper publishes a non-retained ``"unarchived"`` event on
+       ``claude-comms/system/conversations`` so connected browsers refresh.
+
+    Members are **not** auto-re-joined. They left during archive and must
+    re-join via their own ``comms_join``; Design Spec §4.4 calls this
+    out so the unarchive doesn't surprise-resurrect membership that may
+    have stale meaning for participants who have moved on.
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if conversation in RESERVED_CONVERSATION_NAMES:
+        return {
+            "error": "invalid_target",
+            "conversation_id": conversation,
+            "message": (
+                f"Conversation {conversation!r} is reserved and cannot be unarchived."
+            ),
+        }
+
+    meta = load_meta(conversation, conv_data_dir)
+    if meta is None:
+        return _error(f"Conversation {conversation!r} not found.")
+
+    if meta.created_by != participant.name:
+        return {
+            "error": "not_authorized",
+            "conversation_id": conversation,
+            "message": (
+                "Only the conversation creator can unarchive it. "
+                f"Created by {meta.created_by!r}, you are {participant.name!r}."
+            ),
+        }
+
+    if not meta.archived:
+        return {
+            "archived": False,
+            "conversation_id": conversation,
+            "status": "already_live",
+        }
+
+    meta.mark_unarchived()
+    save_meta(meta, conv_data_dir)
+
+    return {
+        "archived": False,
+        "conversation_id": conversation,
+    }
