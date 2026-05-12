@@ -11,7 +11,6 @@
   @prop {object|null} store - Optional ChatStore instance for reactive message syncing and seen tracking.
 -->
 <script>
-  import { flushSync } from 'svelte';
   import MessageBubble from './MessageBubble.svelte';
   import MessageGroup from './MessageGroup.svelte';
   import DateSeparator from './DateSeparator.svelte';
@@ -21,36 +20,11 @@
 
   let { messages: messagesProp = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, store = null } = $props();
 
-  // ── Reactivity bridge ──
-  // Svelte 5 class-based $state/$derived fields don't propagate reactive
-  // updates to consuming components (effects and template blocks never
-  // re-run after the initial render).  This is a known limitation when
-  // class instances are passed across component boundaries.
-  //
-  // Workaround: use a local $state that we sync from the store on a
-  // short polling interval.  The local $state IS reactive to the template,
-  // so the DOM updates correctly.
-  let messages = $state([]);
-  let _lastSyncLen = 0;
-
-  function syncMessages() {
-    const source = store ? store.activeMessages : messagesProp;
-    if (source && source.length !== _lastSyncLen) {
-      _lastSyncLen = source.length;
-      flushSync(() => {
-        messages = source;
-      });
-    }
-  }
-
-  $effect(() => {
-    // Initial sync
-    syncMessages();
-
-    // Poll every 100ms for store changes
-    const id = setInterval(syncMessages, 100);
-    return () => clearInterval(id);
-  });
+  // Class-based $state fields on the store are fully reactive across
+  // component boundaries when consumed via $derived. Prefer the store's
+  // activeMessages when a store instance is provided; otherwise fall
+  // back to the messagesProp contract used by tests and harnesses.
+  let messages = $derived(store ? store.activeMessages : (messagesProp ?? []));
 
   let messagesEl = $state(null);
   let showScrollBtn = $state(false);

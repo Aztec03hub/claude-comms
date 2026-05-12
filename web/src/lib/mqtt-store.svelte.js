@@ -1163,7 +1163,6 @@ export class MqttChatStore {
   /**
    * Add or toggle a reaction emoji on a message.
    * If the user already reacted with this emoji, it is removed.
-   * Triggers reactivity via self-assignment.
    *
    * Wire format (v4 of richer-expression-architecture):
    *   topic:   claude-comms/conv/{conv}/reactions  (retain=false)
@@ -1201,9 +1200,6 @@ export class MqttChatStore {
     } else {
       msg.reactions.push({ emoji, count: 1, active: true });
     }
-
-    // Trigger reactivity via self-assignment (avoids O(n) array copy)
-    this.messages = this.messages;
 
     // Broadcast toggle intent to server + other clients
     if (this.#client && this.connected) {
@@ -1713,9 +1709,6 @@ export class MqttChatStore {
         }
       }
     }
-
-    // Trigger reactivity via self-assignment (avoids O(n) array copy)
-    this.messages = this.messages;
   }
 
   /**
