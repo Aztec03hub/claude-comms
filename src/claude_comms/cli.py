@@ -248,6 +248,14 @@ def build_csp(config: dict) -> str:
     return (
         "default-src 'self'; "
         "script-src 'self'; "
+        # MQTT.js spawns a Web Worker from a blob: URL to parse MQTT frames
+        # off the main thread. CSP's worker-src falls back to script-src
+        # when unset; script-src 'self' does not permit blob: URIs, so the
+        # worker is blocked and MQTT message handling silently fails.
+        # Explicit worker-src that allows blob: keeps script-src strict
+        # while unblocking the legitimate library pattern. Same-origin by
+        # spec, so attack surface is not meaningfully broadened.
+        "worker-src 'self' blob:; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "font-src 'self' data:; "

@@ -101,6 +101,20 @@ def test_csp_script_src_is_strict(default_config: dict) -> None:
     assert "'unsafe-eval'" not in script_directive
 
 
+def test_csp_worker_src_allows_blob(default_config: dict) -> None:
+    """MQTT.js spawns a Web Worker from a blob: URL; CSP must explicitly
+    allow it. Without ``worker-src 'self' blob:`` the directive falls back
+    to script-src which blocks blob: and breaks MQTT message handling.
+    """
+    csp = build_csp(default_config)
+    worker_directive = next(
+        (d for d in csp.split("; ") if d.startswith("worker-src ")), None
+    )
+    assert worker_directive is not None, "worker-src directive missing"
+    assert "'self'" in worker_directive
+    assert "blob:" in worker_directive
+
+
 def test_csp_no_wildcards(default_config: dict) -> None:
     """No source list should contain a bare ``*`` (defeats CSP)."""
     csp = build_csp(default_config)

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs>
+    <linearGradient id="g-ember-vert" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="g-ember-diag" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#b45309"/>
+    </linearGradient>
+    <radialGradient id="g-ember-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="0.6" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#92400e"/>
+    </radialGradient>
+    <radialGradient id="g-ember-flare" cx="0.5" cy="0.55" r="0.55">
+      <stop offset="0" stop-color="#fef3c7"/>
+      <stop offset="0.35" stop-color="#fbbf24"/>
+      <stop offset="0.75" stop-color="#d97706"/>
+      <stop offset="1" stop-color="#7c2d12"/>
+    </radialGradient>
+  </defs>
+    <circle cx="14" cy="50" r="6" fill="#fbbf24"/>
+    <path d="M14 38 A12 12 0 0 1 26 50" fill="none" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <path d="M14 28 A22 22 0 0 1 36 50" fill="none" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <path d="M14 18 A32 32 0 0 1 46 50" fill="none" stroke="#d97706" stroke-width="4" stroke-linecap="round"/>
+</svg>
