@@ -32,44 +32,52 @@ from claude_comms.mcp_tools import (
 
 
 class TestCommsJoin:
-    def test_first_join_requires_name(self, registry: ParticipantRegistry):
-        result = tool_comms_join(registry, conversation="general")
+    @pytest.mark.asyncio
+    async def test_first_join_requires_name(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, conversation="general")
         assert result.get("error") is True
         assert "name" in result["message"].lower()
 
-    def test_first_join_returns_key(self, registry: ParticipantRegistry):
-        result = tool_comms_join(registry, name="alice", conversation="general")
+    @pytest.mark.asyncio
+    async def test_first_join_returns_key(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="alice", conversation="general")
         assert result["status"] == "joined"
         assert len(result["key"]) == 8
         assert result["name"] == "alice"
         assert result["conversation"] == "general"
 
-    def test_rejoin_same_name_idempotent(self, registry: ParticipantRegistry):
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="alice", conversation="general")
+    @pytest.mark.asyncio
+    async def test_rejoin_same_name_idempotent(self, registry: ParticipantRegistry):
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="alice", conversation="general")
         assert r1["key"] == r2["key"]
 
-    def test_rejoin_with_key(self, registry: ParticipantRegistry):
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
+    @pytest.mark.asyncio
+    async def test_rejoin_with_key(self, registry: ParticipantRegistry):
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
         key = r1["key"]
-        r2 = tool_comms_join(registry, key=key, conversation="dev")
+        r2 = await tool_comms_join(registry, key=key, conversation="dev")
         assert r2["key"] == key
         assert r2["conversation"] == "dev"
 
-    def test_invalid_conversation_id(self, registry: ParticipantRegistry):
-        result = tool_comms_join(registry, name="alice", conversation="INVALID!")
+    @pytest.mark.asyncio
+    async def test_invalid_conversation_id(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="alice", conversation="INVALID!")
         assert result.get("error") is True
 
-    def test_invalid_name(self, registry: ParticipantRegistry):
-        result = tool_comms_join(registry, name="has spaces", conversation="general")
+    @pytest.mark.asyncio
+    async def test_invalid_name(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="has spaces", conversation="general")
         assert result.get("error") is True
 
-    def test_default_conversation(self, registry: ParticipantRegistry):
-        result = tool_comms_join(registry, name="bob")
+    @pytest.mark.asyncio
+    async def test_default_conversation(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="bob")
         assert result["conversation"] == "general"
 
-    def test_invalid_key_format(self, registry: ParticipantRegistry):
-        result = tool_comms_join(registry, key="ZZZZ", conversation="general")
+    @pytest.mark.asyncio
+    async def test_invalid_key_format(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, key="ZZZZ", conversation="general")
         assert result.get("error") is True
 
 
@@ -135,8 +143,8 @@ class TestCommsSend:
         publish_spy,
     ):
         # Register two participants
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
         result = await tool_comms_send(
             registry,
             publish_spy,
@@ -379,12 +387,13 @@ class TestCommsCheck:
 
 
 class TestCommsMembers:
-    def test_members_lists_joined(
+    @pytest.mark.asyncio
+    async def test_members_lists_joined(
         self,
         registry: ParticipantRegistry,
         sample_participant: dict,
     ):
-        tool_comms_join(registry, name="bob", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
         result = tool_comms_members(
             registry,
             key=sample_participant["key"],
@@ -414,14 +423,15 @@ class TestCommsMembers:
 
 
 class TestCommsConversations:
-    def test_conversations_lists_joined(
+    @pytest.mark.asyncio
+    async def test_conversations_lists_joined(
         self,
         registry: ParticipantRegistry,
         store: MessageStore,
         sample_participant: dict,
     ):
         key = sample_participant["key"]
-        tool_comms_join(registry, key=key, conversation="dev")
+        await tool_comms_join(registry, key=key, conversation="dev")
         result = tool_comms_conversations(registry, store, key=key)
         conv_ids = {c["conversation"] for c in result["conversations"]}
         assert "general" in conv_ids
@@ -589,30 +599,34 @@ class TestCommsHistory:
 
 
 class TestParticipantRegistry:
-    def test_resolve_recipients_mixed(self, registry: ParticipantRegistry):
-        tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+    @pytest.mark.asyncio
+    async def test_resolve_recipients_mixed(self, registry: ParticipantRegistry):
+        await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
         bob_key = r2["key"]
         resolved = registry.resolve_recipients(["alice", bob_key])
         assert len(resolved) == 2
         assert bob_key in resolved
 
-    def test_resolve_recipients_dedup(self, registry: ParticipantRegistry):
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
+    @pytest.mark.asyncio
+    async def test_resolve_recipients_dedup(self, registry: ParticipantRegistry):
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
         key = r1["key"]
         resolved = registry.resolve_recipients(["alice", key])
         assert len(resolved) == 1
 
-    def test_name_to_key_map(self, registry: ParticipantRegistry):
-        tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, name="bob", conversation="general")
+    @pytest.mark.asyncio
+    async def test_name_to_key_map(self, registry: ParticipantRegistry):
+        await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
         mapping = registry.name_to_key_map("general")
         assert "alice" in mapping
         assert "bob" in mapping
         assert len(mapping) == 2
 
-    def test_update_name_reindexes(self, registry: ParticipantRegistry):
-        r = tool_comms_join(registry, name="old-name", conversation="general")
+    @pytest.mark.asyncio
+    async def test_update_name_reindexes(self, registry: ParticipantRegistry):
+        r = await tool_comms_join(registry, name="old-name", conversation="general")
         key = r["key"]
         registry.update_name(key, "new-name")
         assert registry.resolve_name("old-name") is None

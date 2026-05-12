@@ -269,12 +269,16 @@ class TestCommsLeaveEdgeCases:
 class TestRegistryConcurrency:
     def test_concurrent_joins(self, registry: ParticipantRegistry):
         """Multiple threads joining simultaneously should not corrupt state."""
+        import asyncio
+
         results = {}
         errors = []
 
         def join_thread(name, conv):
             try:
-                r = tool_comms_join(registry, name=name, conversation=conv)
+                r = asyncio.run(
+                    tool_comms_join(registry, name=name, conversation=conv)
+                )
                 results[name] = r
             except Exception as e:
                 errors.append(e)
@@ -300,8 +304,9 @@ class TestRegistryConcurrency:
 
 
 class TestResolveRecipientsEdgeCases:
-    def test_resolve_unknown_name_dropped(self, registry: ParticipantRegistry):
-        tool_comms_join(registry, name="alice", conversation="general")
+    @pytest.mark.asyncio
+    async def test_resolve_unknown_name_dropped(self, registry: ParticipantRegistry):
+        await tool_comms_join(registry, name="alice", conversation="general")
         resolved = registry.resolve_recipients(["alice", "nonexistent"])
         assert len(resolved) == 1
 

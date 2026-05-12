@@ -115,13 +115,14 @@ class TestGetChannelParticipants:
         finally:
             srv._registry = original
 
-    def test_returns_participants_with_correct_shape(
+    @pytest.mark.asyncio
+    async def test_returns_participants_with_correct_shape(
         self, registry: ParticipantRegistry
     ):
         """Each participant dict should have key, name, type, client, status."""
         import claude_comms.mcp_server as srv
 
-        tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="alice", conversation="general")
         original = srv._registry
         try:
             srv._registry = registry
@@ -146,13 +147,14 @@ class TestGetChannelParticipants:
         finally:
             srv._registry = original
 
-    def test_multiple_participants(self, registry: ParticipantRegistry):
+    @pytest.mark.asyncio
+    async def test_multiple_participants(self, registry: ParticipantRegistry):
         """Should return all participants in the given channel."""
         import claude_comms.mcp_server as srv
 
-        tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, name="bob", conversation="general")
-        tool_comms_join(registry, name="charlie", conversation="other")
+        await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+        await tool_comms_join(registry, name="charlie", conversation="other")
         original = srv._registry
         try:
             srv._registry = registry
@@ -174,11 +176,12 @@ class TestGetChannelParticipants:
         finally:
             srv._registry = original
 
-    def test_participant_leaves_channel(self, registry: ParticipantRegistry):
+    @pytest.mark.asyncio
+    async def test_participant_leaves_channel(self, registry: ParticipantRegistry):
         """After a participant leaves, they should not appear in the list."""
         import claude_comms.mcp_server as srv
 
-        join_result = tool_comms_join(registry, name="alice", conversation="general")
+        join_result = await tool_comms_join(registry, name="alice", conversation="general")
         key = join_result["key"]
         registry.leave(key, "general")
 

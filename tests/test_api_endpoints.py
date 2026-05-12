@@ -191,12 +191,13 @@ class TestGetChannelParticipants:
         finally:
             mod._registry = original
 
-    def test_returns_participants_with_client_field(self):
+    @pytest.mark.asyncio
+    async def test_returns_participants_with_client_field(self):
         """Participants should include 'client' field."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
-        tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="alice", conversation="general")
 
         original = mod._registry
         try:
@@ -216,13 +217,14 @@ class TestGetChannelParticipants:
         finally:
             mod._registry = original
 
-    def test_returns_multiple_participants(self):
+    @pytest.mark.asyncio
+    async def test_returns_multiple_participants(self):
         """Multiple participants in the same channel are all returned."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
-        tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, name="bob", conversation="general")
+        await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
 
         original = mod._registry
         try:
@@ -236,12 +238,13 @@ class TestGetChannelParticipants:
         finally:
             mod._registry = original
 
-    def test_returns_empty_for_empty_channel(self):
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_empty_channel(self):
         """Channel with no participants returns []."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
-        tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="alice", conversation="general")
 
         original = mod._registry
         try:
@@ -362,10 +365,11 @@ class TestPresencePublishingOnJoin:
     participant joins. We test the logic by examining the payload format.
     """
 
-    def test_presence_payload_format(self):
+    @pytest.mark.asyncio
+    async def test_presence_payload_format(self):
         """Presence payload contains expected fields."""
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="agent-x", conversation="general")
+        result = await tool_comms_join(registry, name="agent-x", conversation="general")
 
         assert "error" not in result
         assert result["status"] == "joined"
@@ -389,10 +393,11 @@ class TestPresencePublishingOnJoin:
         assert data["client"] == "mcp"
         assert "ts" in data
 
-    def test_presence_topics(self):
+    @pytest.mark.asyncio
+    async def test_presence_topics(self):
         """Presence is published to both conv-scoped and system-scoped topics."""
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="agent-y", conversation="dev")
+        result = await tool_comms_join(registry, name="agent-y", conversation="dev")
 
         key = result["key"]
         conversation = "dev"
@@ -427,7 +432,7 @@ class TestPresencePublishingOnJoin:
             # We need to call comms_join from the MCP server wrapper
             # which triggers the presence publish. Let's test via the
             # tool_comms_join + manual presence simulation instead.
-            result = tool_comms_join(registry, name="test-pub", conversation="general")
+            result = await tool_comms_join(registry, name="test-pub", conversation="general")
             assert "error" not in result
 
             # Simulate the presence publish that comms_join does
@@ -472,12 +477,13 @@ class TestPresencePublishingOnJoin:
 class TestClientTypeInPresence:
     """Tests for the 'client' field in participant/presence data."""
 
-    def test_participant_response_includes_client_mcp(self):
+    @pytest.mark.asyncio
+    async def test_participant_response_includes_client_mcp(self):
         """get_channel_participants returns the participant's client field."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
-        tool_comms_join(registry, name="test-client", conversation="general")
+        await tool_comms_join(registry, name="test-client", conversation="general")
 
         original = mod._registry
         try:
@@ -490,12 +496,13 @@ class TestClientTypeInPresence:
         finally:
             mod._registry = original
 
-    def test_client_field_is_string(self):
+    @pytest.mark.asyncio
+    async def test_client_field_is_string(self):
         """Client field is always a string, not None or missing."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
-        tool_comms_join(registry, name="check-type", conversation="general")
+        await tool_comms_join(registry, name="check-type", conversation="general")
 
         original = mod._registry
         try:

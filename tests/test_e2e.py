@@ -118,8 +118,8 @@ class TestTwoParticipantChat:
         broker.subscribe("claude-comms/conv/+/messages", on_msg_bob)
 
         # Join
-        r_alice = tool_comms_join(registry, name="alice", conversation="general")
-        r_bob = tool_comms_join(registry, name="bob", conversation="general")
+        r_alice = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
 
         # Alice sends a message
         result = await tool_comms_send(
@@ -157,8 +157,8 @@ class TestTwoParticipantChat:
         registry = ParticipantRegistry()
         broker = MockBroker()
 
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, key=r1["key"], conversation="dev")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, key=r1["key"], conversation="dev")
 
         await tool_comms_send(
             registry,
@@ -197,9 +197,9 @@ class TestTargetedMessaging:
         registry = ParticipantRegistry()
         broker = MockBroker()
 
-        r_alice = tool_comms_join(registry, name="alice", conversation="general")
-        r_bob = tool_comms_join(registry, name="bob", conversation="general")
-        r_charlie = tool_comms_join(registry, name="charlie", conversation="general")
+        r_alice = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
+        r_charlie = await tool_comms_join(registry, name="charlie", conversation="general")
 
         result = await tool_comms_send(
             registry,
@@ -225,9 +225,9 @@ class TestTargetedMessaging:
         registry = ParticipantRegistry()
         broker = MockBroker()
 
-        r_alice = tool_comms_join(registry, name="alice", conversation="general")
-        r_bob = tool_comms_join(registry, name="bob", conversation="general")
-        r_charlie = tool_comms_join(registry, name="charlie", conversation="general")
+        r_alice = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
+        r_charlie = await tool_comms_join(registry, name="charlie", conversation="general")
 
         result = await tool_comms_send(
             registry,
@@ -270,7 +270,7 @@ class TestConversationLifecycle:
 
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
-        r = tool_comms_join(registry, name="alice", conversation="project-x")
+        r = await tool_comms_join(registry, name="alice", conversation="project-x")
         exporter.write_presence("project-x", "alice", r["key"], "joined")
 
         # Send messages
@@ -316,18 +316,20 @@ class TestConversationLifecycle:
 class TestPresenceFlow:
     """Test join/leave presence tracking."""
 
-    def test_join_makes_visible_in_members(self) -> None:
+    @pytest.mark.asyncio
+    async def test_join_makes_visible_in_members(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
 
         members = tool_comms_members(registry, key=r["key"], conversation="general")
         assert members["count"] == 1
         assert members["members"][0]["name"] == "alice"
 
-    def test_leave_removes_from_members(self) -> None:
+    @pytest.mark.asyncio
+    async def test_leave_removes_from_members(self) -> None:
         registry = ParticipantRegistry()
-        r_alice = tool_comms_join(registry, name="alice", conversation="general")
-        r_bob = tool_comms_join(registry, name="bob", conversation="general")
+        r_alice = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
 
         tool_comms_leave(registry, key=r_alice["key"], conversation="general")
 
@@ -368,7 +370,7 @@ class TestNameChangeFlow:
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
         # Join and send under old name
-        r = tool_comms_join(registry, name="old-name", conversation="general")
+        r = await tool_comms_join(registry, name="old-name", conversation="general")
         key = r["key"]
 
         await tool_comms_send(
@@ -402,9 +404,10 @@ class TestNameChangeFlow:
         assert msgs[0]["sender"]["name"] == "old-name"
         assert msgs[1]["sender"]["name"] == "new-name"
 
-    def test_name_change_resolves_new_name(self) -> None:
+    @pytest.mark.asyncio
+    async def test_name_change_resolves_new_name(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="original", conversation="general")
+        r = await tool_comms_join(registry, name="original", conversation="general")
         key = r["key"]
 
         tool_comms_update_name(registry, key=key, new_name="renamed")
@@ -428,8 +431,8 @@ class TestLogFormatVerification:
         registry = ParticipantRegistry()
         broker = MockBroker()
 
-        r_alice = tool_comms_join(registry, name="alice", conversation="general")
-        r_bob = tool_comms_join(registry, name="bob", conversation="general")
+        r_alice = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
 
         async def on_message(topic, msg_data):
             log_exporter_instance.write_message(msg_data)
@@ -467,7 +470,7 @@ class TestLogFormatVerification:
         registry = ParticipantRegistry()
         broker = MockBroker()
 
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         key = r["key"]
 
         async def on_message(topic, msg_data):
@@ -491,7 +494,7 @@ class TestLogFormatVerification:
         registry = ParticipantRegistry()
         broker = MockBroker()
 
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
 
         async def on_message(topic, msg_data):
             log_exporter_instance.write_message(msg_data)
@@ -761,8 +764,8 @@ class TestFullE2EFlow:
         broker.subscribe("claude-comms/conv/+/messages", on_message)
 
         # 1. Two participants join
-        r_phil = tool_comms_join(registry, name="phil", conversation="general")
-        r_claude = tool_comms_join(
+        r_phil = await tool_comms_join(registry, name="phil", conversation="general")
+        r_claude = await tool_comms_join(
             registry, name="claude-alpha", conversation="general"
         )
         exporter.write_presence("general", "phil", r_phil["key"], "joined")
@@ -863,7 +866,7 @@ class TestErrorHandlingPaths:
         """Sending to a conversation with invalid ID should return error."""
         registry = ParticipantRegistry()
         broker = MockBroker()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = await tool_comms_send(
             registry,
             broker.publish,
@@ -878,7 +881,7 @@ class TestErrorHandlingPaths:
         """Empty or whitespace-only message body should be rejected."""
         registry = ParticipantRegistry()
         broker = MockBroker()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         for body in ["", "   ", "\n\t"]:
             result = await tool_comms_send(
                 registry,
@@ -931,18 +934,20 @@ class TestErrorHandlingPaths:
         result = tool_comms_check(registry, store, key="ZZZZZZZZ")
         assert result.get("error") is True
 
-    def test_members_with_invalid_conv(self) -> None:
+    @pytest.mark.asyncio
+    async def test_members_with_invalid_conv(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_members(registry, key=r["key"], conversation="BAD!")
         assert result.get("error") is True
 
-    def test_history_with_invalid_conv(self) -> None:
+    @pytest.mark.asyncio
+    async def test_history_with_invalid_conv(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
 
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_history(
             registry,
             store,
@@ -951,17 +956,19 @@ class TestErrorHandlingPaths:
         )
         assert result.get("error") is True
 
-    def test_leave_with_invalid_conv(self) -> None:
+    @pytest.mark.asyncio
+    async def test_leave_with_invalid_conv(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_leave(registry, key=r["key"], conversation="BAD!")
         assert result.get("error") is True
 
-    def test_join_with_reserved_conv_id(self) -> None:
+    @pytest.mark.asyncio
+    async def test_join_with_reserved_conv_id(self) -> None:
         """Joining a reserved conversation ID should return error."""
         registry = ParticipantRegistry()
         for reserved in ["system", "meta"]:
-            result = tool_comms_join(
+            result = await tool_comms_join(
                 registry,
                 name="alice",
                 conversation=reserved,
@@ -1048,7 +1055,7 @@ class TestMultiParticipantEdgeCases:
         """Sending a targeted message to yourself."""
         registry = ParticipantRegistry()
         broker = MockBroker()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
 
         result = await tool_comms_send(
             registry,
@@ -1067,8 +1074,8 @@ class TestMultiParticipantEdgeCases:
         """Target recipients by mixed keys and names."""
         registry = ParticipantRegistry()
         broker = MockBroker()
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
 
         result = await tool_comms_send(
             registry,
@@ -1083,11 +1090,12 @@ class TestMultiParticipantEdgeCases:
         assert len(result["recipients"]) == 1
         assert r2["key"] in result["recipients"]
 
-    def test_read_updates_cursor_correctly(self) -> None:
+    @pytest.mark.asyncio
+    async def test_read_updates_cursor_correctly(self) -> None:
         """Reading should update the read cursor to the latest message."""
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
 
         for i in range(3):
             store.add(
@@ -1124,7 +1132,7 @@ class TestMultiParticipantEdgeCases:
     async def test_broker_publish_exception_handled(self) -> None:
         """Various exception types from publish should be handled."""
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
 
         async def timeout_pub(topic, payload):
             raise TimeoutError("Connection timed out")
@@ -1138,14 +1146,15 @@ class TestMultiParticipantEdgeCases:
         )
         assert result.get("error") is True
 
-    def test_conversations_with_unread_counts(self) -> None:
+    @pytest.mark.asyncio
+    async def test_conversations_with_unread_counts(self) -> None:
         """Verify unread counts in conversations listing."""
         from claude_comms.mcp_tools import tool_comms_conversations
 
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, key=r["key"], conversation="dev")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, key=r["key"], conversation="dev")
 
         # Add messages to both conversations
         for i in range(3):

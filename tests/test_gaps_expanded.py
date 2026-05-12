@@ -14,6 +14,7 @@ import json
 import os
 from unittest.mock import patch
 
+import pytest
 
 from claude_comms.broker import MessageDeduplicator, MessageStore
 from claude_comms.config import (
@@ -197,7 +198,8 @@ class TestFormatLogEntryEdgeCases:
 
 
 class TestCommsConversationsUnreadTracking:
-    def test_conversations_shows_unread_counts(
+    @pytest.mark.asyncio
+    async def test_conversations_shows_unread_counts(
         self,
         registry: ParticipantRegistry,
         store: MessageStore,
@@ -205,7 +207,7 @@ class TestCommsConversationsUnreadTracking:
     ):
         key = sample_participant["key"]
         # Join a second conversation
-        tool_comms_join(registry, key=key, conversation="dev")
+        await tool_comms_join(registry, key=key, conversation="dev")
         # Add messages to both
         for i in range(3):
             store.add(
@@ -273,13 +275,14 @@ class TestCommsMembersEdgeCases:
         )
         assert result.get("error") is True
 
-    def test_members_after_leave(
+    @pytest.mark.asyncio
+    async def test_members_after_leave(
         self,
         registry: ParticipantRegistry,
         sample_participant: dict,
     ):
         key = sample_participant["key"]
-        bob = tool_comms_join(registry, name="bob", conversation="general")
+        bob = await tool_comms_join(registry, name="bob", conversation="general")
         tool_comms_leave(registry, key=bob["key"], conversation="general")
         result = tool_comms_members(registry, key=key, conversation="general")
         names = {m["name"] for m in result["members"]}
@@ -287,13 +290,14 @@ class TestCommsMembersEdgeCases:
 
 
 class TestRegistryConversationsFor:
-    def test_conversations_for_after_multiple_joins(
+    @pytest.mark.asyncio
+    async def test_conversations_for_after_multiple_joins(
         self, registry: ParticipantRegistry
     ):
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         key = r["key"]
-        tool_comms_join(registry, key=key, conversation="dev")
-        tool_comms_join(registry, key=key, conversation="ops")
+        await tool_comms_join(registry, key=key, conversation="dev")
+        await tool_comms_join(registry, key=key, conversation="ops")
         convs = set(registry.conversations_for(key))
         assert convs == {"general", "dev", "ops"}
 

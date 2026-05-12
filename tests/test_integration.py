@@ -260,11 +260,12 @@ class TestMentionResolutionPipeline:
         names = extract_mentions(body)
         assert names == []
 
-    def test_mention_pipeline_with_registry(self) -> None:
+    @pytest.mark.asyncio
+    async def test_mention_pipeline_with_registry(self) -> None:
         """End-to-end: register participants, resolve mentions from body."""
         registry = ParticipantRegistry()
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
 
         name_map = registry.name_to_key_map("general")
         body = "[@alice, @bob] Team meeting at 3pm"
@@ -474,9 +475,10 @@ class TestDeduplicatorIntegration:
 class TestParticipantRegistryIntegration:
     """Test registry interactions across join, resolve, and name change."""
 
-    def test_join_resolve_name(self) -> None:
+    @pytest.mark.asyncio
+    async def test_join_resolve_name(self) -> None:
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="alice", conversation="general")
+        result = await tool_comms_join(registry, name="alice", conversation="general")
         key = result["key"]
 
         resolved = registry.resolve_name("alice")
@@ -485,9 +487,10 @@ class TestParticipantRegistryIntegration:
         # Case-insensitive
         assert registry.resolve_name("Alice") == key
 
-    def test_name_change_updates_resolution(self) -> None:
+    @pytest.mark.asyncio
+    async def test_name_change_updates_resolution(self) -> None:
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="old-name", conversation="general")
+        result = await tool_comms_join(registry, name="old-name", conversation="general")
         key = result["key"]
 
         registry.update_name(key, "new-name")
@@ -495,11 +498,12 @@ class TestParticipantRegistryIntegration:
         assert registry.resolve_name("old-name") is None
         assert registry.resolve_name("new-name") == key
 
-    def test_name_change_preserves_membership(self) -> None:
+    @pytest.mark.asyncio
+    async def test_name_change_preserves_membership(self) -> None:
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="alice", conversation="general")
+        result = await tool_comms_join(registry, name="alice", conversation="general")
         key = result["key"]
-        tool_comms_join(registry, key=key, conversation="dev")
+        await tool_comms_join(registry, key=key, conversation="dev")
 
         registry.update_name(key, "alice-v2")
 
@@ -509,21 +513,23 @@ class TestParticipantRegistryIntegration:
         assert any(m.key == key and m.name == "alice-v2" for m in members_general)
         assert any(m.key == key and m.name == "alice-v2" for m in members_dev)
 
-    def test_multi_conversation_membership(self) -> None:
+    @pytest.mark.asyncio
+    async def test_multi_conversation_membership(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         key = r["key"]
-        tool_comms_join(registry, key=key, conversation="dev")
-        tool_comms_join(registry, key=key, conversation="ops")
+        await tool_comms_join(registry, key=key, conversation="dev")
+        await tool_comms_join(registry, key=key, conversation="ops")
 
         convs = set(registry.conversations_for(key))
         assert convs == {"general", "dev", "ops"}
 
-    def test_leave_removes_from_one_conversation(self) -> None:
+    @pytest.mark.asyncio
+    async def test_leave_removes_from_one_conversation(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         key = r["key"]
-        tool_comms_join(registry, key=key, conversation="dev")
+        await tool_comms_join(registry, key=key, conversation="dev")
 
         registry.leave(key, "general")
 
@@ -531,10 +537,11 @@ class TestParticipantRegistryIntegration:
         assert "general" not in convs
         assert "dev" in convs
 
-    def test_resolve_recipients_mixed_names_and_keys(self) -> None:
+    @pytest.mark.asyncio
+    async def test_resolve_recipients_mixed_names_and_keys(self) -> None:
         registry = ParticipantRegistry()
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
 
         resolved = registry.resolve_recipients(["alice", r2["key"]])
         assert r1["key"] in resolved
@@ -606,7 +613,7 @@ class TestMCPToolsPipeline:
         store = MessageStore()
 
         # Join
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         key = r["key"]
 
         # Send with a spy that captures the message
@@ -642,8 +649,8 @@ class TestMCPToolsPipeline:
         registry = ParticipantRegistry()
         MessageStore()  # ensure store initializes
 
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
 
         captured: list[tuple[str, bytes]] = []
 
@@ -671,8 +678,8 @@ class TestMCPToolsPipeline:
         registry = ParticipantRegistry()
         store = MessageStore()
 
-        r_alice = tool_comms_join(registry, name="alice", conversation="general")
-        r_bob = tool_comms_join(registry, name="bob", conversation="general")
+        r_alice = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
 
         captured: list[tuple[str, bytes]] = []
 
@@ -705,7 +712,7 @@ class TestMCPToolsPipeline:
     async def test_send_to_log_exporter(self) -> None:
         """Send a message, write to LogExporter, verify log content."""
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
 
         captured: list[tuple[str, bytes]] = []
 
@@ -1101,41 +1108,46 @@ class TestGenerateClientIdIntegration:
 class TestAllCommsToolsWithMockPublish:
     """Test all 9 comms_* tool functions with mock publish."""
 
-    def _setup(self):
+    async def _setup(self):
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="tester", conversation="general")
+        r = await tool_comms_join(registry, name="tester", conversation="general")
         return registry, store, r["key"]
 
-    def test_comms_join_new_participant(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_join_new_participant(self) -> None:
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="alice", conversation="general")
+        result = await tool_comms_join(registry, name="alice", conversation="general")
         assert result["status"] == "joined"
         assert result["name"] == "alice"
         assert result["type"] == "claude"
         assert len(result["key"]) == 8
 
-    def test_comms_join_rejoin_by_key(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_join_rejoin_by_key(self) -> None:
         registry = ParticipantRegistry()
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, key=r1["key"], conversation="dev")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, key=r1["key"], conversation="dev")
         assert r2["key"] == r1["key"]
         assert r2["conversation"] == "dev"
 
-    def test_comms_join_invalid_conv(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_join_invalid_conv(self) -> None:
         registry = ParticipantRegistry()
-        result = tool_comms_join(registry, name="alice", conversation="INVALID!")
+        result = await tool_comms_join(registry, name="alice", conversation="INVALID!")
         assert result.get("error") is True
 
-    def test_comms_leave_success(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_leave_success(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_leave(registry, key=r["key"], conversation="general")
         assert result["status"] == "left"
 
-    def test_comms_leave_not_member(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_leave_not_member(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_leave(registry, key=r["key"], conversation="other")
         assert result["status"] == "not_a_member"
 
@@ -1146,7 +1158,7 @@ class TestAllCommsToolsWithMockPublish:
 
     @pytest.mark.asyncio
     async def test_comms_send_broadcast(self) -> None:
-        registry, store, key = self._setup()
+        registry, store, key = await self._setup()
         captured = []
 
         async def mock_pub(topic, payload):
@@ -1167,8 +1179,8 @@ class TestAllCommsToolsWithMockPublish:
     @pytest.mark.asyncio
     async def test_comms_send_targeted(self) -> None:
         registry = ParticipantRegistry()
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        r2 = tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        r2 = await tool_comms_join(registry, name="bob", conversation="general")
         captured = []
 
         async def mock_pub(topic, payload):
@@ -1189,7 +1201,7 @@ class TestAllCommsToolsWithMockPublish:
 
     @pytest.mark.asyncio
     async def test_comms_send_empty_body_rejected(self) -> None:
-        registry, _, key = self._setup()
+        registry, _, key = await self._setup()
 
         async def mock_pub(topic, payload):
             pass
@@ -1205,7 +1217,7 @@ class TestAllCommsToolsWithMockPublish:
 
     @pytest.mark.asyncio
     async def test_comms_send_invalid_conv(self) -> None:
-        registry, _, key = self._setup()
+        registry, _, key = await self._setup()
 
         async def mock_pub(topic, payload):
             pass
@@ -1221,7 +1233,7 @@ class TestAllCommsToolsWithMockPublish:
 
     @pytest.mark.asyncio
     async def test_comms_send_broker_failure(self) -> None:
-        registry, _, key = self._setup()
+        registry, _, key = await self._setup()
 
         async def failing_pub(topic, payload):
             raise ConnectionError("Broker down")
@@ -1241,7 +1253,7 @@ class TestAllCommsToolsWithMockPublish:
 
     @pytest.mark.asyncio
     async def test_comms_send_unresolvable_recipients(self) -> None:
-        registry, _, key = self._setup()
+        registry, _, key = await self._setup()
 
         async def mock_pub(topic, payload):
             pass
@@ -1256,14 +1268,16 @@ class TestAllCommsToolsWithMockPublish:
         )
         assert result.get("error") is True
 
-    def test_comms_read_empty(self) -> None:
-        registry, store, key = self._setup()
+    @pytest.mark.asyncio
+    async def test_comms_read_empty(self) -> None:
+        registry, store, key = await self._setup()
         result = tool_comms_read(registry, store, key=key, conversation="general")
         assert result["count"] == 0
         assert result["messages"] == []
 
-    def test_comms_read_with_messages(self) -> None:
-        registry, store, key = self._setup()
+    @pytest.mark.asyncio
+    async def test_comms_read_with_messages(self) -> None:
+        registry, store, key = await self._setup()
         for i in range(5):
             store.add(
                 "general",
@@ -1278,8 +1292,9 @@ class TestAllCommsToolsWithMockPublish:
         result = tool_comms_read(registry, store, key=key, conversation="general")
         assert result["count"] == 5
 
-    def test_comms_read_with_since(self) -> None:
-        registry, store, key = self._setup()
+    @pytest.mark.asyncio
+    async def test_comms_read_with_since(self) -> None:
+        registry, store, key = await self._setup()
         for i in range(10):
             store.add(
                 "general",
@@ -1300,9 +1315,10 @@ class TestAllCommsToolsWithMockPublish:
         )
         assert result["count"] == 2  # messages 8, 9
 
-    def test_comms_read_count_clamped(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_read_count_clamped(self) -> None:
         """Count should be clamped between 1 and 200."""
-        registry, store, key = self._setup()
+        registry, store, key = await self._setup()
         for i in range(5):
             store.add(
                 "general",
@@ -1324,13 +1340,15 @@ class TestAllCommsToolsWithMockPublish:
         )
         assert result["count"] == 1
 
-    def test_comms_check_no_unread(self) -> None:
-        registry, store, key = self._setup()
+    @pytest.mark.asyncio
+    async def test_comms_check_no_unread(self) -> None:
+        registry, store, key = await self._setup()
         result = tool_comms_check(registry, store, key=key)
         assert result["total_unread"] == 0
 
-    def test_comms_check_with_unread(self) -> None:
-        registry, store, key = self._setup()
+    @pytest.mark.asyncio
+    async def test_comms_check_with_unread(self) -> None:
+        registry, store, key = await self._setup()
         store.add(
             "general",
             {
@@ -1344,8 +1362,9 @@ class TestAllCommsToolsWithMockPublish:
         result = tool_comms_check(registry, store, key=key)
         assert result["total_unread"] == 1
 
-    def test_comms_check_specific_conversation(self) -> None:
-        registry, store, key = self._setup()
+    @pytest.mark.asyncio
+    async def test_comms_check_specific_conversation(self) -> None:
+        registry, store, key = await self._setup()
         result = tool_comms_check(
             registry,
             store,
@@ -1354,49 +1373,55 @@ class TestAllCommsToolsWithMockPublish:
         )
         assert result["total_unread"] == 0
 
-    def test_comms_members(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_members(self) -> None:
         registry = ParticipantRegistry()
-        r1 = tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, name="bob", conversation="general")
+        r1 = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
         result = tool_comms_members(registry, key=r1["key"], conversation="general")
         assert result["count"] == 2
         names = {m["name"] for m in result["members"]}
         assert "alice" in names and "bob" in names
 
-    def test_comms_members_empty_conv(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_members_empty_conv(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_members(registry, key=r["key"], conversation="empty")
         assert result["count"] == 0
 
-    def test_comms_conversations(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_conversations(self) -> None:
         from claude_comms.mcp_tools import tool_comms_conversations
 
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="alice", conversation="general")
-        tool_comms_join(registry, key=r["key"], conversation="dev")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, key=r["key"], conversation="dev")
         result = tool_comms_conversations(registry, store, key=r["key"])
         conv_ids = {c["conversation"] for c in result["conversations"]}
         assert "general" in conv_ids and "dev" in conv_ids
 
-    def test_comms_update_name(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_update_name(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="old-name", conversation="general")
+        r = await tool_comms_join(registry, name="old-name", conversation="general")
         result = tool_comms_update_name(registry, key=r["key"], new_name="new-name")
         assert result["status"] == "updated"
         assert result["name"] == "new-name"
 
-    def test_comms_update_name_invalid(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_update_name_invalid(self) -> None:
         registry = ParticipantRegistry()
-        r = tool_comms_join(registry, name="alice", conversation="general")
+        r = await tool_comms_join(registry, name="alice", conversation="general")
         result = tool_comms_update_name(registry, key=r["key"], new_name="bad name!")
         assert result.get("error") is True
 
-    def test_comms_history_all(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_history_all(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
 
-        registry, store, key = self._setup()
+        registry, store, key = await self._setup()
         for i in range(5):
             store.add(
                 "general",
@@ -1411,10 +1436,11 @@ class TestAllCommsToolsWithMockPublish:
         result = tool_comms_history(registry, store, key=key, conversation="general")
         assert result["count"] == 5
 
-    def test_comms_history_with_query(self) -> None:
+    @pytest.mark.asyncio
+    async def test_comms_history_with_query(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
 
-        registry, store, key = self._setup()
+        registry, store, key = await self._setup()
         store.add(
             "general",
             {
@@ -1549,10 +1575,11 @@ class TestParticipantRegistryDetailed:
 class TestTokenAwarePaginationIntegration:
     """Token-aware pagination in comms_read and comms_history."""
 
-    def test_large_messages_trigger_truncation(self) -> None:
+    @pytest.mark.asyncio
+    async def test_large_messages_trigger_truncation(self) -> None:
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="tester", conversation="general")
+        r = await tool_comms_join(registry, name="tester", conversation="general")
         # Each message ~2000 chars = ~500 tokens. 100 messages = 50k tokens > 20k limit
         for i in range(100):
             store.add(
@@ -1575,10 +1602,11 @@ class TestTokenAwarePaginationIntegration:
         assert result["count"] < 100
         assert result["has_more"] is True
 
-    def test_small_messages_no_truncation(self) -> None:
+    @pytest.mark.asyncio
+    async def test_small_messages_no_truncation(self) -> None:
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="tester", conversation="general")
+        r = await tool_comms_join(registry, name="tester", conversation="general")
         for i in range(10):
             store.add(
                 "general",
@@ -1599,12 +1627,13 @@ class TestTokenAwarePaginationIntegration:
         assert result["count"] == 10
         assert result["has_more"] is False
 
-    def test_history_truncation(self) -> None:
+    @pytest.mark.asyncio
+    async def test_history_truncation(self) -> None:
         from claude_comms.mcp_tools import tool_comms_history
 
         registry = ParticipantRegistry()
         store = MessageStore()
-        r = tool_comms_join(registry, name="tester", conversation="general")
+        r = await tool_comms_join(registry, name="tester", conversation="general")
         for i in range(100):
             store.add(
                 "general",
