@@ -152,15 +152,158 @@
     }
   });
 
-  function addToast(toast) {
-    toasts = [...toasts, toast];
-    setTimeout(() => {
-      toasts = toasts.filter(t => t.id !== toast.id);
+  // ── Toast cap + coalesce (UX G-14) ─────────────────────────────────────
+  //
+  // The visible toast stack is capped at TOAST_CAP (3). When a new toast
+  // arrives and there are already TOAST_CAP toasts visible:
+  //
+  //   1. If at least one existing visible toast is from the SAME channel,
+  //      we coalesce: replace that toast's body with "<sender> and N
+  //      others sent messages" (`coalescedCount` tracks N+1 — i.e. the
+  //      total events folded into this single toast).
+  //
+  //   2. If the same channel already has a coalesced toast and reaches 5+
+  //      coalesced events, we collapse to a single pill: "+N new in
+  //      #channel". The pill stays under the cap and keeps click-routing.
+  //
+  //   3. If no same-channel toast exists in the visible set, the new
+  //      toast displaces the OLDEST visible toast (FIFO). This keeps the
+  //      cap honest without ever losing newer cross-channel events.
+  //
+  // The 5-second self-destruct timer is per-toast and resets on every
+  // coalesce so the latest event stays visible for a full window.
+  const TOAST_CAP = 3;
+  const COALESCE_TO_PILL_AT = 5;
+  // Per-toast timeout handles, keyed by toast id. Stored outside `toasts`
+  // so the reactive array stays serialisable.
+  const toastTimers = new Map();
+
+  function scheduleToastExpiry(id) {
+    const existing = toastTimers.get(id);
+    if (existing) clearTimeout(existing);
+    const handle = setTimeout(() => {
+      toastTimers.delete(id);
+      toasts = toasts.filter(t => t.id !== id);
     }, 5000);
+    toastTimers.set(id, handle);
+  }
+
+  function clearToastTimer(id) {
+    const handle = toastTimers.get(id);
+    if (handle) {
+      clearTimeout(handle);
+      toastTimers.delete(id);
+    }
+  }
+
+  function addToast(toast) {
+    // Look for an existing visible toast from the same channel.
+    const sameChannelIdx = toasts.findIndex(t => t.channel === toast.channel);
+
+    if (sameChannelIdx >= 0) {
+      // Coalesce path. The pre-existing toast in the stack absorbs the new
+      // event — we keep its id (so timers stay attached) but rewrite the
+      // body to reflect the new aggregate.
+      const existing = toasts[sameChannelIdx];
+      const coalescedCount = (existing.coalescedCount ?? 1) + 1;
+
+      if (coalescedCount >= COALESCE_TO_PILL_AT) {
+        // Promote to compact pill.
+        const updated = {
+          ...existing,
+          pill: true,
+          coalescedCount,
+          sender: existing.sender, // keep for color/initials fallback
+          text: `+${coalescedCount} new in #${toast.channel}`,
+          messageId: toast.messageId ?? existing.messageId,
+        };
+        toasts = toasts.map((t, i) => (i === sameChannelIdx ? updated : t));
+      } else {
+        // 2..4 coalesced: render as "<sender> and N others sent messages."
+        const others = coalescedCount - 1;
+        const updated = {
+          ...existing,
+          pill: false,
+          coalescedCount,
+          // Sender shown is the most-recent sender so users see fresh
+          // names; preserve the channel routing target.
+          sender: toast.sender,
+          text: `${toast.sender?.name ?? 'someone'} and ${others} other${others === 1 ? '' : 's'} sent messages`,
+          messageId: toast.messageId ?? existing.messageId,
+        };
+        toasts = toasts.map((t, i) => (i === sameChannelIdx ? updated : t));
+      }
+      // Reset the 5s window on coalesce so the merged toast stays visible.
+      scheduleToastExpiry(existing.id);
+      return;
+    }
+
+    // No same-channel match. If we're already at the cap, evict the
+    // oldest toast (index 0) FIFO.
+    let next = toasts;
+    if (next.length >= TOAST_CAP) {
+      const evicted = next[0];
+      clearToastTimer(evicted.id);
+      next = next.slice(1);
+    }
+    const fresh = { ...toast, coalescedCount: 1, pill: false };
+    toasts = [...next, fresh];
+    scheduleToastExpiry(fresh.id);
   }
 
   function dismissToast(id) {
+    clearToastTimer(id);
     toasts = toasts.filter(t => t.id !== id);
+  }
+
+  function handleToastActivate(detail) {
+    // UX G-13: clicking a toast routes the user to the source channel.
+    // If the store ships a goToMessage helper (and the toast carries a
+    // messageId), we call it; otherwise channel-switch alone is the
+    // documented contract.
+    if (!detail?.channel) return;
+    store.switchChannel(detail.channel);
+    if (detail.messageId && typeof store.goToMessage === 'function') {
+      store.goToMessage(detail.messageId);
+    }
+  }
+
+  // ── Set-your-name banner (UX G-43 follow-up) ───────────────────────────
+  //
+  // When `store.nameUnset === true` (i.e. neither /api/identity nor
+  // localStorage produced a real name), we surface a one-line banner that
+  // links to the Settings panel. The banner is dismissible; the dismissal
+  // is remembered across reloads via localStorage so a returning user
+  // who chose to ignore the prompt isn't nagged.
+  const NAME_BANNER_DISMISSED_KEY = 'claude-comms.nameBanner.dismissed';
+  // Read persisted dismissal synchronously at module init (no $effect needed
+  // — localStorage isn't reactive, so a one-shot read is the right pattern).
+  // SSR-safe via typeof guard; jsdom and browser both reach the read branch.
+  function readDismissed() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem(NAME_BANNER_DISMISSED_KEY) === '1';
+      }
+    } catch {
+      // localStorage unavailable — fall through.
+    }
+    return false;
+  }
+  let dismissedNameBanner = $state(readDismissed());
+
+  function dismissNameBanner() {
+    dismissedNameBanner = true;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(NAME_BANNER_DISMISSED_KEY, '1');
+      }
+    } catch {
+      // localStorage write unavailable — banner stays dismissed in-memory.
+    }
+  }
+
+  function openSettingsFromBanner() {
+    showSettingsPanel = true;
   }
 
   function handleOpenThread(message) {
@@ -267,6 +410,35 @@
           Open DevTools console for diagnostic details
           (search for <code>[claude-comms] MQTT message parse failed</code>).
         </span>
+      </div>
+    {/if}
+
+    <!--
+      Set-your-name banner (UX G-43 follow-up). Surfaces ONLY when the
+      store reports `nameUnset === true` and the user hasn't dismissed.
+      Dismissal is persisted in localStorage so returning users aren't
+      nagged. Once a name is saved (anywhere), the store flips
+      `nameUnset` false and this banner disappears regardless of
+      dismissal state.
+    -->
+    {#if store.nameUnset && !dismissedNameBanner}
+      <div class="name-unset-banner" role="status" data-testid="name-unset-banner">
+        <span class="name-unset-text">
+          Set a display name so others can recognize you.
+        </span>
+        <button
+          type="button"
+          class="name-unset-action"
+          data-testid="name-unset-open-settings"
+          onclick={openSettingsFromBanner}
+        >→ Open settings</button>
+        <button
+          type="button"
+          class="name-unset-dismiss"
+          data-testid="name-unset-dismiss"
+          aria-label="Dismiss set-your-name banner"
+          onclick={dismissNameBanner}
+        >&times;</button>
       </div>
     {/if}
 
@@ -484,7 +656,13 @@
 
 {#each toasts as toast (toast.id)}
   <NotificationToast
-    {...toast}
+    id={toast.id}
+    sender={toast.sender}
+    channel={toast.channel}
+    text={toast.text}
+    messageId={toast.messageId}
+    pill={toast.pill}
+    onActivate={handleToastActivate}
     onDismiss={() => dismissToast(toast.id)}
   />
 {/each}
@@ -520,6 +698,64 @@
     border-radius: 3px;
     font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
     font-size: 11px;
+  }
+
+  /* Set-your-name banner. Sits at the top of the main pane above
+   * chat-header when `store.nameUnset` is true. Subtle ember accent
+   * (matches v0.3 design system); dismissible via the right-side close.
+   */
+  .name-unset-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 16px 0;
+    padding: 8px 12px;
+    background: var(--bg-elevated, var(--surface-elevated, #1f1c19));
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--ember-400, #f59e0b);
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--text-secondary, #a8a098);
+  }
+  .name-unset-text { flex: 1; min-width: 0; }
+  .name-unset-action {
+    background: none;
+    border: none;
+    color: var(--ember-300, #fbbf24);
+    cursor: pointer;
+    font: inherit;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    transition: var(--transition-fast);
+  }
+  .name-unset-action:hover {
+    background: var(--bg-surface);
+    color: var(--ember-200, #fde68a);
+  }
+  .name-unset-action:focus-visible {
+    outline: 2px solid var(--ember-400);
+    outline-offset: 2px;
+  }
+  .name-unset-dismiss {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    transition: var(--transition-fast);
+  }
+  .name-unset-dismiss:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface);
   }
 
   .app-layout {
