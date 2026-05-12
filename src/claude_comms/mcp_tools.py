@@ -56,6 +56,7 @@ from claude_comms.participant import (
     validate_key,
     validate_name,
 )
+from claude_comms.registry_store import RegistryStore
 
 
 class PublishFn(Protocol):
@@ -116,27 +117,58 @@ def _ts_after(msg_ts: str, anchor: str) -> bool:
 
 
 class ParticipantRegistry:
-    """In-memory registry of participants keyed by their 8-hex key.
+    """Registry of participants keyed by their 8-hex key.
 
-    Also maintains per-conversation membership and per-participant
-    read cursors for unread tracking.
+    Maintains per-conversation membership and per-participant read cursors
+    for unread tracking. When constructed with a :class:`RegistryStore`,
+    state is rehydrated on init and every mutating method writes through
+    to the store atomically so participant keys survive daemon restart.
+
+    When constructed without a store (``store=None``), behaves as a pure
+    in-memory registry — the legacy contract preserved for tests that
+    don't need persistence.
+
+    ``Participant.connections`` is NEVER persisted: it's ephemeral presence
+    state populated by MQTT presence events and ``_ensure_mcp_connection``.
+    Rehydrated participants come back with empty ``connections`` (offline)
+    and re-populate on next interaction.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, store: RegistryStore | None = None) -> None:
         self._lock = threading.Lock()
-        # key -> Participant
-        self._participants: dict[str, Participant] = {}
-        # key -> set of conversation IDs
-        self._memberships: dict[str, set[str]] = {}
-        # (key, conv_id) -> ISO timestamp of last read
-        self._read_cursors: dict[tuple[str, str], str] = {}
-        # (key, conv_id, root_id) -> ISO timestamp of last in-thread read.
-        # Separate keyspace from _read_cursors so per-conv mark_seen never
-        # silently masks per-thread unread (plan §4.2 cursor model — phoenix
-        # review v3). Lazily populated on first comms_thread_read call.
-        self._thread_read_cursors: dict[tuple[str, str, str], str] = {}
-        # name (lower) -> key  (for name resolution)
-        self._name_index: dict[str, str] = {}
+        self._store = store
+        if store is not None:
+            snapshot = store.load_all()
+            # key -> Participant
+            self._participants: dict[str, Participant] = dict(snapshot.participants)
+            # key -> set of conversation IDs
+            self._memberships: dict[str, set[str]] = {
+                k: set(v) for k, v in snapshot.memberships.items()
+            }
+            # (key, conv_id) -> ISO timestamp of last read
+            self._read_cursors: dict[tuple[str, str], str] = dict(snapshot.read_cursors)
+            # (key, conv_id, root_id) -> ISO timestamp of last in-thread read.
+            self._thread_read_cursors: dict[tuple[str, str, str], str] = dict(
+                snapshot.thread_read_cursors
+            )
+            # name (lower) -> key  (for name resolution)
+            self._name_index: dict[str, str] = {
+                p.name.lower(): k for k, p in snapshot.participants.items()
+            }
+        else:
+            # Pure in-memory registry — preserves legacy test contract.
+            self._participants = {}
+            self._memberships = {}
+            # (key, conv_id) -> ISO timestamp of last read
+            self._read_cursors = {}
+            # (key, conv_id, root_id) -> ISO timestamp of last in-thread read.
+            # Separate keyspace from _read_cursors so per-conv mark_seen never
+            # silently masks per-thread unread (plan §4.2 cursor model —
+            # phoenix review v3). Lazily populated on first comms_thread_read
+            # call.
+            self._thread_read_cursors = {}
+            # name (lower) -> key  (for name resolution)
+            self._name_index = {}
 
     # -- Registration ------------------------------------------------------
 
@@ -161,14 +193,22 @@ class ParticipantRegistry:
             # If key provided, look up existing participant
             if key and key in self._participants:
                 p = self._participants[key]
-                self._memberships.setdefault(key, set()).add(conversation)
+                memberships = self._memberships.setdefault(key, set())
+                newly_added = conversation not in memberships
+                memberships.add(conversation)
+                if self._store is not None and newly_added:
+                    self._store.add_membership(key, conversation)
                 return p
 
             # Name-based lookup (idempotent re-join)
             existing_key = self._name_index.get(name.lower())
             if existing_key and existing_key in self._participants:
                 p = self._participants[existing_key]
-                self._memberships.setdefault(existing_key, set()).add(conversation)
+                memberships = self._memberships.setdefault(existing_key, set())
+                newly_added = conversation not in memberships
+                memberships.add(conversation)
+                if self._store is not None and newly_added:
+                    self._store.add_membership(existing_key, conversation)
                 return p
 
             # New participant — honor provided key if valid, else generate.
@@ -181,6 +221,10 @@ class ParticipantRegistry:
             self._participants[p.key] = p
             self._name_index[name.lower()] = p.key
             self._memberships.setdefault(p.key, set()).add(conversation)
+            if self._store is not None:
+                # Persist participant row first so the membership FK resolves.
+                self._store.upsert_participant(p)
+                self._store.add_membership(p.key, conversation)
             return p
 
     def leave(self, key: str, conversation: str) -> bool:
@@ -189,6 +233,8 @@ class ParticipantRegistry:
             convs = self._memberships.get(key)
             if convs and conversation in convs:
                 convs.discard(conversation)
+                if self._store is not None:
+                    self._store.remove_membership(key, conversation)
                 return True
             return False
 
@@ -211,6 +257,8 @@ class ParticipantRegistry:
             updated = p.with_name(new_name)
             self._participants[key] = updated
             self._name_index[new_name.lower()] = key
+            if self._store is not None:
+                self._store.update_participant_name(key, new_name)
             return updated
 
     def members(self, conversation: str) -> list[Participant]:
@@ -305,6 +353,8 @@ class ParticipantRegistry:
         """Update the read cursor for *key* in *conversation*."""
         with self._lock:
             self._read_cursors[(key, conversation)] = ts
+            if self._store is not None:
+                self._store.upsert_read_cursor(key, conversation, ts)
 
     def get_cursor(self, key: str, conversation: str) -> str | None:
         """Return the read cursor (ISO timestamp) or None."""
@@ -319,6 +369,8 @@ class ParticipantRegistry:
         """Update the per-thread read cursor for *key*'s view of *root_id*."""
         with self._lock:
             self._thread_read_cursors[(key, conversation, root_id)] = ts
+            if self._store is not None:
+                self._store.upsert_thread_read_cursor(key, conversation, root_id, ts)
 
     def get_thread_cursor(
         self, key: str, conversation: str, root_id: str
@@ -354,6 +406,10 @@ class ParticipantRegistry:
         with self._lock:
             for root_id, ts in root_to_ts.items():
                 self._thread_read_cursors[(key, conversation, root_id)] = ts
+                if self._store is not None:
+                    self._store.upsert_thread_read_cursor(
+                        key, conversation, root_id, ts
+                    )
 
 
 # ---------------------------------------------------------------------------

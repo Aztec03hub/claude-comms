@@ -59,6 +59,7 @@ from claude_comms.mcp_tools import (
     tool_comms_update_name,
 )
 from claude_comms.reactions import ReactionsStore
+from claude_comms.registry_store import RegistryStore
 from claude_comms.conversation import (
     LastActivityTracker,
     backfill_missing_metadata,
@@ -74,6 +75,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _registry: ParticipantRegistry | None = None
+_registry_store: RegistryStore | None = None
 _store: MessageStore | None = None
 _deduplicator: MessageDeduplicator | None = None
 _publish_fn: PublishFn | None = None
@@ -560,6 +562,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     """
     global \
         _registry, \
+        _registry_store, \
         _store, \
         _deduplicator, \
         _publish_fn, \
@@ -607,8 +610,22 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     host = mcp_cfg.get("host", "127.0.0.1")
     port = mcp_cfg.get("port", 9920)
 
-    # Shared state
-    _registry = ParticipantRegistry()
+    # Shared state. The registry is rehydrated from a SQLite-backed
+    # ``RegistryStore`` so participant keys and read cursors survive daemon
+    # restarts. The DB lives next to the config at ``~/.claude-comms/registry.db``
+    # by default (overridable via the ``registry`` config block's ``data_dir``).
+    # ``Participant.connections`` is ephemeral and intentionally not persisted —
+    # rehydrated participants come back offline and re-online on next
+    # interaction via MQTT presence + ``_ensure_mcp_connection``.
+    registry_cfg = config.get("registry", {})
+    registry_data_dir = registry_cfg.get("data_dir")
+    registry_dir = (
+        Path(registry_data_dir).expanduser()
+        if registry_data_dir
+        else Path.home() / ".claude-comms"
+    )
+    _registry_store = RegistryStore.open(registry_dir)
+    _registry = ParticipantRegistry(store=_registry_store)
     _deduplicator = MessageDeduplicator()
     _store = MessageStore()
 
@@ -1340,6 +1357,13 @@ def start_server(config: dict[str, Any] | None = None) -> None:
                 await sub_task
             except asyncio.CancelledError:
                 pass
+            # Close the registry store cleanly so the WAL checkpoints back into
+            # the main DB before the process exits.
+            if _registry_store is not None:
+                try:
+                    _registry_store.close()
+                except Exception:
+                    logger.exception("Failed to close registry store")
 
     asyncio.run(_run())
 

@@ -316,6 +316,36 @@ The daemon binds `127.0.0.1` by default and there is no auth layer in front of t
 
 ---
 
+## Where state lives
+
+The daemon keeps all per-user state under `~/.claude-comms/`:
+
+| Path | Purpose | Persistence |
+|------|---------|-------------|
+| `~/.claude-comms/config.yaml` | Identity, broker/MCP/web bind config, presence TTLs | Human-edited |
+| `~/.claude-comms/registry.db` | SQLite store: participants, conversation memberships, read cursors, per-thread cursors | **Survives restart** |
+| `~/.claude-comms/logs/` | JSONL + Markdown per-conversation message log, replayed into the in-memory store on daemon start | Persistent |
+| `~/.claude-comms/conversations/` | Per-conversation metadata (topic, creator, last activity) | Persistent |
+| `~/.claude-comms/artifacts/` | Versioned text artifacts; up to 50 versions per artifact | Persistent |
+
+**What `registry.db` holds.** When a Claude Code agent calls `comms_join`, it receives an immutable 8-hex-char participant key. Prior to v0.3.0 this key lived in process memory only, so every `claude-comms stop && start` cycle silently invalidated every MCP-side key -- a standing agent's identity would become "unknown" the moment the daemon restarted. As of v0.3.0 the registry is persisted to `registry.db` (SQLite, WAL mode, `synchronous=NORMAL`, foreign keys on), and your participant key keeps working across restarts.
+
+**What is NOT persisted.** `Participant.connections` is ephemeral presence state -- agents come back **offline** on startup and re-online when their MCP client next interacts (the presence-MQTT layer and the synthetic MCP connection on the next tool call repopulate it). This is intentional: a 3-hour daemon outage shouldn't leave the UI showing 20 "online" agents that aren't actually there.
+
+**Backup / reset.** `registry.db` is a single self-contained SQLite file -- copy it for backup, or `rm ~/.claude-comms/registry.db` for a clean slate (next `claude-comms start` recreates an empty schema; agents will need to call `comms_join` with `name` again to re-register).
+
+```bash
+# back up
+cp ~/.claude-comms/registry.db ~/.claude-comms/registry.db.bak
+
+# clean slate (every agent must re-register on next join)
+claude-comms stop
+rm ~/.claude-comms/registry.db
+claude-comms start --background
+```
+
+---
+
 ## CLI Reference
 
 ### `claude-comms init`

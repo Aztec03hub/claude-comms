@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Participant registry no longer evaporates on daemon restart** (Bug 3 from the user report; closes the "standing agent" use case). Prior to this change `ParticipantRegistry` was an in-memory dict — every `claude-comms stop && start` cycle silently invalidated every MCP-side participant key, so a Claude Code agent that joined and received key `96052c22` discovered after restart that its key was now "unknown" and had to call `comms_join` with `name` again. Fixed by adding a SQLite-backed `RegistryStore` at `~/.claude-comms/registry.db`. Schema covers participants, conversation memberships, per-conversation read cursors, and per-thread read cursors. WAL mode + `synchronous=NORMAL` + foreign keys ON; foreign key cascades clean up memberships and cursors when a participant is purged. **What is NOT persisted:** `Participant.connections` — that's ephemeral presence state. Rehydrated participants come back offline (`is_online == False`) and re-online via MQTT presence + `_ensure_mcp_connection` on next interaction.
+
+### Added
+
+- **`src/claude_comms/registry_store.py`** -- new module. `RegistryStore` class with `open(data_dir)`, `load_all() -> RegistrySnapshot`, `upsert_participant`, `update_participant_name`, `add_membership`, `remove_membership`, `upsert_read_cursor`, `upsert_thread_read_cursor`, `purge_stale(before_iso)`, `close`. Thread-safe via internal `threading.Lock`; supports use as a context manager.
+- **`ParticipantRegistry(store=...)` kwarg** -- optional `RegistryStore` parameter on `__init__`. When provided, in-memory state is rehydrated from the store on construction and every mutating method (`join`, `leave`, `update_name`, `update_cursor`, `update_thread_cursor`, `advance_thread_cursors_to`) writes through atomically. Backward-compatible: `ParticipantRegistry()` with no kwarg keeps the legacy pure-in-memory behaviour the existing test suite relies on.
+- **`tests/test_registry_store.py`** -- 19 unit tests covering schema creation, WAL/FK PRAGMAs, round-trip persistence for participants/memberships/cursors, FK cascade on `purge_stale`, concurrent writes, idempotent close, and explicit assertion that `connections` has no schema column.
+- **`tests/test_registry_persistence.py`** -- 10 end-to-end tests covering the integrated `ParticipantRegistry(store=...)` path: participants survive restart, memberships survive restart, leave persists, name change persists, both cursor types persist, connections are NOT persisted (offline on rehydration), `tool_comms_join` with an existing key works after restart (the marquee bug-fix verification), `tool_comms_conversations` reflects pre-restart memberships, and `ParticipantRegistry()` without a store keeps pure-in-memory behaviour.
+
+### Changed
+
+- **`src/claude_comms/mcp_server.py:create_server`** -- now constructs a `RegistryStore` (at `~/.claude-comms/registry.db` by default, overridable via `registry.data_dir` in `config.yaml`) and passes it to `ParticipantRegistry`. The store is closed in the daemon's `finally` block so WAL checkpoints back into the main DB before process exit.
+- **`README.md`** -- new "Where state lives" section above the CLI reference describes which paths under `~/.claude-comms/` survive restart, why `connections` is intentionally not persisted, and how to back up or reset `registry.db`.
+
 ## [0.2.3] -- 2026-05-12
 
 Patch release fixing two production bugs that made the web UI unusable for any user who typed `http://localhost:9921` (the natural URL) instead of `http://127.0.0.1:9921`, plus a PyPI gallery rendering fix.
