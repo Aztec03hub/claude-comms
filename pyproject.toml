@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
 name = "claude-comms"
-version = "0.1.0"
+version = "0.2.0"
 description = "Distributed inter-Claude messaging platform"
 requires-python = ">=3.10"
 license = "MIT"
@@ -50,8 +50,41 @@ Homepage = "https://github.com/Aztec03hub/claude-comms"
 Repository = "https://github.com/Aztec03hub/claude-comms"
 Issues = "https://github.com/Aztec03hub/claude-comms/issues"
 
+# Run hatch_build.py during every wheel/sdist build — compiles the Svelte
+# web UI and ensures src/claude_comms/web/dist/ is populated before the
+# wheel is sealed. No-op when assets are already built (CI prebuild, repeat
+# builds, etc.).
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/claude_comms"]
+# `artifacts` opts gitignored built assets into the wheel. The web UI lives
+# under src/claude_comms/web/dist/, which is gitignored (built output), so
+# we name it explicitly here.
+artifacts = ["src/claude_comms/web/dist/**"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/claude_comms/**",
+    "web/**",
+    "hatch_build.py",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "USAGE.md",
+    "CONTRIBUTING.md",
+]
+exclude = [
+    "web/node_modules",
+    "web/.svelte-kit",
+    "web/dist",
+    "src/claude_comms/web/dist",
+    "web/test-results",
+    "web/playwright-report",
+    "**/__pycache__",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

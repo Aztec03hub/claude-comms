@@ -18,7 +18,11 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    // Emit straight into the Python package so wheel + editable installs
+    // resolve assets via `importlib.resources.files("claude_comms")/web/dist`.
+    // Symlinks/copies in the build hook are unnecessary as a result.
+    outDir: '../src/claude_comms/web/dist',
+    emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
       output: {

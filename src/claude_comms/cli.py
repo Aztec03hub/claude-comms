@@ -1137,9 +1137,15 @@ def start(
                 from starlette.routing import Mount
                 from starlette.staticfiles import StaticFiles
 
-                # Locate web/dist relative to the package
-                _pkg_dir = Path(__file__).resolve().parent
-                _web_dist = (_pkg_dir / "../../web/dist").resolve()
+                # Locate web/dist inside the installed package.
+                # `importlib.resources.files()` is zip-safe and survives every
+                # install layout (pip, pipx, editable, frozen). The wheel ships
+                # ``claude_comms/web/dist/`` baked in (see hatch_build.py).
+                import importlib.resources
+
+                _web_dist = importlib.resources.files("claude_comms").joinpath(
+                    "web", "dist"
+                )
 
                 # R3-3 + R1-8: CSP header + optional meta injection for
                 # reverse-proxy deployments. Wraps StaticFiles output with

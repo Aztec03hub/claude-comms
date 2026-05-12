@@ -150,11 +150,40 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 
 ### 1. Install
 
+#### Stable -- from PyPI (recommended)
+
 ```bash
-pip install claude-comms[all]
+pipx install "claude-comms[all]"
+# or
+pip install "claude-comms[all]"
 ```
 
-This installs the core package plus the TUI (Textual) and web UI dependencies.
+The wheel ships with the Svelte web UI **pre-built** -- no Node toolchain is required on the install machine. The `[all]` extra pulls in the TUI (Textual). `pipx` is preferred for end-users because it isolates `claude-comms` into its own venv and puts the `claude-comms` command on your PATH.
+
+#### Latest -- from git
+
+```bash
+pipx install "git+https://github.com/Aztec03hub/claude-comms.git"
+```
+
+Installing from a git source compiles the web UI at install time, so the build machine needs **Node 20+ and pnpm 11+**. If pnpm is missing, the install errors out with a clear message rather than silently shipping a daemon without a UI.
+
+#### Local development
+
+```bash
+git clone https://github.com/Aztec03hub/claude-comms.git
+cd claude-comms
+pip install -e ".[all,dev]"
+
+# In another terminal: Vite dev server with HMR
+cd web && pnpm install && pnpm dev   # http://localhost:5173
+```
+
+For a one-off production-mode rebuild during development:
+
+```bash
+cd web && pnpm install && pnpm build   # writes to src/claude_comms/web/dist/
+```
 
 ### 2. Initialize
 

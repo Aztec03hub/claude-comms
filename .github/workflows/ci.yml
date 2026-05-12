@@ -40,10 +40,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11"
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
+      # Build the web UI BEFORE the editable install so the Hatch build hook
+      # (hatch_build.py) sees src/claude_comms/web/dist/ already populated and
+      # short-circuits. Without this, `pip install -e` would invoke pnpm
+      # inside Python's tooling pipeline.
+      - name: Install web deps
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web UI
+        working-directory: web
+        run: pnpm build
 
       - name: Install package with dev dependencies
         run: pip install -e ".[all,dev]"
@@ -59,29 +79,47 @@ jobs:
           path: test-results/
           retention-days: 30
 
-  build-web:
-    name: Build Web UI
+  build-wheel:
+    name: Build wheel
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          node-version: "22"
 
-      - name: Install dependencies
-        working-directory: web
-        run: npm ci 2>/dev/null || npm install
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11"
 
-      - name: Build
-        working-directory: web
-        run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build frontend
+        run: pip install build
+
+      # `python -m build` invokes the Hatch backend in an isolated env,
+      # which in turn runs hatch_build.py. The hook discovers pnpm on PATH
+      # and produces src/claude_comms/web/dist/ before sealing the wheel.
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Verify wheel contains web/dist
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/*.whl)
+          if ! python -m zipfile -l "$wheel" | grep -q 'claude_comms/web/dist/index.html'; then
+            echo "FAIL: $wheel is missing claude_comms/web/dist/index.html"
+            python -m zipfile -l "$wheel" | head -40
+            exit 1
+          fi
+          echo "OK: $wheel ships claude_comms/web/dist/index.html"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: web-dist
-          path: web/dist/
+          name: dist
+          path: dist/
           retention-days: 30

@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Docs: README MCP Registration Surface (2026-05-07)
+### Packaging: pip / pipx Install Ships Working Web UI (2026-05-12)
+
+End-user impact: `pipx install "claude-comms[all]"` (and `pip install` from PyPI) now drops a daemon that serves the Svelte web UI out-of-the-box -- no Node toolchain, no manual `pnpm build`, no `Web UI dist not found... -- skipping` log line on the consumer machine. Closes the gap where a downstream user installed the package and discovered the daemon had no web UI to serve because the wheel never bundled the built Svelte assets.
+
+#### Fixed
+
+- **Daemon's web-asset path resolution** (`src/claude_comms/cli.py:1140-1148`) -- was `Path(__file__).resolve().parent / "../../web/dist"`, which walks UP two directories from the installed package and only ever resolved correctly from an in-tree source checkout. From a pipx install this expanded to `<venv>/lib/python3.12/web/dist`, which no install layer ever produced. Replaced with `importlib.resources.files("claude_comms").joinpath("web", "dist")` -- zip-safe and stable across pip / pipx / editable / frozen installs.
+
+#### Added
+
+- **`hatch_build.py`** (new file at repo root) -- Hatch custom build hook. On every wheel/sdist build it ensures `src/claude_comms/web/dist/index.html` exists; if missing, it shells out to `pnpm install --frozen-lockfile && pnpm build` inside `web/` and fails loudly with a toolchain-install message if `pnpm` is absent. Already-built dist short-circuits the hook so CI prebuilds and dev incremental builds don't re-pay the install cost.
+- **`.github/workflows/release.yml`** -- tag-driven PyPI publish workflow. Triggered by `push.tags: ['v*']`. Builds wheel + sdist via `python -m build` (which transparently fires `hatch_build.py`), verifies `claude_comms/web/dist/index.html` is in the wheel with a `python -m zipfile -l | grep` gate, then publishes via `pypa/gh-action-pypi-publish@release/v1` using OIDC trusted publishing -- no long-lived API tokens in repo secrets. Includes a security note that the workflow does not consume any `github.event.*` untrusted inputs.
+- **`web/.npmrc`** -- pnpm config: `onlyBuiltDependencies=[esbuild, @tailwindcss/oxide]` allowlist (pnpm 10+ blocks postinstall scripts by default for supply-chain safety) and `confirmModulesPurge=false` for CI / no-TTY contexts.
+- **`web/pnpm-lock.yaml`** -- the npm-to-pnpm migration deterministic lockfile.
+
+#### Changed
+
+- **`pyproject.toml`** -- version bumped `0.1.0 -> 0.2.0`. Build-system `requires = ["hatchling>=1.21"]` (was unpinned). Added `[tool.hatch.build.hooks.custom] path = "hatch_build.py"`. Wheel target gains `artifacts = ["src/claude_comms/web/dist/**"]` so the gitignored build output is opted into the wheel. New `[tool.hatch.build.targets.sdist]` declaring explicit include/exclude (sdists include `web/` source so a source install can rebuild the UI; they exclude `web/node_modules`, `web/.svelte-kit`, `web/dist`, and `src/claude_comms/web/dist`).
+- **`web/vite.config.js`** -- `build.outDir` changed from `'dist'` to `'../src/claude_comms/web/dist'`. Vite now emits straight into the Python package so wheel + editable installs both find assets at the same `importlib.resources` path. Added `emptyOutDir: true` because the outDir lives outside Vite's project root.
+- **`web/package.json`** -- migrated from npm to pnpm: removed `package-lock.json` references, added `"packageManager": "pnpm@11.1.1"`, `engines.pnpm: ">=11"`, and a top-level `pnpm.onlyBuiltDependencies` mirror of the .npmrc allowlist. Added `@shikijs/langs@3.0.0` as a **direct** dependency (was relying on npm flat-hoisting; pnpm's strict isolation requires it explicitly because `src/lib/markdown.js` does deep imports like `@shikijs/langs/typescript`). `build:check` script switched `npm run` to `pnpm run`.
+- **`.github/workflows/ci.yml`** -- collapsed the legacy `build-web` job into the `test` job (Node + pnpm setup + `pnpm build` before `pip install -e`, so the editable install short-circuits the hook). Added a new `build-wheel` job that runs `python -m build` and verifies `claude_comms/web/dist/index.html` is in the wheel via a `zipfile -l | grep` gate, then uploads `dist/` as an artifact. Old `web-dist` artifact (uploading the raw `web/dist/` from npm) is gone.
+- **`.gitignore`** -- added `src/claude_comms/web/dist/` (Vite's new outDir, intentionally tracked only via `artifacts` in pyproject.toml).
+- **README Quick Start step 1** -- rewritten with three explicit install paths: stable PyPI (`pipx install "claude-comms[all]"` -- no Node required), latest from git (compiles UI at install, requires Node 20+/pnpm 11+), and local-dev (`pip install -e` + `pnpm dev` for Vite HMR). Replaces the prior single-line snippet that didn't mention the toolchain requirement of a source install.
+
+#### Verified
+
+- Fresh-venv install (`pip install dist/claude_comms-0.2.0-py3-none-any.whl` into a clean `python3 -m venv`) resolves `importlib.resources.files("claude_comms").joinpath("web", "dist", "index.html")` to a real file (1021 bytes, content-matched to the source `index.html`).
+- Wheel contents inspection: `python -m zipfile -l dist/claude_comms-0.2.0-py3-none-any.whl | grep web/dist` shows `index.html` + 13 `assets/*.js`/`.css`/`.map` entries baked in. Total wheel size 1.5MB.
+- Editable install (`pip install -e .`) resolves the same path to `<repo>/src/claude_comms/web/dist/`, so dev flow ("HMR via `pnpm dev`" or "production rebuild via `pnpm build`") works without manual copy steps.
+- Test suite delta: zero new failures attributable to this change (verified by sampling failing tests -- all are the pre-existing async-`tool_comms_join` tech-debt cluster tracked separately).
+
+
 
 Documentation only -- no code or behavior change. Surfaces the MCP-registration instructions from `USAGE.md` into the README's Quick Start so external readers (other Claude Code users wanting to use claude-comms as an MCP) discover them without digging into `USAGE.md`.
 

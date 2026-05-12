@@ -1,0 +1,8 @@
+# pnpm 11+ canonical location for build-script approvals.
+#
+# pnpm 10+ blocks postinstall scripts by default for supply-chain safety.
+# esbuild ships its platform-specific native binary via a postinstall script
+# and breaks `vite build` without this approval. The entry is committed so
+# fresh CI installs don't drop into pnpm's interactive prompt.
+allowBuilds:
+  esbuild: true
