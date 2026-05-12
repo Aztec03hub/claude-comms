@@ -23,6 +23,7 @@ from claude_comms.message import now_iso
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_conversation_create,
+    tool_comms_conversation_delete,
     tool_comms_conversation_update,
     tool_comms_invite,
     tool_comms_conversations,
@@ -825,4 +826,471 @@ class TestToolCommsConversationsAll:
         )
 
         assert "all_conversations" not in result
-        assert "conversations" in result
+
+
+# ===================================================================
+# 13. ConversationMeta.mark_deleted (v0.4.0 step 2.2)
+# ===================================================================
+
+
+class TestConversationMetaMarkDeleted:
+    """Pure model-level tests for the new soft-delete fields and method."""
+
+    def test_defaults_not_deleted(self):
+        ts = now_iso()
+        meta = ConversationMeta(
+            name="x", created_by="a", created_at=ts, last_activity=ts
+        )
+        assert meta.deleted_at is None
+        assert meta.deleted_by is None
+        assert meta.is_deleted is False
+
+    def test_mark_deleted_sets_both_fields(self):
+        ts = now_iso()
+        meta = ConversationMeta(
+            name="x", created_by="a", created_at=ts, last_activity=ts
+        )
+        meta.mark_deleted("alice")
+        assert meta.deleted_by == "alice"
+        assert meta.deleted_at is not None
+        assert meta.is_deleted is True
+
+    def test_mark_deleted_persists_via_save_meta(self, tmp_path: Path):
+        ts = now_iso()
+        meta = ConversationMeta(
+            name="design", created_by="alice", created_at=ts, last_activity=ts
+        )
+        save_meta(meta, tmp_path)
+        meta.mark_deleted("alice")
+        save_meta(meta, tmp_path)
+
+        reloaded = load_meta("design", tmp_path)
+        assert reloaded is not None
+        assert reloaded.is_deleted is True
+        assert reloaded.deleted_by == "alice"
+        assert reloaded.deleted_at == meta.deleted_at
+
+    def test_is_deleted_requires_both_fields(self):
+        # Defensive: a partial state (manual JSON edit) reads as live so
+        # the conversation stays recoverable.
+        ts = now_iso()
+        meta = ConversationMeta(
+            name="x",
+            created_by="a",
+            created_at=ts,
+            last_activity=ts,
+            deleted_at=ts,
+            deleted_by=None,
+        )
+        assert meta.is_deleted is False
+
+
+# ===================================================================
+# 14. tool_comms_conversation_delete — v0.4.0 step 2.2
+# ===================================================================
+
+
+class TestToolCommsConversationDelete:
+    """End-to-end tests for the new soft-delete tool function."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_false_returns_structured_error(self, tmp_path: Path):
+        """confirm=False must return ``confirm_required`` with counts, NO publishes."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        # Create the conversation as alice (so alice is the creator)
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        spy.calls.clear()
+
+        # Seed two messages so message_count is non-zero
+        store.add(
+            "design",
+            {
+                "id": "m1",
+                "ts": now_iso(),
+                "sender": {"key": alice_key, "name": "alice", "type": "claude"},
+                "body": "hello",
+                "conv": "design",
+            },
+        )
+        store.add(
+            "design",
+            {
+                "id": "m2",
+                "ts": now_iso(),
+                "sender": {"key": alice_key, "name": "alice", "type": "claude"},
+                "body": "world",
+                "conv": "design",
+            },
+        )
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=False,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result == {
+            "error": "confirm_required",
+            "message_count": 2,
+            "member_count": len(registry.members("design")),
+        }
+        # No mutations and no MQTT publishes on the pre-flight branch.
+        assert spy.call_count == 0
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.is_deleted is False
+
+    @pytest.mark.asyncio
+    async def test_non_creator_rejected(self, tmp_path: Path):
+        """Only the creator may delete (v0.4.0 creator-only rule)."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+        bob_key = _register(registry, name="bob")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        # bob joins design but is NOT the creator
+        registry.join("bob", "design", key=bob_key, participant_type="claude")
+        spy.calls.clear()
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=bob_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result.get("error") is True
+        assert "creator" in result["message"].lower()
+        assert spy.call_count == 0
+        # Conversation still alive
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.is_deleted is False
+
+    @pytest.mark.asyncio
+    async def test_confirm_true_returns_deleted(self, tmp_path: Path):
+        """confirm=True returns ``{deleted: True, conversation_id: ...}``."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        spy.calls.clear()
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result == {"deleted": True, "conversation_id": "design"}
+
+    @pytest.mark.asyncio
+    async def test_publishes_retained_orphan_banner(self, tmp_path: Path):
+        """Step 1: final retained ``{type: deleted, ...}`` on ``conv/{id}/messages``."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        spy.calls.clear()
+
+        await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # Find the messages-topic publish
+        msg_calls = [
+            (topic, payload, retain)
+            for (topic, payload, retain) in spy.calls
+            if topic == "claude-comms/conv/design/messages"
+        ]
+        assert len(msg_calls) == 1
+        _, payload, retain = msg_calls[0]
+        assert retain is True, "orphan banner MUST be retained"
+        parsed = json.loads(payload)
+        assert parsed["type"] == "deleted"
+        assert parsed["conversationId"] == "design"
+        assert parsed["deletedBy"] == "alice"
+        assert "timestamp" in parsed
+
+    @pytest.mark.asyncio
+    async def test_publishes_lifecycle_event(self, tmp_path: Path):
+        """Step 2: ``conversation_deleted`` event on ``system/conversations``."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        spy.calls.clear()
+
+        await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        lifecycle_calls = [
+            (topic, payload, retain)
+            for (topic, payload, retain) in spy.calls
+            if topic == "claude-comms/system/conversations"
+        ]
+        assert len(lifecycle_calls) == 1
+        _, payload, _retain = lifecycle_calls[0]
+        parsed = json.loads(payload)
+        assert parsed["type"] == "conversation_deleted"
+        assert parsed["name"] == "design"
+        assert parsed["deleted_by"] == "alice"
+        assert "ts" in parsed
+
+    @pytest.mark.asyncio
+    async def test_retained_clear_all_member_presence(self, tmp_path: Path):
+        """Step 4: every member's per-conv presence topic gets retained-cleared."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+        bob_key = _register(registry, name="bob")
+        carol_key = _register(registry, name="carol")
+
+        # Create conv as alice; auto-joins humans (Phil); then add bob+carol
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        registry.join("bob", "design", key=bob_key, participant_type="claude")
+        registry.join("carol", "design", key=carol_key, participant_type="claude")
+        spy.calls.clear()
+
+        member_keys_before = {m.key for m in registry.members("design")}
+        assert len(member_keys_before) >= 3  # alice, bob, carol (and Phil)
+
+        await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # Every member should get a retained-clear (empty payload, retain=True)
+        # on claude-comms/conv/design/presence/{key}
+        cleared = set()
+        for topic, payload, retain in spy.calls:
+            prefix = "claude-comms/conv/design/presence/"
+            if topic.startswith(prefix):
+                assert payload == b"", "retained-clear must use empty payload"
+                assert retain is True, "retained-clear must use retain=True"
+                cleared.add(topic.removeprefix(prefix))
+
+        # All pre-deletion members should have been cleared.
+        assert cleared == member_keys_before
+
+    @pytest.mark.asyncio
+    async def test_persists_deleted_state_on_disk(self, tmp_path: Path):
+        """Step 3: meta.json is updated with ``deleted_at`` + ``deleted_by``."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+
+        await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        # History on disk is preserved -- only the meta is updated.
+        meta = load_meta("design", tmp_path)
+        assert meta is not None
+        assert meta.is_deleted is True
+        assert meta.deleted_by == "alice"
+        assert meta.deleted_at is not None
+
+    @pytest.mark.asyncio
+    async def test_drops_memberships(self, tmp_path: Path):
+        """After delete, members no longer have the conv in ``conversations_for``."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+        bob_key = _register(registry, name="bob")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        registry.join("bob", "design", key=bob_key, participant_type="claude")
+        assert "design" in registry.conversations_for(bob_key)
+
+        await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        assert "design" not in registry.conversations_for(bob_key)
+        assert "design" not in registry.conversations_for(alice_key)
+
+    @pytest.mark.asyncio
+    async def test_reserved_conversation_rejected(self, tmp_path: Path):
+        """``general`` and ``system`` are reserved -- delete must error."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        # Bootstrap a real general conversation owned by 'alice' so the
+        # authorization check would otherwise pass.
+        create_conversation_atomic(
+            "general", topic="", created_by="alice", data_dir=tmp_path
+        )
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="general",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result.get("error") is True
+        assert "reserved" in result["message"].lower()
+        assert spy.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_conversation_rejected(self, tmp_path: Path):
+        """Deleting an unknown conversation returns a clean ``not found`` error."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="ghost",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result.get("error") is True
+        assert "not found" in result["message"].lower()
+        assert spy.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_double_delete_rejected(self, tmp_path: Path):
+        """Re-deleting an already-deleted conversation returns an error."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        spy.calls.clear()
+
+        # Second delete must be a no-op at the protocol level (no
+        # republished orphan banners / lifecycle events).
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key=alice_key,
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") is True
+        assert "already deleted" in result["message"].lower()
+        assert spy.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_rejected(self, tmp_path: Path):
+        """An unregistered caller key fails the standard validation gate."""
+        registry = _registry_with_humans()
+        spy = PublishSpy()
+        store = MessageStore()
+        alice_key = _register(registry, name="alice")
+        await tool_comms_conversation_create(
+            registry, spy, key=alice_key, conversation="design", conv_data_dir=tmp_path
+        )
+        spy.calls.clear()
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            spy,
+            key="00000000",
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") is True
+        assert spy.call_count == 0

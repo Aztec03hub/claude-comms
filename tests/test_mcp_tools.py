@@ -15,6 +15,8 @@ from claude_comms.broker import MessageStore
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_check,
+    tool_comms_conversation_create,
+    tool_comms_conversation_delete,
     tool_comms_conversations,
     tool_comms_history,
     tool_comms_join,
@@ -669,3 +671,106 @@ class TestTokenPagination:
         # Should have been truncated due to token limit
         assert result["count"] < 100
         assert result["has_more"] is True
+
+
+# ===================================================================
+# comms_conversation_delete (v0.4.0 step 2.2)
+# ===================================================================
+
+
+class TestCommsConversationDelete:
+    """Smoke coverage for the new soft-delete MCP tool wired into the same
+    fixtures the rest of the MCP tool surface uses.  Full end-to-end
+    coverage lives in ``tests/test_conversation.py``; these specs lock the
+    fixture-level contract that other MCP tools rely on (publish_spy as
+    PublishFn, sample_participant as creator).
+    """
+
+    @pytest.mark.asyncio
+    async def test_confirm_required_pre_flight(
+        self,
+        registry: ParticipantRegistry,
+        store: MessageStore,
+        sample_participant: dict,
+        publish_spy,
+        tmp_path,
+    ):
+        # Create a conversation owned by ``test-claude`` (sample_participant)
+        await tool_comms_conversation_create(
+            registry,
+            publish_spy,
+            key=sample_participant["key"],
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        publish_spy.calls.clear()
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            publish_spy,
+            key=sample_participant["key"],
+            conversation="design",
+            confirm=False,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result["error"] == "confirm_required"
+        assert "message_count" in result
+        assert "member_count" in result
+        # Pre-flight branch must NOT publish anything.
+        assert publish_spy.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_confirm_true_delete_succeeds(
+        self,
+        registry: ParticipantRegistry,
+        store: MessageStore,
+        sample_participant: dict,
+        publish_spy,
+        tmp_path,
+    ):
+        await tool_comms_conversation_create(
+            registry,
+            publish_spy,
+            key=sample_participant["key"],
+            conversation="design",
+            conv_data_dir=tmp_path,
+        )
+        publish_spy.calls.clear()
+
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            publish_spy,
+            key=sample_participant["key"],
+            conversation="design",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+
+        assert result == {"deleted": True, "conversation_id": "design"}
+        # 5-step flow must publish at least: orphan banner + lifecycle event
+        # + one retained-clear per member (>=1).  Lower bound 3.
+        assert publish_spy.call_count >= 3
+
+    @pytest.mark.asyncio
+    async def test_invalid_conversation_id(
+        self,
+        registry: ParticipantRegistry,
+        store: MessageStore,
+        sample_participant: dict,
+        publish_spy,
+        tmp_path,
+    ):
+        result = await tool_comms_conversation_delete(
+            registry,
+            store,
+            publish_spy,
+            key=sample_participant["key"],
+            conversation="INVALID!",
+            confirm=True,
+            conv_data_dir=tmp_path,
+        )
+        assert result.get("error") is True
+        assert publish_spy.call_count == 0

@@ -47,6 +47,52 @@ class ConversationMeta(BaseModel):
     archived: bool = Field(
         default=False, description="Whether the conversation is archived"
     )
+    deleted_at: str | None = Field(
+        default=None,
+        description=(
+            "ISO 8601 timestamp the conversation was soft-deleted, or None if live. "
+            "Soft-deleted conversations preserve their history on disk and only "
+            "disappear from sidebars; a future purge job hard-deletes them."
+        ),
+    )
+    deleted_by: str | None = Field(
+        default=None,
+        description=(
+            "Participant name that requested the soft-delete, or None if live. "
+            "Pairs with ``deleted_at`` -- both fields move together."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # v0.4.0: soft-delete (step 2.2)
+    # ------------------------------------------------------------------
+
+    def mark_deleted(self, deleted_by: str) -> None:
+        """Mark this conversation as soft-deleted (in-memory only).
+
+        Sets ``deleted_at`` to the current ISO 8601 timestamp and stores
+        the requesting participant's display name in ``deleted_by``.  The
+        caller is responsible for persisting the updated meta via
+        :func:`save_meta` -- this method is intentionally pure so unit
+        tests can exercise the state transition without touching disk.
+
+        Idempotent: re-calling with a different ``deleted_by`` overwrites
+        the prior values, which is the correct behavior when an admin
+        purge runs after the original creator's request.
+        """
+        self.deleted_at = now_iso()
+        self.deleted_by = deleted_by
+
+    @property
+    def is_deleted(self) -> bool:
+        """True iff this conversation has been soft-deleted.
+
+        Both ``deleted_at`` and ``deleted_by`` must be set; a partial
+        state (e.g. ``deleted_at`` set but ``deleted_by`` cleared by a
+        manual JSON edit) reads as live so the conversation stays
+        recoverable instead of silently vanishing.
+        """
+        return self.deleted_at is not None and self.deleted_by is not None
 
 
 # ---------------------------------------------------------------------------

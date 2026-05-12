@@ -42,6 +42,7 @@ from claude_comms.mcp_tools import (
     tool_comms_artifact_delete,
     tool_comms_check,
     tool_comms_conversation_create,
+    tool_comms_conversation_delete,
     tool_comms_conversation_update,
     tool_comms_conversations,
     tool_comms_history,
@@ -1517,6 +1518,34 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 topic=topic,
             )
         return result
+
+    @mcp.tool()
+    async def comms_conversation_delete(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation to delete")],
+        confirm: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Set True to actually delete. When False (the default), returns "
+                    "a structured pre-flight payload (message_count, member_count) "
+                    "so the client can render a type-name confirmation modal."
+                )
+            ),
+        ] = False,
+    ) -> dict[str, Any]:
+        """Soft-delete a conversation. Creator-only. Two-phase: call with confirm=False first to get counts, then confirm=True to delete."""
+        _touch(key)
+        assert _publish_fn is not None, "Publish function not initialised"
+        return await tool_comms_conversation_delete(
+            _get_registry(),
+            _get_store(),
+            _publish_fn,
+            key=key,
+            conversation=conversation,
+            confirm=confirm,
+            conv_data_dir=_get_conv_data_dir(),
+        )
 
     @mcp.tool()
     async def comms_invite(

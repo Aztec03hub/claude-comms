@@ -2184,3 +2184,165 @@ def tool_comms_reactions_get(
         "message_id": message_id,
         "reactions": store.get(message_id),
     }
+
+
+# ---------------------------------------------------------------------------
+# v0.4.0 step 2.2 — conversation soft-delete
+# ---------------------------------------------------------------------------
+
+
+async def tool_comms_conversation_delete(
+    registry: ParticipantRegistry,
+    store: MessageStore,
+    publish_fn: PublishFn,
+    *,
+    key: str,
+    conversation: str,
+    confirm: bool = False,
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Soft-delete a conversation (v0.4.0 step 2.2).
+
+    Two-phase contract:
+
+    - ``confirm=False`` (the default) returns the structured pre-flight
+      payload ``{"error": "confirm_required", "message_count": <int>,
+      "member_count": <int>}`` so the web client can render a type-name
+      confirmation modal per Design Spec §4.5 before the user double-
+      commits.  No state changes and no MQTT publishes happen on this
+      branch.
+
+    - ``confirm=True`` runs the full 5-step soft-delete:
+
+      1. Publish a final RETAINED ``{"type": "deleted", "conversationId":
+         ..., "deletedBy": ..., "timestamp": ...}`` system message on
+         ``claude-comms/conv/{id}/messages`` so live subscribers can
+         render an orphan banner the moment the conversation goes away.
+      2. Publish a ``{"type": "conversation_deleted", "name": ...,
+         "deleted_by": ..., "ts": ...}`` event on the global
+         ``claude-comms/system/conversations`` topic so sidebars purge
+         the row without a page reload.  Wire-format matches the v0.3.2
+         ``publish_conversation_event`` helper's ``type`` discriminator
+         contract, with ``deleted_by`` as the v0.4.0 extension field.
+      3. Persist the soft-delete on the conversation's ``meta.json``
+         (``deleted_at`` + ``deleted_by`` via :meth:`ConversationMeta.
+         mark_deleted`).  History on disk is preserved -- only a future
+         purge job hard-deletes it.
+      4. Eject every member at the protocol level: publish a
+         retained-clear (empty payload, ``retain=True``) on
+         ``claude-comms/conv/{id}/presence/{key}`` for each member key
+         currently registered against the conversation.  Without this,
+         late subscribers would still see the deleted conversation's
+         retained presence rows on next connect.
+      5. Return ``{"deleted": True, "conversation_id": ...}``.
+
+    Authorization (v0.4.0): **creator-only**.  The caller's resolved
+    ``Participant.name`` must match ``ConversationMeta.created_by``.  A
+    v0.4.1 admin pass will broaden this to "creator OR any active human
+    member" -- see plans/v0.4.0-release.md §I.6 future work.
+
+    Idempotence: re-calling on an already-deleted conversation returns a
+    plain ``not_found`` error because the meta read short-circuits.  The
+    web client treats ``not_found`` the same as a successful delete from
+    its sidebar's perspective, so the user-visible behavior is
+    idempotent even though the protocol response is not.
+    """
+    # --- Validation -------------------------------------------------------
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    participant: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if conversation in RESERVED_CONVERSATION_NAMES:
+        return _error(
+            f"Conversation {conversation!r} is reserved and cannot be deleted."
+        )
+
+    meta = load_meta(conversation, conv_data_dir)
+    if meta is None:
+        return _error(f"Conversation {conversation!r} not found.")
+
+    if meta.is_deleted:
+        # Already soft-deleted -- treat as a no-op so a flaky network /
+        # retried call doesn't republish the lifecycle events and double-
+        # post the orphan banner in connected clients.
+        return _error(
+            f"Conversation {conversation!r} is already deleted "
+            f"(at {meta.deleted_at} by {meta.deleted_by!r})."
+        )
+
+    # --- Authorization: creator-only for v0.4.0 ---------------------------
+    if participant.name != meta.created_by:
+        return _error(
+            f"Only the creator ({meta.created_by!r}) may delete conversation "
+            f"{conversation!r}."
+        )
+
+    # --- confirm=False pre-flight ----------------------------------------
+    members = registry.members(conversation)
+    message_count = len(store.get(conversation))
+    if not confirm:
+        return {
+            "error": "confirm_required",
+            "message_count": message_count,
+            "member_count": len(members),
+        }
+
+    # --- confirm=True: 5-step soft-delete --------------------------------
+    ts = now_iso()
+
+    # Step 1: final retained orphan-banner system message on the per-conv
+    # messages topic.  Wire-format intentionally distinct from the regular
+    # ``Message`` shape so subscribers can branch on ``type == "deleted"``
+    # without false-matching real chat content.
+    orphan_payload = {
+        "type": "deleted",
+        "conversationId": conversation,
+        "deletedBy": participant.name,
+        "timestamp": ts,
+    }
+    messages_topic = f"claude-comms/conv/{conversation}/messages"
+    await publish_fn(messages_topic, json.dumps(orphan_payload).encode(), retain=True)
+
+    # Step 2: global lifecycle event on ``system/conversations``.  Reuses
+    # the v0.3.2 ``publish_conversation_event`` wire-format (type
+    # discriminator + ``name`` + ``ts``) so existing sidebar subscribers
+    # work unchanged; ``deleted_by`` is the v0.4.0 extension field.
+    lifecycle_payload = {
+        "type": "conversation_deleted",
+        "name": conversation,
+        "deleted_by": participant.name,
+        "ts": ts,
+    }
+    await publish_fn(
+        "claude-comms/system/conversations",
+        json.dumps(lifecycle_payload).encode(),
+    )
+
+    # Step 3: persist the soft-delete to disk.  ``mark_deleted`` stamps
+    # ``deleted_at`` + ``deleted_by`` in memory; ``save_meta`` does the
+    # atomic write-and-rename so a crash mid-flush can't leave a torn
+    # meta.json.
+    meta.mark_deleted(participant.name)
+    save_meta(meta, conv_data_dir)
+
+    # Step 4: retained-clear every member's presence row on the
+    # per-conversation presence topic.  Empty payload + retain=True is the
+    # MQTT idiom for "drop the retained message", per MQTT 5 spec §3.3.1.
+    # We use the registry's pre-deletion member snapshot so the eject
+    # publishes go out even though we're about to drop memberships.
+    for member in members:
+        presence_topic = f"claude-comms/conv/{conversation}/presence/{member.key}"
+        await publish_fn(presence_topic, b"", retain=True)
+
+    # Drop memberships in the registry so future ``conversations_for()``
+    # reads don't keep the deleted conversation in sidebars built from the
+    # registry instead of meta.json.  Best-effort: if a member was removed
+    # concurrently the ``leave`` call is a no-op.
+    for member in members:
+        registry.leave(member.key, conversation)
+
+    return {"deleted": True, "conversation_id": conversation}
