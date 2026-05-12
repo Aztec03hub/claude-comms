@@ -46,8 +46,25 @@
   let inputValue = $state('');
   let showFormatHelp = $state(false);
   let attachNotice = $state('');
+  /**
+   * Transient feedback string surfaced after the "Convert to artifact" CTA
+   * (G-28 over-limit handling). v0.3.3 stub: the full artifact-create flow
+   * doesn't exist yet, so the CTA copies the composer contents to clipboard
+   * and shows this string for ~3s. Reuses the same visual treatment as
+   * `attachNotice` so we don't introduce a parallel toast surface inside the
+   * input area. The proper App-level toast pickup also fires via a
+   * `requestToast` CustomEvent (see convertToArtifact).
+   */
+  let convertNotice = $state('');
   let inputEl = $state(null);
   let fileInputEl = $state(null);
+  /**
+   * The container element for this composer. We dispatch the
+   * `requestToast` CustomEvent from here so a future App-level listener can
+   * intercept it without coupling MessageInput to the App toast list shape.
+   * Bound via `bind:this` on the outer .input-area div.
+   */
+  let rootEl = $state(null);
   /**
    * Inline composer error string (e.g. /dm parser rejection). Surfaces
    * below the textarea when non-null. Auto-clears on the next user input
@@ -943,6 +960,54 @@
     }
   }
 
+  /**
+   * v0.3.3 stub for the over-limit "Convert to artifact" CTA (G-28).
+   *
+   * The full artifact-create flow lands in v0.4.x — for now we copy the
+   * composer contents to clipboard so the user can paste them into a new
+   * artifact manually, surface a transient in-composer notice, AND dispatch
+   * a `requestToast` CustomEvent on the root element so an App-level
+   * listener can show a global toast if it wants to.
+   *
+   * The textarea contents are intentionally NOT cleared — the user might
+   * still want to split the message in-place rather than convert it whole.
+   */
+  async function convertToArtifact() {
+    const text = inputValue;
+    const toastText = 'Copied — paste into a new artifact (coming v0.4.x)';
+    let copied = false;
+    try {
+      if (typeof navigator !== 'undefined'
+          && navigator.clipboard
+          && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch (err) {
+      // Clipboard write can throw (permissions, insecure context, jsdom).
+      // Fall through to the console-log fallback so the user at least sees
+      // a notice and the App-side listener still gets the request event.
+      console.warn('[MessageInput] convertToArtifact: clipboard.writeText failed', err);
+    }
+    if (!copied) {
+      console.info('[MessageInput] convertToArtifact: clipboard unavailable, contents not copied');
+    }
+    convertNotice = toastText;
+    setTimeout(() => {
+      if (convertNotice === toastText) convertNotice = '';
+    }, 3000);
+    // Emit a CustomEvent for any App-level listener wanting to render a
+    // global toast. Decoupled from the in-composer notice so the UI works
+    // even if no listener is attached.
+    if (rootEl && typeof CustomEvent === 'function') {
+      rootEl.dispatchEvent(new CustomEvent('requestToast', {
+        bubbles: true,
+        composed: true,
+        detail: { text: toastText, kind: 'info', copied },
+      }));
+    }
+  }
+
   function handleAttachClick() {
     fileInputEl?.click();
   }
@@ -994,7 +1059,31 @@
   }
 </script>
 
-<div class="input-area">
+<div class="input-area" bind:this={rootEl}>
+  {#if overLimit}
+    <!--
+      G-28 over-limit error banner (Step 1.7). Surfaces directly above the
+      composer in --ember-400 so it reads as a hard "you can't send this"
+      signal rather than a soft warning. The "Convert to artifact" CTA is a
+      v0.3.3 stub — it copies the textarea contents to clipboard so the user
+      can paste them into a new artifact manually; the full artifact-create
+      flow lands in v0.4.x. Send is independently disabled via `overLimit`
+      on the send button (the prior behavior silently no-op'd, leaving the
+      user with no diagnostic).
+    -->
+    <div class="over-limit-banner" data-testid="over-limit-banner" role="alert">
+      <span class="over-limit-text">
+        Message too long ({(charCount - MAX_MESSAGE_LENGTH).toLocaleString()} over limit) — split or convert to artifact
+      </span>
+      <button
+        type="button"
+        class="over-limit-cta"
+        onclick={convertToArtifact}
+        data-testid="convert-to-artifact"
+      >Convert to artifact</button>
+    </div>
+  {/if}
+
   {#if typingUsers.length > 0}
     <div class="typing-indicator" data-testid="typing-indicator">
       <div class="typing-wave"><span></span><span></span><span></span><span></span><span></span></div>
@@ -1029,7 +1118,7 @@
     </button>
   </div>
 
-  <div class="input-wrap">
+  <div class="input-wrap" class:over-limit={overLimit}>
     <div class="textarea-wrap">
       <div class="input-overlay" aria-hidden="true">
         {#each overlaySegments as seg, i (i)}
@@ -1116,7 +1205,14 @@
           <Smile size={16} />
         </button>
       </div>
-      <button class="btn-send" title="Send message" onclick={sendMessage} data-testid="send-button">
+      <button
+        class="btn-send"
+        title={overLimit ? 'Message too long — split or convert to artifact' : 'Send message'}
+        onclick={sendMessage}
+        disabled={overLimit || !inputValue.trim()}
+        aria-disabled={overLimit || !inputValue.trim()}
+        data-testid="send-button"
+      >
         <SendHorizontal size={16} />
       </button>
     </div>
@@ -1133,6 +1229,10 @@
 
   {#if attachNotice}
     <div class="attach-notice" data-testid="attach-notice">{attachNotice}</div>
+  {/if}
+
+  {#if convertNotice}
+    <div class="attach-notice" data-testid="convert-notice">{convertNotice}</div>
   {/if}
 
   {#if composerError}
@@ -1264,13 +1364,107 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /*
+   * Over-limit character counter (G-28). Uses --ember-400 to match the
+   * over-limit textarea border and the inline error banner above the
+   * composer, so the three over-limit affordances read as a single
+   * coordinated state rather than three independent reds.
+   */
   .char-counter.over-limit {
-    color: #ef4444;
+    color: var(--ember-400);
     font-weight: 600;
   }
 
   .limit-warning {
     font-weight: 400;
+  }
+
+  /*
+   * G-28 over-limit banner above the composer. Surfaces only when
+   * inputValue.length > MAX_MESSAGE_LENGTH. Pairs with:
+   *   - the textarea border (also --ember-400 via .input-wrap.over-limit)
+   *   - the char-counter color (--ember-400 via .char-counter.over-limit)
+   *   - the disabled send button
+   * so the over-limit state is unmistakable rather than a silent no-op.
+   */
+  .over-limit-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+    border-radius: var(--radius-sm);
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid var(--ember-400);
+    color: var(--ember-400);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .over-limit-text {
+    flex: 1 1 auto;
+  }
+
+  .over-limit-cta {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    border-radius: var(--radius-xs);
+    background: var(--ember-400);
+    border: 1px solid var(--ember-400);
+    color: #0a0a0c;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: var(--transition-fast);
+  }
+
+  .over-limit-cta:hover {
+    filter: brightness(1.1);
+  }
+
+  .over-limit-cta:focus-visible {
+    outline: 2px solid var(--ember-400);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Over-limit textarea border. Wins over the default 1px border on
+   * .input-wrap and over the focus-within glow so the over-limit state is
+   * visually persistent regardless of focus.
+   */
+  .input-wrap.over-limit {
+    border-color: var(--ember-400);
+    box-shadow: 0 0 0 1px var(--ember-400), 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .input-wrap.over-limit:focus-within {
+    border-color: var(--ember-400);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35), 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Disabled send button: dim + remove the shimmer + cursor-not-allowed
+     so the over-limit / empty-input gating is unambiguous. */
+  .btn-send:disabled,
+  .btn-send[aria-disabled='true'] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    filter: grayscale(0.4);
+    box-shadow: none;
+  }
+
+  .btn-send:disabled:hover,
+  .btn-send[aria-disabled='true']:hover {
+    filter: grayscale(0.4);
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn-send:disabled:hover::after,
+  .btn-send[aria-disabled='true']:hover::after {
+    animation: none;
   }
 
   .attach-notice {
