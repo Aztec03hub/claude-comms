@@ -10,6 +10,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Opt all JS-based actions into Node 24 ahead of GitHub's 2026-06-02 default
+# flip / 2026-09-16 Node-20 removal. Inherited by every job; harmless once
+# Node 24 becomes the default (the variable becomes a no-op).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   lint:
     name: Lint
