@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] -- 2026-05-12
+
+Patch release. v0.2.0 shipped to PyPI cleanly (web/dist bundled, daemon binds, install round-trip works) but had a cosmetic bug: `claude-comms --version` reported `0.1.0` because the in-code constant lagged `pyproject.toml`. Also lands CI hygiene work that had been queued behind the v0.2.0 publish dance.
+
+### Fixed
+
+- **`__version__` now reads from package metadata via `importlib.metadata.version("claude-comms")`** (`src/claude_comms/__init__.py`). The hardcoded `__version__ = "0.1.0"` constant is gone; `pyproject.toml` is the single source of truth and the CLI's `--version` flag always reflects the wheel's version. Falls back to `"0+unknown"` when the package isn't installed (e.g. running tests from a fresh clone before `pip install -e .`).
+- **31 pre-existing ruff errors + 22 files needing `ruff format`** -- CI lint job had been red for 5+ runs. Real bug fixed in `tui/app.py:666` (backslash in f-string expression -- valid syntax only on Python 3.12+, broken on the project's 3.10/3.11 minimum). Bulk auto-fixes for 28 unused imports + 1 duplicate `MessageBubble` import in `tests/test_tui.py`. Vestigial `key_bob` in `tests/test_conversation.py` replaced with a side-effect-only registration + comment.
+- **93 async-await test failures** -- 11 `tool_comms_*` functions in `src/claude_comms/mcp_tools.py` were converted from sync to async without the test suite being updated. Subagent mechanical pass: add `await`, mark functions `async def`, decorate with `@pytest.mark.asyncio`. Touches 7 test files / 29 test classes. One sync-helper conversion in `TestAllCommsToolsWithMockPublish._setup`. One `asyncio.run()` inside a worker thread in `test_concurrent_joins` to preserve threaded-contention semantics.
+- **5 stale assertions surfaced after the await pass** -- 3 tests asserted `client=="unknown"` / `status=="offline"` from the pre-`_ensure_mcp_connection` era (commit `04a0501`). 1 test asserted the 7-key Message schema (now 13 keys with mentions + thread_*). 1 test (`test_targeted_to_self`) was the only behavior assertion: it expected self-targeted sends to succeed, but the recipient resolver drops the sender. Renamed to `test_targeted_to_self_is_rejected` and updated to assert the resolver's contract.
+
+### Changed
+
+- **CI workflows opt into Node 24 ahead of GitHub's deprecation deadlines.** `env: FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` added at the workflow level to both `ci.yml` and `release.yml`. Node 20 becomes a removed runtime on 2026-09-16; Node 24 becomes the default on 2026-06-02. Opt-in is harmless once Node 24 is default (the variable becomes a no-op).
+
+### Verified
+
+- `pip install --no-cache-dir claude-comms[all]` (no `--pre`) from PyPI resolves the 0.2.0 wheel, and after this patch ships will resolve 0.2.1.
+- `claude-comms --version` in a fresh `pip install -e .` of this branch reports `0.2.0` (the current pyproject value); the next install of 0.2.1 will report `0.2.1` without any code edit.
+- Full pytest suite: `0 failed, 1149 passed`. The 93 pre-existing async-tool-call failures + the 5 surfaced stale assertions are all resolved. No new test was deleted, skipped, or xfail'd.
+- CI lint job passes for the first time in 5+ runs (verified locally; cloud run will confirm).
+
+## [0.2.0] -- 2026-05-12
+
 ### Packaging: pip / pipx Install Ships Working Web UI (2026-05-12)
 
 End-user impact: `pipx install "claude-comms[all]"` (and `pip install` from PyPI) now drops a daemon that serves the Svelte web UI out-of-the-box -- no Node toolchain, no manual `pnpm build`, no `Web UI dist not found... -- skipping` log line on the consumer machine. Closes the gap where a downstream user installed the package and discovered the daemon had no web UI to serve because the wheel never bundled the built Svelte assets.
