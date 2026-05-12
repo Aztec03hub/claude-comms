@@ -8,11 +8,12 @@
   @prop {Function} onContextMenu - Callback invoked with context menu event data.
   @prop {Function} onShowProfile - Callback invoked with a participant to show their profile.
   @prop {Function} onReact - Callback invoked when adding a reaction to a message.
+  @prop {Function} [onRetryMessage] - Optional callback invoked with a message id when the user clicks the Retry affordance on a `status === 'failed'` bubble. Forwarded to each MessageBubble's `onRetry` prop. Wire from App.svelte to `store.retryMessage(id)` (UX G-62 follow-up, Step 1.5b).
 -->
 <script>
   import MessageBubble from './MessageBubble.svelte';
 
-  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact } = $props();
+  let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onRetryMessage } = $props();
 </script>
 
 {#each messages as msg, i (msg.id)}
@@ -25,5 +26,6 @@
     {onContextMenu}
     {onShowProfile}
     {onReact}
+    onRetry={onRetryMessage}
   />
 {/each}

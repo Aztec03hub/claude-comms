@@ -396,11 +396,17 @@
       onShowProfile={handleShowProfile}
       onMuteChannel={(channelId) => store.muteChannel(channelId)}
       onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
+      onStarToggle={(channelId) => store.toggleStar(channelId)}
     />
   </div>
 
   <main class="center">
-    <ConnectionStatus connected={store.connected} onlineCount={store.onlineCount} error={store.connectionError} />
+    <ConnectionStatus
+      connected={store.connected}
+      onlineCount={store.onlineCount}
+      error={store.connectionError}
+      onRetry={() => store.connect()}
+    />
 
     {#if store.parseFailureRate >= 5}
       <div class="parse-failure-banner" role="alert" data-testid="parse-failure-banner">
@@ -486,6 +492,7 @@
       onContextMenu={handleContextMenu}
       onShowProfile={handleShowProfile}
       onReact={handleReact}
+      onRetryMessage={(messageId) => store.retryMessage(messageId)}
       {store}
     />
 

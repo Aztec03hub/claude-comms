@@ -8,6 +8,7 @@
   @prop {Function} onContextMenu - Callback invoked with context menu event data.
   @prop {Function} onShowProfile - Callback invoked with a participant to show their profile card.
   @prop {Function} onReact - Callback invoked when a reaction is added to a message.
+  @prop {Function} [onRetryMessage] - Optional callback invoked with a message id when the user clicks Retry on a failed bubble. Forwarded to MessageGroup → MessageBubble. Wire to `store.retryMessage(id)` from App.svelte (UX G-62 follow-up, Step 1.5b).
   @prop {object|null} store - Optional ChatStore instance for reactive message syncing and seen tracking.
 -->
 <script>
@@ -18,7 +19,7 @@
   import { MessageSquare, Info } from 'lucide-svelte';
   import { isSameDay } from '../lib/utils.js';
 
-  let { messages: messagesProp = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, store = null } = $props();
+  let { messages: messagesProp = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onRetryMessage, store = null } = $props();
 
   // Class-based $state fields on the store are fully reactive across
   // component boundaries when consumed via $derived. Prefer the store's
@@ -180,6 +181,7 @@
           onContextMenu={handleMessageContextMenu}
           {onShowProfile}
           {onReact}
+          {onRetryMessage}
         />
       {/if}
     {/each}
