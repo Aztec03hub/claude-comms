@@ -6,11 +6,21 @@
   @prop {Function} onShowProfile - Callback invoked with a participant object to show their profile card.
   @prop {Function} onMuteChannel - Callback invoked with a channel ID to toggle its mute state.
   @prop {Function} onOpenSettings - Callback invoked to open the settings panel.
+  @prop {Function} [onStarToggle] - Optional callback invoked with a channel ID to toggle star state. Falls back to store.toggleStar when absent.
 -->
 <script>
   import { Hash, VolumeX, Plus, Settings, Star, ChevronDown, Command, Compass } from 'lucide-svelte';
+  import pkg from '../../package.json';
 
-  let { store, onCreateChannel, onBrowseChannels, onShowProfile, onMuteChannel, onOpenSettings } = $props();
+  // UX G-5: brand-version label derives from package.json so the literal
+  // stays in sync with the release process (which bumps package.json
+  // alongside pyproject.toml). Vite resolves JSON imports natively via
+  // its built-in JSON plugin (no `with { type: 'json' }` attribute
+  // needed — that syntax is also valid but the Svelte parser used by
+  // the autofixer doesn't accept it yet).
+  const APP_VERSION = pkg?.version || '';
+
+  let { store, onCreateChannel, onBrowseChannels, onShowProfile, onMuteChannel, onOpenSettings, onStarToggle } = $props();
 
   let starredCollapsed = $state(false);
   let convoCollapsed = $state(false);
@@ -30,13 +40,35 @@
       .filter(c => !searchQuery.trim() || c.id.toLowerCase().includes(searchQuery.trim().toLowerCase()))
   );
 
+  // UX G-25: derive connection status from the store so the footer
+  // pip+label reflect reality (was hardcoded "Online"). We mirror
+  // ConnectionStatus.svelte's three-state machine:
+  //   connected           → "Online"   (green, matches .connection-dot default)
+  //   !connected && error → "Offline"  (red,   matches .connection-dot.error-dot)
+  //   !connected && !error→ "Reconnecting…" (amber, matches .connection-dot.connecting-dot)
+  let connectionLabel = $derived(
+    store.connected ? 'Online' : (store.connectionError ? 'Offline' : 'Reconnecting…')
+  );
+  let connectionState = $derived(
+    store.connected ? 'online' : (store.connectionError ? 'offline' : 'connecting')
+  );
+
   function handleChannelClick(channelId) {
     store.switchChannel(channelId);
   }
 
+  // UX G-4: invoked from the per-channel-row star button. stopPropagation
+  // keeps the click from bubbling up to the row-level switchChannel
+  // handler. Prefers the parent-supplied onStarToggle (e.g. for analytics
+  // hooks) but falls back to store.toggleStar so the button works even
+  // when App.svelte hasn't wired the prop yet.
   function handleStarToggle(e, channelId) {
     e.stopPropagation();
-    store.toggleStar(channelId);
+    if (typeof onStarToggle === 'function') {
+      onStarToggle(channelId);
+    } else {
+      store.toggleStar(channelId);
+    }
   }
 </script>
 
@@ -44,7 +76,7 @@
   <div class="sidebar-brand">
     <div class="brand-icon">CC</div>
     <h1>Claude Comms</h1>
-    <span class="brand-version">v0.1.0</span>
+    <span class="brand-version" data-testid="sidebar-version">v{APP_VERSION}</span>
   </div>
 
   <div class="search-wrap">
@@ -87,6 +119,16 @@
               {/if}
             </div>
             <div class="ch-actions">
+              <button
+                class="ch-action-btn star-toggle starred"
+                title="Unstar"
+                aria-label="Unstar {channel.id}"
+                aria-pressed="true"
+                onclick={(e) => handleStarToggle(e, channel.id)}
+                data-testid="channel-star-{channel.id}"
+              >
+                <Star size={10} fill="currentColor" />
+              </button>
               <button class="ch-action-btn" title={channel.muted ? 'Unmute' : 'Mute'} onclick={(e) => { e.stopPropagation(); onMuteChannel(channel.id); }} data-testid="channel-mute-{channel.id}">
                 <VolumeX size={10} />
               </button>
@@ -133,6 +175,16 @@
             {/if}
           </div>
           <div class="ch-actions">
+            <button
+              class="ch-action-btn star-toggle"
+              title="Star"
+              aria-label="Star {channel.id}"
+              aria-pressed="false"
+              onclick={(e) => handleStarToggle(e, channel.id)}
+              data-testid="channel-star-{channel.id}"
+            >
+              <Star size={10} />
+            </button>
             <button class="ch-action-btn" title={channel.muted ? 'Unmute' : 'Mute'} onclick={(e) => { e.stopPropagation(); onMuteChannel(channel.id); }} data-testid="channel-mute-{channel.id}">
               <VolumeX size={10} />
             </button>
@@ -162,11 +214,11 @@
   >
     <div class="user-avatar-wrap">
       <div class="user-avatar">{store.userProfile.name.slice(0, 2).toUpperCase()}</div>
-      <div class="status-dot"></div>
+      <div class="status-dot" class:online={connectionState === 'online'} class:connecting={connectionState === 'connecting'} class:offline={connectionState === 'offline'} data-testid="sidebar-status-dot"></div>
     </div>
     <div class="user-info">
       <div class="uname">{store.userProfile.name}</div>
-      <div class="ustatus">Online</div>
+      <div class="ustatus" class:online={connectionState === 'online'} class:connecting={connectionState === 'connecting'} class:offline={connectionState === 'offline'} data-testid="sidebar-user-status">{connectionLabel}</div>
     </div>
     <button class="user-settings" title="User settings" onclick={(e) => { e.stopPropagation(); onOpenSettings(); }}>
       <Settings size={16} />
@@ -470,6 +522,27 @@
 
   .channel-item:hover .ch-actions { opacity: 1; }
 
+  /* G-4: Filled (already-starred) star stays visible at all times so the
+     user can see at a glance that a row is starred. The hollow variant
+     remains opacity:0 until row hover (inherited from .ch-actions). */
+  .ch-action-btn.star-toggle.starred {
+    opacity: 1;
+    color: var(--ember-500);
+  }
+  /* Lift the filled star out of the hover-only wrapper so it shows even
+     when the row isn't hovered. Position the wrapper instead. */
+  .channel-item .ch-actions:has(.star-toggle.starred) { opacity: 1; }
+  /* But within an always-visible action wrapper, only the filled star
+     should display when not hovering — keep the mute button hover-only. */
+  .channel-item:not(:hover) .ch-actions .ch-action-btn:not(.star-toggle.starred) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .channel-item:hover .ch-actions .ch-action-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .ch-action-btn {
     width: 22px;
     height: 22px;
@@ -481,11 +554,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: var(--transition-fast);
+    transition: opacity var(--transition-fast), color var(--transition-fast);
     font-size: 11px;
   }
 
   .ch-action-btn:hover { color: var(--text-primary); }
+  .ch-action-btn.star-toggle:hover { color: var(--ember-400); }
+  .ch-action-btn.star-toggle.starred:hover { color: var(--ember-300); }
 
   .sidebar-divider {
     height: 1px;
@@ -584,6 +659,22 @@
     background: #f59e0b;
     border: 2.5px solid var(--bg-sidebar);
     box-shadow: 0 0 6px rgba(245,158,11,0.4);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  /* G-25: status pip + label color match ConnectionStatus.svelte's
+     three-state palette: green = online, amber = connecting, red = offline. */
+  .status-dot.online {
+    background: #34d399;
+    box-shadow: 0 0 6px rgba(52,211,153,0.4);
+  }
+  .status-dot.connecting {
+    background: var(--ember-400, #f59e0b);
+    box-shadow: 0 0 6px rgba(245,158,11,0.4);
+  }
+  .status-dot.offline {
+    background: #f87171;
+    box-shadow: 0 0 6px rgba(248,113,113,0.4);
   }
 
   .user-info { flex: 1; }
@@ -592,7 +683,11 @@
     font-size: 11px;
     color: var(--ember-500);
     text-shadow: 0 0 10px rgba(245,158,11,0.3);
+    transition: color 0.2s ease;
   }
+  .user-info .ustatus.online { color: #34d399; text-shadow: 0 0 10px rgba(52,211,153,0.3); }
+  .user-info .ustatus.connecting { color: var(--ember-400, #f59e0b); }
+  .user-info .ustatus.offline { color: #f87171; text-shadow: 0 0 10px rgba(248,113,113,0.3); }
 
   .user-settings {
     width: 28px;
