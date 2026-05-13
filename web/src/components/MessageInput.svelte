@@ -34,6 +34,10 @@
   import { parseReply } from '../lib/reply-parser.js';
   import { composeOverlaySegments } from '../lib/compose-overlay-segments.js';
   import { inlineChipAtCaret } from '../lib/rich-text-parser.js';
+  import {
+    createDefaultRegistry,
+    parseSlashCommand,
+  } from '../lib/slashCommands.svelte.js';
 
   let { store, channelName, typingUsers = [], onOpenEmoji } = $props();
 
@@ -107,6 +111,28 @@
   let charCount = $derived(inputValue.length);
   let showCharCounter = $derived(charCount >= CHAR_WARN_THRESHOLD);
   let overLimit = $derived(charCount > MAX_MESSAGE_LENGTH);
+
+  // ── Slash command registry (v0.4.0 Step 2.18) ────────────────────────
+  //
+  // The registry binds against ``store`` via ``createDefaultRegistry`` so
+  // ``/join``, ``/leave``, ``/topic`` etc. invoke the existing store
+  // methods (joinChannel, leaveChannel, setTopic, closeChannel, setStar,
+  // setMute, activeMembers). Wrapped in ``$derived`` so the registry
+  // re-binds if ``store`` is ever swapped out at the prop boundary —
+  // shouldn't happen at runtime, but keeps the dependency edge honest.
+  //
+  // ``/dm`` and ``/reply`` are deliberately NOT registered here: they
+  // have their own dedicated parsers (``parseDM`` / ``parseReply``) that
+  // run inside ``sendMessage`` and synthesise a regular outbound message
+  // with recipient / replyTo metadata. The slash-command interception
+  // below detects the parsed name and carves them out before the
+  // registry is consulted.
+  let slashRegistry = $derived(createDefaultRegistry({ store }));
+
+  /** Commands whose semantics are owned by the existing inline parsers,
+   *  NOT by the slash-command registry. Keep this set in sync with the
+   *  if-ladder in ``sendMessage``. */
+  const SLASH_INLINE_PARSERS = new Set(['dm', 'reply']);
 
   // Candidate list: filtered, sorted, capped per `lib/mentions.js`.
   let candidates = $derived(
@@ -876,7 +902,7 @@
 
   // ── Send ─────────────────────────────────────────────────────────────
 
-  function sendMessage() {
+  async function sendMessage() {
     // If a block is open, commit it first so the synthesized fenced source
     // lands in inputValue before we read recipients & dispatch.
     if (blockMode) {
@@ -889,6 +915,69 @@
 
     if (!inputValue.trim()) return;
     if (inputValue.length > MAX_MESSAGE_LENGTH) return;
+
+    // ── Slash command interception (v0.4.0 Step 2.18) ─────────────────
+    //
+    // Detect ``/<command>`` at the very start of the trimmed input and
+    // route through ``slashRegistry.execute``. The /dm and /reply
+    // commands are intentionally NOT routed here: they are handled by
+    // the inline parsers further below because they synthesise a
+    // regular outbound message with recipient / replyTo metadata, not
+    // a side-effect on the store.
+    {
+      const parsedSlash = parseSlashCommand(inputValue);
+      if (parsedSlash && !SLASH_INLINE_PARSERS.has(parsedSlash.name)) {
+        const result = await slashRegistry.execute(inputValue, {
+          currentChannelId: store.activeChannel,
+        });
+        if (result?.handled) {
+          // ``/me`` returns a sendAs envelope: route the body back
+          // through the regular send pipeline with an action marker
+          // so MessageBubble can render it italicised. The full
+          // render-side treatment lands in v0.4.x.
+          if (result.sendAs) {
+            store.sendMessage(result.sendAs.body, null, {
+              mentions: null,
+              recipients: null,
+              kind: result.sendAs.type,
+            });
+            resetComposer();
+            return;
+          }
+          // App-level triggers (openDirectory / updateName) bubble up
+          // as CustomEvents so App.svelte can route them without this
+          // component reaching into modal state.
+          if (result.trigger && rootEl && typeof CustomEvent === 'function') {
+            rootEl.dispatchEvent(new CustomEvent('slashCommand', {
+              bubbles: true,
+              composed: true,
+              detail: { trigger: result.trigger, value: result.value ?? null },
+            }));
+          }
+          // Surface ok / error as a toast via the existing requestToast
+          // CustomEvent contract (same surface used by convertToArtifact).
+          const toastText = result.error ?? result.ok;
+          if (toastText && rootEl && typeof CustomEvent === 'function') {
+            rootEl.dispatchEvent(new CustomEvent('requestToast', {
+              bubbles: true,
+              composed: true,
+              detail: {
+                text: toastText,
+                kind: result.error ? 'error' : 'info',
+              },
+            }));
+          }
+          // On error, leave the textarea contents so the user can fix
+          // and resend (mirrors /dm parser-error behaviour).
+          if (result.error) {
+            composerError = result.error;
+            return;
+          }
+          resetComposer();
+          return;
+        }
+      }
+    }
 
     // Parse-order (plan §11 Phase C-1): /dm-detection BEFORE
     // tokensToMentions. The two paths are mutually exclusive — a /dm send
