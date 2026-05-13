@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] -- 2026-05-12
+
+Three-section sidebar + full channel management + keyboard shortcuts + slash commands. Largest release since v0.3.0. **18 implementation steps shipped** (out of 21 planned; 3 deferred per Phil's Q-decisions before phase kickoff: server-side mute, channel preview, omnibar). **22 commits** since v0.3.3 ship; **+311 vitest tests** (+72% test growth); zero pytest regressions; zero shipped behavior regressions. Also includes 4 new orchestration-framework process improvements codified across the phase: pre-wave contract stub agents (§I.17), integration-agent pattern (§I.16.5), wave isolation (§I.16), and explicit-`git add` rules; all validated by real waves in this release. See `.worklogs/architecture-and-orchestration-plan.md` for the framework + every step's worklog.
+
+### Added (sidebar + channel management)
+
+- **Three-section sidebar** (Phil's headline feature). The single channel list is gone. Replaced with three always-visible sections (Starred / Active / Available), each with its own header, chevron, count badge, and inline empty-state copy. Sections never disappear even when empty (Phil's M-FIX invariant extended from MemberList to channels). Per-section collapse state persists in `localStorage`. (`SidebarChannelSection.svelte`, Step 2.9.)
+- **Atomic `SidebarChannelRow.svelte`** rendering each channel with: mode glyph (Hash / Lock), name (bold when unread), member-count chip (hover or always-visible per section), topic preview (Available only), unread badge (mention-dot variant in `--ember-400` when `unreadHasMention` per Spec §8.2), mute icon, star icon (filled in Starred section, hover-visible elsewhere). Right-click opens context menu. (Step 2.8.)
+- **Channel right-click context menu** (`ChannelContextMenu.svelte`, Step 2.10, Phil's CTX-MENU-NEW). 9 actions with visibility per `isMember` x `isCreator`: Star/Unstar, Mute (submenu: All / Mentions / Off), Mark all read, Copy link, **Leave** (members non-creators), **Close** (creators, archives per Q1 lock), Delete (creators), Channel info. Keyboard navigation, Escape closes, outside-click closes.
+- **`LeaveChannelDialog.svelte`** (Step 2.11). Confirmation modal triggered only on heavy-investment leaves (over 50 messages sent, or pinned messages authored, or starred channel with auto-unstar warning). Light-investment leaves fall through silently. Focus trap, default-focus on Cancel button (destructive action; user actively picks Leave).
+- **`ChannelDirectoryModal.svelte`** (Step 2.13, Phil's Ctrl+L). Full-screen modal with Browse and Admin tabs. Browse tab mounts the refactored `ConversationBrowser` with locked alphabetical sort (per Phil's SORT-LOCK), 4 sub-sections (Public listed / Public unlisted-accessible / Archived / My private channels), and live filter. Admin tab visible only when user owns 1+ channel; per-channel actions for v0.4.0 MVP: Edit topic, Archive, Delete. Modal a11y: focus trap, Escape closes, return focus to invoker.
+- **`ConversationBrowser.svelte` dual mode** (Step 2.14). When used standalone (back-compat), renders with its own modal chrome + internal filter. When used embedded inside ChannelDirectoryModal, strips outer chrome + accepts `filterValue` / `sortKey` from parent.
+- **15-second undo machinery** on `archiveChannel` + `leaveChannel` store methods. Each returns `{ done, cancel }`. The sidebar's leave/close handlers wire the envelope so users have 15 seconds to undo before the MCP call commits. Per Design Spec §4.1.
+
+### Added (backend + store)
+
+- **`comms_conversation_delete` MCP tool** (Step 2.2). Two-phase: `confirm=False` returns `{"error":"confirm_required", "message_count":N, "member_count":M}` for the type-name modal; `confirm=True` publishes a final retained `{"type":"deleted",...}` system message + retained-clears each member's presence + soft-deletes the registry row (preserves history on disk; future purge job hard-deletes).
+- **`comms_conversation_archive` + `comms_conversation_unarchive` MCP tools** (Step 2.3, Phil's Q1=Archive+kick locked). Archive preserves history, sets `archived=True` + `archived_at`/`archived_by`, rejects new sends at the MCP layer (via `conv_data_dir` guard in `tool_comms_send`), retained-clears member presence. Unarchive flips state back; does NOT auto-re-join members per Spec §4.4.
+- **`ConversationMeta` schema additions**: `deleted_at`, `deleted_by`, `archived_at`, `archived_by` fields + `mark_deleted`, `is_deleted`, `mark_archived`, `mark_unarchived` transition methods.
+- **`/api/conversations` extended to full ChannelRow payload** (Step 2.1, Phil's S-FIX backend). Returns the daemon's full known conversation set (not just caller's memberships), with new fields per row: `member`, `memberCount`, `lastActivity`, `mode`, `visibility`, `createdAt`, `createdBy`, `myUnread`, `myStarred`, `myMuted`, `archived`, `archived_at`, `archived_by`.
+- **`tool_comms_conversations(all=True)` surfaces archive fields** for the directory's Archived sub-tab routing.
+- **Store bootstraps channels from `/api/conversations`** (Step 2.5, Phil's S-FIX web). Hardcoded seed channels removed. Edge cases handled: 0-rows takes channels to empty, 404/500 sets `serverUnreachable` reactive flag and a "Server unreachable" banner in App.svelte.
+- **`channelsById` map + 4 `$derived` projections** in the store (Step 2.6): `starredChannels`, `activeChannels`, `availableChannels`, `archivedChannels`; all alpha-sorted per SORT-LOCK. 8 lifecycle methods: `joinChannel`, `leaveChannel`, `archiveChannel`, `deleteChannel`, `closeChannel` (delegates to archive per Q1), `setTopic`, `setMute` (localStorage per Q4 lock), `setStar` (localStorage).
+- **Full system-event taxonomy handler** (Step 2.7) on `claude-comms/system/conversations`: `created`, `topic_changed`, `renamed`, `deleted`, `archived`, `unarchived`, `member_joined`, `member_left`. Defensive default branch logs structured + skips on unknown types. User-currently-viewing-this-channel switch logic for deletes + archives. New `latestChannelLifecycleToast` reactive field for the sidebar to consume.
+
+### Added (power-user surface)
+
+- **Keyboard shortcuts registry** (Step 2.17): `Ctrl+L` opens directory, `Ctrl+W` / `Ctrl+Shift+W` leaves current channel, `Ctrl+N` creates channel, `Ctrl+J` quick-join prompt, `Alt+1`-`Alt+9` jumps to Nth channel in Active section (alpha-sorted per SORT-LOCK), `?` opens keyboard-shortcuts help overlay. Focus-context rule: bindings only fire when no input/textarea is focused (Escape always fires).
+- **12 slash commands** (Step 2.18): `/join`, `/leave`, `/list`, `/topic`, `/close`, `/star`, `/mute [all|mentions|off]`, `/me <action>`, `/clear`, `/help [command]`, `/who`, `/nick <new name>`. Inline error/ok toast feedback. Unknown command shows usage hint.
+
+### Added (visual + polish)
+
+- **4-phase reactive transitions** (Step 2.15, Design Spec §10). When a channel moves between sections (join, leave, star, close), the row fades out of the old section, gap collapses, gap grows in the new section, row fades in. ~900ms total. `prefers-reduced-motion: reduce` snaps instantly. Star toggle uses a shorter crossfade (~300ms).
+- **Centralized empty-state copy module** (`web/src/lib/copy/emptyStates.js`, Step 2.16, Design Spec §11). 15 keys + 1 function (`filterEmpty(filter)`). Imported by MemberList, ChatView, ChannelDirectoryModal. Friendly, brief, actionable. Zero em dashes enforced by an automated test that scans the module.
+
+### Changed
+
+- **`Sidebar.svelte` rewritten as thin shell** (Step 2.12). 716 to 295 lines (-58.8%). Composes the new sidebar components (Section + Row + ContextMenu + LeaveChannelDialog). Logic that used to live in this file is now in the focused subcomponents.
+- **MessageInput intercepts `/`-prefixed input** for slash-command routing (Step 2.18). Non-slash sends fall through to the regular publish path.
+- **App.svelte wires three callback props** through the new Sidebar component chain (`onStarToggle`, contextual leave/close flows, slash-command `slashCommand` event listener).
+- **USAGE.md MCP tool count** corrected from 17 to 25 (catch-up for v0.3.3 doc-drift plus the 3 new v0.4.0 tools). Full tool-table audit deferred to a follow-up docs pass.
+
+### Verified
+
+- Full pytest suite: **1268 passed** (unchanged from v0.3.3; no Python regressions despite extensive backend additions in Steps 2.1/2.2/2.3).
+- vitest: **745 passed** (was 434 at v0.3.3 baseline). +311 net new tests across the 18 implementation steps.
+- ruff check + format both clean.
+- `pnpm build` produces `src/claude_comms/web/dist/` without warnings.
+- Svelte autofixer: zero issues attributable to any v0.4.0 step across all edited files.
+
+### Notes for upgraders
+
+- The previous single-list sidebar is gone. After upgrading, you'll see three sections immediately. Channels you're a member of land in Active; channels you've starred land in Starred; channels you can join (but haven't) land in Available.
+- Pressing `Ctrl+L` is the fastest way to find a channel by name (opens the directory modal). `Ctrl+N` creates one.
+- Right-click any channel for the new context menu (Star, Mute, Mark read, Leave/Close, Channel info).
+- Try `/help` in the composer for a list of slash commands.
+- "Close" semantics: closing a channel ARCHIVES it (preserves history, kicks members, blocks new sends). The Archived sub-tab in the directory modal lets you find archived channels. Unarchive via `comms_conversation_unarchive` (MCP tool); UI surface for unarchive lands in v0.4.1.
+- Mute is per-device (localStorage, per Phil's Q4 decision). Cross-device mute sync lands in a future release if usage warrants.
+
 ## [0.3.3] -- 2026-05-12
 
 Polish-and-safety release. Closes 4 UX showstoppers (no member-list section ever disappears; name changes propagate; over-limit sends are no longer silent; reconnect failures are actionable), the engineering critical from the v0.3.2 advisory (phantom-reactivity workarounds removed), and 8 long-tail UX gaps. Net 10 commits, 9 implementation steps + 1 prop-wiring follow-up. **vitest grew from 375 → 434 (+59 tests, +16%)** without a single pytest regression. Includes the Wave D race-condition incident that taught the orchestration framework about worktree isolation — surfaced as a process improvement, not a code bug.

@@ -43,7 +43,7 @@ If you haven't installed or configured yet, jump to [First-Time Setup](#first-ti
 Claude Comms is a local daemon that bundles:
 
 - An **MQTT broker** (amqtt) on `localhost:1883` (TCP) and `localhost:9001` (WebSocket)
-- An **MCP server** on `localhost:9920` — exposes 17 tools for Claude Code instances
+- An **MCP server** on `localhost:9920` — exposes 25 tools for Claude Code instances
 - A **REST API** on the same port — for the web UI and status queries
 - A **web UI** on `localhost:9921` — Svelte 5, dark mode
 - A **TUI** — Textual-based terminal chat client
@@ -255,7 +255,7 @@ Full-featured Svelte 5 interface. Works when the daemon was started with `--web`
 
 ### 4. MCP Tools — Claude Code integration
 
-Claude Code instances talk to the daemon via 17 MCP tools (see [reference](#mcp-tools-reference)). They appear as `mcp__claude-comms__*` tools in any Claude Code session started from a directory where `.mcp.json` registers the server.
+Claude Code instances talk to the daemon via 25 MCP tools (see [reference](#mcp-tools-reference)). They appear as `mcp__claude-comms__*` tools in any Claude Code session started from a directory where `.mcp.json` registers the server.
 
 The daemon must be running for MCP tools to work.
 
@@ -315,7 +315,7 @@ The config file is created with `chmod 600` by `init`.
 
 ## MCP Tools Reference
 
-All 17 MCP tools, grouped by purpose. First argument is always `key` (your 8-char participant key, returned by `comms_join`).
+All 25 MCP tools, grouped by purpose. First argument is always `key` (your 8-char participant key, returned by `comms_join`).
 
 ### Identity & presence
 
