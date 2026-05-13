@@ -1146,6 +1146,32 @@ def start(
                     "(reverse-proxy mode or web.allow_remote_edits=false)"
                 )
 
+            # v0.4.1 hotfix: wrap the MCP Starlette app in CORSMiddleware so
+            # the browser-side /mcp calls from the web UI on :9921 (which the
+            # daemon serves) survive the cross-origin check against :9920
+            # (where MCP + REST live). The REST routes above add CORS headers
+            # manually via _cors_headers(); /mcp inherited from FastMCP and
+            # was missing them entirely. v0.3.3 Step 1.9 added the first
+            # browser-side MCP call (SettingsPanel display-name); v0.4.0
+            # expanded to most channel-lifecycle operations
+            # (joinChannel/leaveChannel/setTopic/archive/delete via mcpCall),
+            # making the gap user-facing. Wrap is applied AFTER all
+            # `.routes.insert(...)` calls above because CORSMiddleware
+            # returns an ASGI callable, not a Starlette instance.
+            from starlette.middleware.cors import CORSMiddleware
+            starlette_app = CORSMiddleware(
+                starlette_app,
+                allow_origins=cors_origins,
+                allow_methods=["GET", "POST", "OPTIONS"],
+                allow_headers=[
+                    "Content-Type",
+                    "Authorization",
+                    "Mcp-Session-Id",
+                    "Mcp-Protocol-Version",
+                ],
+                allow_credentials=False,
+            )
+
             import uvicorn
 
             mcp_uvi_config = uvicorn.Config(

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] -- 2026-05-13
+
+**Hotfix.** v0.4.0 shipped with two showstopper bugs that surfaced as soon as Phil exercised channel operations from a fresh install: the web UI banner blinked between "Establishing secure connection" and brief connected flashes at ~10 Hz, generating 1500+ requests per minute, with no console output to suggest a fault. Two independent root causes, both in v0.4.1.
+
+### Fixed
+
+- **Infinite-loop init: App.svelte's `connect()` `$effect` re-fires on every store mutation** (`web/src/App.svelte`). The `$effect` block that called `store.connect()` on mount synchronously read `store.nameUnset` and `store.userProfile.*` (inside `connect()`, before the first await), and those reads were TRACKED by the surrounding effect. As soon as `connect()` later mutated those same fields during the identity fetch + name resolution, the effect's tracked deps changed and the effect re-ran, calling `connect()` again. The cleanup function tore down the half-formed WebSocket each cycle, so MQTT.js produced no console output (each connection died before its `on('connect')` handler could settle the UI state). v0.3.3 had the same `$effect` pattern but v0.4.0 expanded the `$state` surface in `connect()`'s sync portion (Steps 2.5 + 2.6 added `serverUnreachable`, `channelsById` map writes, more `userProfile` mutations) which is what tripped the loop. **Fix**: replace `$effect(() => { store.connect(); ... })` with Svelte's `onMount(() => { store.connect(); ... })`. `onMount` doesn't track anything; the init call runs once.
+- **CORS gap on `/mcp` endpoint** (`src/claude_comms/cli.py`). The Starlette app returned by `FastMCP.streamable_http_app()` did not include CORS middleware. The REST `/api/*` routes had CORS handling via `_cors_headers()` from v0.3.0 onward; `/mcp` was a v0.3.3 addition (Step 1.9 SettingsPanel display-name) that bypassed that path. v0.4.0 then expanded browser-side MCP usage through the new `api.mcpCall` helper (`joinChannel`, `leaveChannel`, `setTopic`, `archiveChannel`, `deleteChannel`, `comms_conversation_update`), making the gap user-facing. **Fix**: wrap `starlette_app` with Starlette's `CORSMiddleware` after all `.routes.insert(...)` calls, reusing the same `cors_origins` list the REST routes already consume (loopback ports 9921 + Vite dev ports + optional `web.api_base`). Adds standard MCP headers (`Mcp-Session-Id`, `Mcp-Protocol-Version`) to the allowed-headers list.
+
+### Verified
+
+- Pytest 1268 (unchanged from v0.4.0; no Python regressions).
+- vitest 745 (unchanged from v0.4.0; no JS test changes — fix is structural).
+- Manual smoke required (browser-side timing bugs don't reproduce in jsdom). Verification post-install:
+  1. `claude-comms stop && claude-comms start --background --web` after the upgrade
+  2. Open the web UI; the "Establishing secure connection" banner should appear briefly (under a second) and then transition to "Connected — N participants online" without blinking
+  3. DevTools Network tab should show ~5 initial requests followed by quiet idle (no per-second `conversations`/`identity` repetition)
+  4. Try changing display name in Settings; should succeed (was blocked by CORS in v0.4.0)
+  5. Try right-click a channel → Star, Mute, Leave — should all succeed
+- ruff clean, build green.
+
+### Notes for upgraders
+
+If you were on v0.4.0 and saw the connection banner blinking + the web UI unresponsive: upgrade to 0.4.1 and **restart the daemon** (`claude-comms stop && claude-comms start --background --web`). Hard-refresh the browser (`Ctrl+Shift+R`) to load the new bundle. No data migration; no config changes.
+
+The originally-planned "admin actions" phase moves from v0.4.1 to v0.4.2 in the architecture doc — the v0.4.1 slot now holds this hotfix only.
+
 ## [0.4.0] -- 2026-05-12
 
 Three-section sidebar + full channel management + keyboard shortcuts + slash commands. Largest release since v0.3.0. **18 implementation steps shipped** (out of 21 planned; 3 deferred per Phil's Q-decisions before phase kickoff: server-side mute, channel preview, omnibar). **22 commits** since v0.3.3 ship; **+311 vitest tests** (+72% test growth); zero pytest regressions; zero shipped behavior regressions. Also includes 4 new orchestration-framework process improvements codified across the phase: pre-wave contract stub agents (§I.17), integration-agent pattern (§I.16.5), wave isolation (§I.16), and explicit-`git add` rules; all validated by real waves in this release. See `.worklogs/architecture-and-orchestration-plan.md` for the framework + every step's worklog.

@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { MqttChatStore } from './lib/mqtt-store.svelte.js';
   import { requestPermission, sendNotification } from './lib/notifications.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -71,10 +72,16 @@
   let quickJoinError = $state('');
   let showKeyboardHelp = $state(false);
 
-  // Reactive bridges — poll store state to work around Svelte 5
-  // class-based $state not flushing DOM updates from async callbacks.
-  // Connect on mount
-  $effect(() => {
+  // Connect on mount. Use onMount (not $effect) because connect() reads
+  // this.nameUnset and this.userProfile.* synchronously before its first
+  // await; those reads get tracked by a surrounding $effect, and when
+  // connect() later mutates those same fields (identity fetch + name
+  // resolution) the tracked deps change, the effect re-runs, and
+  // connect() is called again. That ships an infinite loop of new
+  // WebSockets being opened and immediately torn down via the cleanup
+  // function. v0.4.1 hotfix; manifest was the "Establishing secure
+  // connection" banner blinking at ~10Hz with 1500+ requests/minute.
+  onMount(() => {
     store.connect();
     requestPermission();
 
