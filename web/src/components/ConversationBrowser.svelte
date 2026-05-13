@@ -1,9 +1,44 @@
 <!--
   @component ConversationBrowser
-  @description Slide-out panel that displays ALL conversations on the server, allowing users to discover and join conversations they haven't joined yet. Shows conversation name, topic, member count, last activity, and join status.
-  @prop {object} store - The ChatStore instance (uses store.channels for joined status).
-  @prop {Function} onClose - Callback invoked to close the panel.
-  @prop {Function} onJoinChannel - Callback invoked with a channel name to join/switch to it.
+  @description Browse-channels surface. v0.4.0 Step 2.14 dual-mode refactor:
+    - Standalone mode (default, back-compat): slide-out panel that displays
+      ALL conversations on the server, with its own filter input + close
+      button + outer panel chrome.
+    - Embedded mode (`embedded={true}`): renders ONLY the body content as the
+      Browse-tab of `ChannelDirectoryModal.svelte` (Step 2.13). The parent
+      provides the modal chrome + filter input + sort dropdown; this
+      component consumes those via `filterValue` / `sortKey` / `onChannelClick`.
+
+    Both modes render the Spec §4.4 sub-section headers:
+      - "Public listed"
+      - "Public unlisted (accessible)"
+      - "Archived"
+      - "My private channels"
+
+    Sort is LOCKED to alphabetical per Phil's SORT-LOCK invariant (architecture
+    spec §III.4 preamble). The `sortKey` prop is accepted only so the parent
+    can flow its dropdown state through; non-'alphabetical' values are
+    refused with a console.warn + fallback.
+
+  @prop {object} store - The ChatStore instance (uses store.channelsById +
+    its $derived projections).
+  @prop {Function} [onClose] - Callback invoked to close the panel (standalone
+    mode only).
+  @prop {Function} [onJoinChannel] - (channelName) => void. Standalone-mode
+    join callback. Preserved for back-compat with App.svelte's current call
+    site.
+  @prop {string} [filterValue] - Parent-controlled filter string. When
+    undefined, the component uses its own internal filter input. When
+    provided, the internal input is HIDDEN and this drives row filtering.
+  @prop {string} [sortKey] - Parent-controlled sort key. Locked to
+    'alphabetical' per Phil's SORT-LOCK; any other value falls back to
+    alphabetical with a console.warn.
+  @prop {boolean} [embedded] - When true, strip the outer panel chrome
+    (header bar, close button, slide-in container). Defaults to false.
+  @prop {Function} [onChannelClick] - (channelId) => void. Parent overrides
+    the default row-click behavior. In modal context: clicking a row should
+    close the modal + invoke this. Used instead of `onJoinChannel` when
+    provided.
 -->
 <script>
   /**
@@ -37,132 +72,338 @@
    * / "My private") — these come from the store's $derived projections
    * available on `store` (already exposed since Step 2.6).
    */
-  import { Compass, X, Users, Clock, Hash, LogIn } from 'lucide-svelte';
+  import { Compass, X, Users, Clock, Hash, Lock, Search, LogIn } from 'lucide-svelte';
   import { formatTime } from '../lib/utils.js';
-  import { API_BASE } from '../lib/api.js';
 
-  let { store, onClose, onJoinChannel } = $props();
+  let {
+    store,
+    onClose,
+    onJoinChannel,
+    filterValue,
+    sortKey,
+    embedded = false,
+    onChannelClick,
+  } = $props();
 
-  let conversations = $state([]);
-  let loading = $state(false);
-  let error = $state(null);
+  // ── Internal filter state (used only in standalone mode when the parent
+  //    hasn't provided `filterValue`). The component's own filter input
+  //    writes here; the parent's input (in embedded mode) writes to its
+  //    own state and passes the result in via `filterValue`. ───────────
+  let internalFilter = $state('');
 
-  // Set of joined channel IDs for quick lookup
-  let joinedSet = $derived(new Set(store.channels.map(c => c.id)));
+  // The effective filter string — parent-controlled when `filterValue` is
+  // a string (including empty); otherwise the internal $state. We treat
+  // `undefined` (not provided) as the signal to use internal state, so the
+  // parent can intentionally pass an empty string for "no filter, but I'm
+  // controlling it".
+  let effectiveFilter = $derived(
+    typeof filterValue === 'string' ? filterValue : internalFilter,
+  );
 
-  async function fetchConversations() {
-    loading = true;
-    error = null;
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations?all=true`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      // Sort by last_activity descending (most recent first)
-      const list = data.conversations || [];
-      list.sort((a, b) => {
-        const ta = a.last_activity ? new Date(a.last_activity).getTime() : 0;
-        const tb = b.last_activity ? new Date(b.last_activity).getTime() : 0;
-        return tb - ta;
-      });
-      conversations = list;
-    } catch (e) {
-      error = e.message;
-      conversations = [];
-    } finally {
-      loading = false;
+  // SORT-LOCK invariant. The component only knows one sort: alphabetical.
+  // If a parent passes anything else, we warn (so a future contributor
+  // sees the violation in the console) and fall back to alpha. The
+  // $effect fires on every change to `sortKey`; a non-alpha value
+  // surfaces a console.warn so the violation is loud in dev.
+  $effect(() => {
+    if (typeof sortKey === 'string' && sortKey !== 'alphabetical') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[ConversationBrowser] sortKey="${sortKey}" ignored — SORT-LOCK invariant requires 'alphabetical'.`,
+      );
+    }
+  });
+
+  // ── Sub-section derivations (Spec §4.4) ──────────────────────────────
+  // Source from store.channelsById so we get the live $state-tracked
+  // projection without depending on the order of insertion. Each section
+  // is alpha-sorted via localeCompare per SORT-LOCK.
+  function alphaSort(list) {
+    return [...list].sort((a, b) =>
+      (a.name || a.id || '').localeCompare(b.name || b.id || ''),
+    );
+  }
+
+  let allChannels = $derived(Object.values(store?.channelsById ?? {}));
+
+  // "Public listed" — joinable strangers (the classic Available section).
+  let publicListed = $derived(
+    alphaSort(
+      allChannels.filter(
+        (c) =>
+          c?.mode === 'public' &&
+          c?.visibility === 'listed' &&
+          !c?.member &&
+          !c?.archived,
+      ),
+    ),
+  );
+
+  // "Public unlisted (accessible)" — user IS a member, channel is unlisted.
+  // Surfaced here because the user has access (so it's discoverable from
+  // their own browse view) but it's not in the joinable public listing.
+  let publicUnlistedAccessible = $derived(
+    alphaSort(
+      allChannels.filter(
+        (c) =>
+          c?.mode === 'public' &&
+          c?.visibility === 'unlisted' &&
+          c?.member === true &&
+          !c?.archived,
+      ),
+    ),
+  );
+
+  // "Archived" — regardless of mode/visibility.
+  let archived = $derived(alphaSort(allChannels.filter((c) => c?.archived === true)));
+
+  // "My private channels" — user IS a member, channel mode is private.
+  let privateChannels = $derived(
+    alphaSort(
+      allChannels.filter(
+        (c) => c?.mode === 'private' && c?.member === true && !c?.archived,
+      ),
+    ),
+  );
+
+  // ── Filter application ──────────────────────────────────────────────
+  // Live-filter each sub-section on name + topic, case-insensitive.
+  function applyFilter(list, q) {
+    if (!q) return list;
+    const needle = q.toLowerCase();
+    return list.filter((c) => {
+      const name = (c?.name || c?.id || '').toLowerCase();
+      const topic = (c?.topic || '').toLowerCase();
+      return name.includes(needle) || topic.includes(needle);
+    });
+  }
+
+  let filteredPublicListed = $derived(applyFilter(publicListed, effectiveFilter));
+  let filteredPublicUnlisted = $derived(
+    applyFilter(publicUnlistedAccessible, effectiveFilter),
+  );
+  let filteredArchived = $derived(applyFilter(archived, effectiveFilter));
+  let filteredPrivate = $derived(applyFilter(privateChannels, effectiveFilter));
+
+  // Total row count across all sub-sections (drives the empty state).
+  let totalRows = $derived(
+    filteredPublicListed.length +
+      filteredPublicUnlisted.length +
+      filteredArchived.length +
+      filteredPrivate.length,
+  );
+
+  // Header badge count (standalone-mode chrome). Counts all rows (the
+  // pre-filter union) so the badge doesn't flicker as the user types.
+  let unfilteredTotalRows = $derived(
+    publicListed.length +
+      publicUnlistedAccessible.length +
+      archived.length +
+      privateChannels.length,
+  );
+
+  // ── Row click dispatch ──────────────────────────────────────────────
+  // Two-tier dispatch:
+  //   1. If `onChannelClick` is provided (embedded mode), call it. The
+  //      parent decides whether to switch / join / close-modal.
+  //   2. Else fall back to the standalone-mode behavior: invoke the
+  //      original `onJoinChannel` callback with the channel name (matches
+  //      App.svelte's current call site which does `switchChannel(name)`
+  //      + close).
+  function handleRowClick(channel) {
+    if (typeof onChannelClick === 'function') {
+      onChannelClick(channel.id);
+      return;
+    }
+    if (typeof onJoinChannel === 'function') {
+      onJoinChannel(channel.name ?? channel.id);
     }
   }
 
-  function handleJoin(name) {
-    onJoinChannel(name);
+  function handleJoinButtonClick(event, channel) {
+    // Explicit Join button in standalone mode preserves prior UX (clicking
+    // Join on a non-member row calls onJoinChannel with the name).
+    event.stopPropagation();
+    if (typeof onJoinChannel === 'function') {
+      onJoinChannel(channel.name ?? channel.id);
+    } else if (typeof onChannelClick === 'function') {
+      onChannelClick(channel.id);
+    }
   }
-
-  // Fetch on mount
-  $effect(() => {
-    fetchConversations();
-  });
 </script>
 
-<div class="conversation-browser" data-testid="conversation-browser" role="complementary" aria-label="Browse conversations">
-  <div class="browser-header">
-    <div class="browser-header-top">
-      <Compass size={16} strokeWidth={2} />
-      <span class="browser-header-title">Browse Conversations</span>
-      {#if conversations.length > 0}
-        <span class="browser-count-badge">{conversations.length}</span>
+{#snippet sectionHeader(label, count)}
+  <div class="browser-section-header" data-testid="browser-section-header-{label}">
+    <span class="browser-section-label">{label}</span>
+    <span class="browser-section-count" aria-label="{count} channels">{count}</span>
+  </div>
+{/snippet}
+
+{#snippet channelRow(channel, joinable)}
+  {@const isPrivate = channel?.mode === 'private'}
+  {@const memberCount = typeof channel?.memberCount === 'number' ? channel.memberCount : 0}
+  <div
+    class="browser-item"
+    class:joined={channel?.member}
+    role="button"
+    tabindex="0"
+    data-testid="browser-item-{channel.id}"
+    onclick={() => handleRowClick(channel)}
+    onkeydown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        handleRowClick(channel);
+      }
+    }}
+  >
+    <div class="browser-item-top">
+      <div class="browser-item-icon">
+        {#if isPrivate}
+          <Lock size={14} strokeWidth={2} />
+        {:else}
+          <Hash size={14} strokeWidth={2} />
+        {/if}
+      </div>
+      <span class="browser-item-name">{channel.name || channel.id}</span>
+      {#if joinable && !channel?.member}
+        <button
+          type="button"
+          class="browser-join-btn"
+          onclick={(e) => handleJoinButtonClick(e, channel)}
+          data-testid="browser-join-{channel.id}"
+          title="Join this conversation"
+        >
+          <LogIn size={12} strokeWidth={2} />
+          Join
+        </button>
+      {:else if channel?.member}
+        <span class="browser-joined-badge" aria-label="You are a member">
+          Joined
+        </span>
       {/if}
-      <button class="browser-close-btn" onclick={onClose} data-testid="conversation-browser-close" title="Close" aria-label="Close conversation browser">
-        <X size={16} strokeWidth={2} />
-      </button>
+    </div>
+    {#if channel?.topic}
+      <div class="browser-item-topic">{channel.topic}</div>
+    {/if}
+    <div class="browser-item-meta">
+      {#if memberCount > 0}
+        <span class="browser-meta-item">
+          <Users size={11} strokeWidth={2} />
+          {memberCount}
+        </span>
+      {/if}
+      {#if channel?.lastActivity}
+        <span class="browser-meta-item">
+          <Clock size={11} strokeWidth={2} />
+          {formatTime(channel.lastActivity, 'relative')}
+        </span>
+      {/if}
     </div>
   </div>
+{/snippet}
 
-  <div class="browser-list">
-    {#if loading}
+{#snippet bodyContent()}
+  {#if !embedded}
+    <!-- Standalone-mode internal filter input. Hidden when embedded —
+         the parent ChannelDirectoryModal renders its own. -->
+    <div class="browser-filter-row" data-testid="browser-filter-row">
+      <Search size={14} strokeWidth={2} />
+      <input
+        type="text"
+        class="browser-filter-input"
+        placeholder="Filter channels…"
+        bind:value={internalFilter}
+        data-testid="browser-filter-input"
+        aria-label="Filter channels"
+      />
+    </div>
+  {/if}
+
+  <div class="browser-list" data-testid="browser-list">
+    {#if totalRows === 0}
       <div class="browser-empty">
         <div class="browser-empty-icon muted">
-          <Clock size={24} strokeWidth={1.5} />
-        </div>
-        <div class="browser-empty-title">Loading...</div>
-      </div>
-    {:else if error}
-      <div class="browser-empty">
-        <div class="browser-empty-icon">
           <Compass size={24} strokeWidth={1.5} />
         </div>
-        <div class="browser-empty-title">Error loading conversations</div>
-        <div class="browser-empty-hint">{error}</div>
-      </div>
-    {:else if conversations.length === 0}
-      <div class="browser-empty">
-        <div class="browser-empty-icon muted">
-          <Compass size={24} strokeWidth={1.5} />
+        <div class="browser-empty-title">
+          {effectiveFilter ? `No channels match "${effectiveFilter}"` : 'No channels yet'}
         </div>
-        <div class="browser-empty-title">No conversations found</div>
-        <div class="browser-empty-hint">There are no conversations on the server yet.</div>
+        {#if !effectiveFilter}
+          <div class="browser-empty-hint">There are no conversations on the server yet.</div>
+        {/if}
       </div>
     {:else}
-      {#each conversations as convo (convo.name)}
-        {@const isJoined = joinedSet.has(convo.name)}
-        <div class="browser-item" class:joined={isJoined} data-testid="browser-item-{convo.name}">
-          <div class="browser-item-top">
-            <div class="browser-item-icon">
-              <Hash size={14} strokeWidth={2} />
-            </div>
-            <span class="browser-item-name">{convo.name}</span>
-            {#if isJoined}
-              <button class="browser-joined-badge" onclick={() => handleJoin(convo.name)} title="Switch to this channel">
-                Joined
-              </button>
-            {:else}
-              <button class="browser-join-btn" onclick={() => handleJoin(convo.name)} data-testid="browser-join-{convo.name}" title="Join this conversation">
-                <LogIn size={12} strokeWidth={2} />
-                Join
-              </button>
-            {/if}
-          </div>
-          {#if convo.topic}
-            <div class="browser-item-topic">{convo.topic}</div>
-          {/if}
-          <div class="browser-item-meta">
-            {#if convo.member_count != null}
-              <span class="browser-meta-item">
-                <Users size={11} strokeWidth={2} />
-                {convo.member_count}
-              </span>
-            {/if}
-            {#if convo.last_activity}
-              <span class="browser-meta-item">
-                <Clock size={11} strokeWidth={2} />
-                {formatTime(convo.last_activity, 'relative')}
-              </span>
-            {/if}
-          </div>
-        </div>
-      {/each}
+      {#if filteredPublicListed.length > 0}
+        {@render sectionHeader('Public listed', filteredPublicListed.length)}
+        {#each filteredPublicListed as channel (channel.id)}
+          {@render channelRow(channel, true)}
+        {/each}
+      {/if}
+
+      {#if filteredPublicUnlisted.length > 0}
+        {@render sectionHeader('Public unlisted (accessible)', filteredPublicUnlisted.length)}
+        {#each filteredPublicUnlisted as channel (channel.id)}
+          {@render channelRow(channel, false)}
+        {/each}
+      {/if}
+
+      {#if filteredPrivate.length > 0}
+        {@render sectionHeader('My private channels', filteredPrivate.length)}
+        {#each filteredPrivate as channel (channel.id)}
+          {@render channelRow(channel, false)}
+        {/each}
+      {/if}
+
+      {#if filteredArchived.length > 0}
+        {@render sectionHeader('Archived', filteredArchived.length)}
+        {#each filteredArchived as channel (channel.id)}
+          {@render channelRow(channel, false)}
+        {/each}
+      {/if}
     {/if}
   </div>
-</div>
+{/snippet}
+
+{#if embedded}
+  <!-- Embedded mode: render the body content only; parent provides chrome. -->
+  <div
+    class="conversation-browser embedded"
+    data-testid="conversation-browser"
+    data-embedded="true"
+  >
+    {@render bodyContent()}
+  </div>
+{:else}
+  <!-- Standalone mode: full slide-out panel with header, filter input,
+       close button — the v0.3.x behavior preserved verbatim. -->
+  <div
+    class="conversation-browser"
+    data-testid="conversation-browser"
+    data-embedded="false"
+    role="complementary"
+    aria-label="Browse conversations"
+  >
+    <div class="browser-header">
+      <div class="browser-header-top">
+        <Compass size={16} strokeWidth={2} />
+        <span class="browser-header-title">Browse Conversations</span>
+        {#if unfilteredTotalRows > 0}
+          <span class="browser-count-badge">{unfilteredTotalRows}</span>
+        {/if}
+        <button
+          class="browser-close-btn"
+          onclick={() => onClose?.()}
+          data-testid="conversation-browser-close"
+          title="Close"
+          aria-label="Close conversation browser"
+        >
+          <X size={16} strokeWidth={2} />
+        </button>
+      </div>
+    </div>
+    {@render bodyContent()}
+  </div>
+{/if}
 
 <style>
   .conversation-browser {
@@ -179,6 +420,20 @@
     display: flex;
     flex-direction: column;
     animation: searchSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Embedded mode: the parent ChannelDirectoryModal provides the chrome.
+     Reset the standalone slide-out positioning + background so we render
+     as a plain flex column inside the modal's tab body. */
+  .conversation-browser.embedded {
+    position: static;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    backdrop-filter: none;
+    border-left: none;
+    box-shadow: none;
+    animation: none;
   }
 
   .browser-header {
@@ -236,11 +491,63 @@
     color: var(--text-primary);
   }
 
+  /* ── Internal filter row (standalone mode only) ── */
+  .browser-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-deepest);
+  }
+
+  .browser-filter-row > :global(svg) {
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  .browser-filter-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .browser-filter-input::placeholder {
+    color: var(--text-faint);
+  }
+
   /* ── List ── */
   .browser-list {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
+  }
+
+  /* ── Sub-section headers (Spec §4.4) ── */
+  .browser-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 8px 4px 8px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+    font-weight: 700;
+  }
+
+  .browser-section-count {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-faint);
+    background: var(--bg-surface);
+    padding: 0 6px;
+    border-radius: 8px;
+    line-height: 1.6;
   }
 
   .browser-item {
@@ -253,13 +560,22 @@
     border: 1px solid var(--border-subtle);
     margin-bottom: 6px;
     transition: var(--transition-fast);
+    cursor: pointer;
+    text-align: left;
   }
 
-  .browser-item:last-child { margin-bottom: 0; }
+  .browser-item:last-child {
+    margin-bottom: 0;
+  }
 
   .browser-item:hover {
     border-color: var(--ember-700);
     background: var(--bg-elevated);
+  }
+
+  .browser-item:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
   }
 
   .browser-item-top {
@@ -341,27 +657,20 @@
 
   .browser-join-btn:hover {
     filter: brightness(1.1);
-    box-shadow: 0 2px 8px rgba(245,158,11,0.25);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
   }
 
   /* ── Joined Badge ── */
   .browser-joined-badge {
     padding: 3px 8px;
     border-radius: 6px;
-    background: rgba(245,158,11,0.08);
-    border: 1px solid rgba(245,158,11,0.15);
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.15);
     color: var(--ember-400);
     font-size: 10px;
     font-weight: 600;
     flex-shrink: 0;
-    cursor: pointer;
-    transition: var(--transition-fast);
     font-family: inherit;
-  }
-
-  .browser-joined-badge:hover {
-    background: rgba(245,158,11,0.14);
-    border-color: var(--ember-700);
   }
 
   /* ── Empty State ── */
@@ -409,7 +718,24 @@
   }
 
   @keyframes emptyFadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes searchSlide {
+    from {
+      transform: translateX(20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
   }
 </style>
