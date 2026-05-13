@@ -18,6 +18,7 @@
   import ScrollToBottom from './ScrollToBottom.svelte';
   import { MessageSquare, Info } from 'lucide-svelte';
   import { isSameDay } from '../lib/utils.js';
+  import { EMPTY_STATES } from '../lib/copy/emptyStates.js';
 
   let { messages: messagesProp = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onRetryMessage, store = null } = $props();
 
@@ -157,9 +158,9 @@
           <MessageSquare size={28} strokeWidth={1.5} />
         </div>
       </div>
-      <div class="empty-title">No messages yet</div>
-      <div class="empty-subtitle">This is the very beginning of the conversation.</div>
-      <div class="empty-hint">Type a message below to get things started.</div>
+      <div class="empty-title">{EMPTY_STATES.chatNoMessages}</div>
+      <div class="empty-subtitle">{EMPTY_STATES.chatNoMessagesSubtitle}</div>
+      <div class="empty-hint">{EMPTY_STATES.chatNoMessagesHint}</div>
     </div>
   {:else}
     {#each groupedMessages as group, i}

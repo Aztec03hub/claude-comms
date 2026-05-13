@@ -11,6 +11,7 @@
 <script>
   import { Search, Globe, Monitor, Plug, Terminal, Link } from 'lucide-svelte';
   import { getInitials, getParticipantColor } from '../lib/utils.js';
+  import { EMPTY_STATES } from '../lib/copy/emptyStates.js';
 
   let {
     /** Members of the currently-viewed channel who are online. */
@@ -330,7 +331,7 @@
         <div
           class="members-empty"
           data-testid="members-active-empty"
-        >No one is here yet. Invite someone.</div>
+        >{EMPTY_STATES.memberListActive}</div>
       {:else}
         {#each filteredActive as member (member.key)}
           {@render onlineRow(member, false)}
@@ -368,7 +369,7 @@
         <div
           class="members-empty"
           data-testid="members-online-elsewhere-empty"
-        >No one is online elsewhere</div>
+        >{EMPTY_STATES.memberListOnline}</div>
       {:else}
         {#each filteredOnlineElsewhere as member (member.key)}
           {@render onlineRow(member, true)}
@@ -405,7 +406,7 @@
         <div
           class="members-empty"
           data-testid="members-offline-empty"
-        >No one offline yet</div>
+        >{EMPTY_STATES.memberListOffline}</div>
       {:else}
         {#each filteredOffline as member (member.key)}
           <div

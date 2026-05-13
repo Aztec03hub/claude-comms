@@ -25,6 +25,7 @@
   import { untrack } from 'svelte';
   import { X, Search, Hash, Lock } from 'lucide-svelte';
   import ConversationBrowser from './ConversationBrowser.svelte';
+  import { EMPTY_STATES } from '../lib/copy/emptyStates.js';
 
   let {
     store,
@@ -415,7 +416,7 @@
                     />
                   {:else}
                     <p class="directory-admin-topic" data-testid={`channel-directory-admin-topic-${channel.id}`}>
-                      {channel.topic || 'No topic set'}
+                      {channel.topic || EMPTY_STATES.noTopicSet}
                     </p>
                   {/if}
                 </div>
