@@ -59,7 +59,16 @@
     on it inside this component so the row-level onClick does NOT also
     fire (this is the same pattern as the existing Sidebar.svelte
     G-4 fix).
+  @prop {'fly'|'crossfade'|'instant'} [transitionFlavor='fly'] -
+    Forwarded by the parent SidebarChannelSection. Surfaced on the row
+    root as `data-transition-flavor` for tests + DevTools inspection.
+    The row itself does NOT mount its own Svelte transitions — the
+    parent section owns the wrapper that animates (4-phase choreography
+    in Design Spec §10). This prop is purely an inspection breadcrumb
+    so other components (e.g. the future omnibar in Step 2.19) can
+    suppress duplicate animations when they're already in flight.
 -->
+
 <script>
   import { Hash, Lock, Star, VolumeX } from 'lucide-svelte';
 
@@ -67,6 +76,7 @@
     channel,
     isActive = false,
     sectionVariant = 'active',
+    transitionFlavor = 'fly',
     onClick,
     onContextMenu,
     onStarToggle,
@@ -161,6 +171,7 @@
   oncontextmenu={handleContextMenu}
   data-testid="sidebar-channel-row-{channel?.id ?? ''}"
   data-section={sectionVariant}
+  data-transition-flavor={transitionFlavor}
 >
   <span class="row-glyph" aria-hidden="true">
     {#if isPrivate}

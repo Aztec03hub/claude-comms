@@ -26,10 +26,23 @@
   @prop {Function} [onChannelContextMenu] - Forwarded as
     ``(event, id) => void``.
   @prop {Function} [onStarToggle] - Forwarded as ``(id) => void``.
+  @prop {'fly'|'crossfade'|'instant'} [transitionFlavor='fly'] - Selects
+    which animation primitives wrap each row's mount/unmount. ``'fly'``
+    plays the 4-phase channelFly{In,Out} + channelSlide composition
+    (Design Spec §10 cross-section moves). ``'crossfade'`` uses the
+    smaller star-toggle pair. ``'instant'`` skips Svelte transitions
+    entirely (the row mounts/unmounts in one frame). Reduced-motion
+    users always get instant rendering regardless of this prop.
 -->
+
 <script>
   import { untrack } from 'svelte';
   import SidebarChannelRow from './SidebarChannelRow.svelte';
+  import {
+    channelFlyIn,
+    channelFlyOut,
+    starToggle,
+  } from '../lib/transitions/channelMove.svelte.js';
 
   let {
     label,
@@ -42,7 +55,42 @@
     onChannelClick,
     onChannelContextMenu,
     onStarToggle,
+    transitionFlavor = 'fly',
   } = $props();
+
+  // Pick the in/out transition pair based on the section's flavor. The
+  // section's row wrapper applies both `in:` and `out:` so a row entering
+  // the section animates in (phases 3+4), and a row leaving (the `{#each}`
+  // block's keyed iteration evicts it when the store moves the row to
+  // another section) animates out (phases 1+2).
+  //
+  // Each of channelFlyIn / channelFlyOut now ALSO animates height/padding
+  // (the gap-collapse and gap-grow phases) in addition to opacity + slide,
+  // because Svelte forbids `transition:` alongside `in:`/`out:` on the
+  // same element (svelte.dev/e/transition_conflict). Stacking the box
+  // geometry math into the `in:`/`out:` directives is the workaround.
+  //
+  // 'instant' returns a no-op transition object so Svelte still treats
+  // the wrapper as a transition target (and the mount/unmount classes
+  // still get applied for testability) but the duration is 0ms.
+  let rowFlyIn = $derived.by(() => {
+    if (transitionFlavor === 'instant') {
+      return (_node) => ({ duration: 0 });
+    }
+    if (transitionFlavor === 'crossfade') {
+      return (node, params) => starToggle(node, { ...params, direction: 'in' });
+    }
+    return channelFlyIn;
+  });
+  let rowFlyOut = $derived.by(() => {
+    if (transitionFlavor === 'instant') {
+      return (_node) => ({ duration: 0 });
+    }
+    if (transitionFlavor === 'crossfade') {
+      return (node, params) => starToggle(node, { ...params, direction: 'out' });
+    }
+    return channelFlyOut;
+  });
 
   /**
    * Read a boolean-as-"1"/"0" flag from localStorage with a fallback when
@@ -152,14 +200,36 @@
         >{emptyState}</div>
       {:else}
         {#each channels as channel (channel.id)}
-          <SidebarChannelRow
-            {channel}
-            isActive={channel.id === activeChannelId}
-            sectionVariant={variant}
-            onClick={onChannelClick}
-            onContextMenu={onChannelContextMenu}
-            {onStarToggle}
-          />
+          <!--
+            Row wrapper carries the per-row transitions so the section's
+            choreography is a property of THIS section, not baked into the
+            row. `in:rowFlyIn` runs phases 3+4 (gap-grow + fade-in) for
+            arriving rows; `out:rowFlyOut` runs phases 1+2 (fade-out +
+            gap-collapse) for departing ones. Both directives also
+            animate height/padding/margin/border alongside opacity +
+            translate, since Svelte rejects `transition:` alongside
+            `in:`/`out:` on the same element. The
+            `data-transition-flavor` attribute is exposed for tests and
+            for the upcoming Sidebar shell (Step 2.12) so callers can
+            inspect what the section is doing per-row.
+          -->
+          <div
+            class="sidebar-channel-section-row-wrap"
+            data-testid="sidebar-channel-section-row-wrap-{channel.id}"
+            data-transition-flavor={transitionFlavor}
+            in:rowFlyIn
+            out:rowFlyOut
+          >
+            <SidebarChannelRow
+              {channel}
+              isActive={channel.id === activeChannelId}
+              sectionVariant={variant}
+              {transitionFlavor}
+              onClick={onChannelClick}
+              onContextMenu={onChannelContextMenu}
+              {onStarToggle}
+            />
+          </div>
         {/each}
       {/if}
     </div>
@@ -255,6 +325,34 @@
     display: flex;
     flex-direction: column;
     padding: 2px 0 4px;
+  }
+
+  /*
+   * Row wrapper. Hosts the per-row Svelte transitions (channelFlyIn /
+   * channelFlyOut / channelSlide composed from channelMove.svelte.js).
+   * Visually transparent — it must NOT add padding or margin or the row's
+   * own active-state ember rail (`.channel-row.active::before`, drawn at
+   * `left: 0`) would shift away from the sidebar edge. The wrapper does
+   * own `overflow: hidden` so the slide(height) transition crops cleanly
+   * during the gap-collapse / gap-grow phases.
+   */
+  .sidebar-channel-section-row-wrap {
+    display: block;
+    overflow: hidden;
+  }
+
+  /*
+   * Reduced motion: belt-and-suspenders. The transition functions in
+   * channelMove.svelte.js already short-circuit to duration 0 when the
+   * user prefers reduced motion, but a stale matchMedia cache (some
+   * browsers debounce media-query callbacks under heavy load) could let
+   * an animation slip through. This rule kills any remaining CSS-driven
+   * transform/opacity transitions on the wrapper itself.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar-channel-section-row-wrap {
+      transition: none !important;
+    }
   }
 
   /*
