@@ -21,9 +21,13 @@
   import UserProfileView from './components/UserProfileView.svelte';
   import ForwardPicker from './components/ForwardPicker.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
+  import ChannelDirectoryModal from './components/ChannelDirectoryModal.svelte';
+  import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp.svelte';
+  import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import { Users, Search, Pin, Settings, Menu, FileText } from 'lucide-svelte';
 
   const store = new MqttChatStore();
+  const keyboard = getKeyboardRegistry();
 
   let theme = $state('dark');
 
@@ -55,6 +59,18 @@
   let showConversationBrowser = $state(false);
   let showMobileSidebar = $state(false);
 
+  // v0.4.0 Step 2.17 — keyboard-shortcut surfaces.
+  // ``showChannelDirectory``  → Ctrl+L opens the new ChannelDirectoryModal.
+  // ``showQuickJoin``         → Ctrl+J opens the single-input "Channel
+  //                             name or ID:" prompt; submitting calls
+  //                             ``store.joinChannel(value)``.
+  // ``showKeyboardHelp``      → ``?`` opens the keyboard cheatsheet overlay.
+  let showChannelDirectory = $state(false);
+  let showQuickJoin = $state(false);
+  let quickJoinValue = $state('');
+  let quickJoinError = $state('');
+  let showKeyboardHelp = $state(false);
+
   // Reactive bridges — poll store state to work around Svelte 5
   // class-based $state not flushing DOM updates from async callbacks.
   // Connect on mount
@@ -67,6 +83,117 @@
     };
   });
 
+  // v0.4.0 Step 2.17 — register the global keyboard bindings.
+  //
+  // The registry owns its own window-keydown listener so handlers here
+  // only describe WHAT each combo does, not the listener wiring. Each
+  // registration includes a description so the help overlay (``?``)
+  // can render a human-readable cheatsheet.
+  //
+  // Escape is intentionally NOT registered here — App.svelte's existing
+  // ``handleGlobalKeydown`` already owns the modal-priority cascade and
+  // we don't want to fight it. The registry only swallows combos it has
+  // a registered handler for; other keys (including Escape and Ctrl+K)
+  // pass through to the svelte:window onkeydown listener untouched.
+  $effect(() => {
+    keyboard.register('Ctrl+L', () => { showChannelDirectory = true; }, {
+      description: 'Open channel directory',
+    });
+    keyboard.register('Ctrl+N', () => { showChannelModal = true; }, {
+      description: 'Create channel',
+    });
+    keyboard.register('Ctrl+J', () => {
+      quickJoinValue = '';
+      quickJoinError = '';
+      showQuickJoin = true;
+    }, { description: 'Quick-join channel' });
+    keyboard.register('Ctrl+W', () => {
+      const active = store.activeChannel;
+      if (active) {
+        // Fire-and-forget — leaveChannel returns {done, cancel} but the
+        // 15s undo lives in the store; we just kick it off and let any
+        // future toast wire surface the undo affordance.
+        const handle = store.leaveChannel(active);
+        if (handle && typeof handle.done?.catch === 'function') {
+          handle.done.catch(() => {
+            // swallow — store has its own error surfaces.
+          });
+        }
+      }
+    }, { description: 'Leave current channel' });
+    keyboard.register('Ctrl+Shift+W', () => {
+      // Fallback for browsers that hijack Ctrl+W (closes tab). Same
+      // behaviour as Ctrl+W above; users discover the variant from the
+      // help overlay.
+      const active = store.activeChannel;
+      if (active) {
+        const handle = store.leaveChannel(active);
+        if (handle && typeof handle.done?.catch === 'function') {
+          handle.done.catch(() => {});
+        }
+      }
+    }, { description: 'Leave current channel (fallback if browser hijacks Ctrl+W)' });
+    keyboard.register('?', () => { showKeyboardHelp = true; }, {
+      description: 'Show this help overlay',
+    });
+    for (let i = 1; i <= 9; i++) {
+      const idx = i - 1;
+      keyboard.register(`Alt+${i}`, () => {
+        const list = store.activeChannels;
+        const target = Array.isArray(list) ? list[idx] : null;
+        if (target?.id) {
+          store.switchChannel(target.id);
+        }
+      }, { description: `Jump to channel #${i} in Active section` });
+    }
+
+    return () => {
+      keyboard.unregister('Ctrl+L');
+      keyboard.unregister('Ctrl+N');
+      keyboard.unregister('Ctrl+J');
+      keyboard.unregister('Ctrl+W');
+      keyboard.unregister('Ctrl+Shift+W');
+      keyboard.unregister('?');
+      for (let i = 1; i <= 9; i++) {
+        keyboard.unregister(`Alt+${i}`);
+      }
+    };
+  });
+
+  // Snapshot of the registry's description map for the help overlay.
+  // The overlay renders this list in registration order so the bindings
+  // surface in a stable, scan-friendly order regardless of internal
+  // object-key ordering.
+  let keyboardHelpEntries = $derived(
+    Object.entries(keyboard.descriptions).map(([combo, label]) => ({
+      combo,
+      label,
+    })),
+  );
+
+  async function submitQuickJoin() {
+    const value = (quickJoinValue || '').trim();
+    if (!value) {
+      quickJoinError = 'Enter a channel name or ID.';
+      return;
+    }
+    quickJoinError = '';
+    const result = await store.joinChannel(value);
+    if (result && result.success === false) {
+      quickJoinError = result.error || 'Could not join channel.';
+      return;
+    }
+    showQuickJoin = false;
+    quickJoinValue = '';
+    store.switchChannel(value);
+  }
+
+  function cancelQuickJoin() {
+    showQuickJoin = false;
+    quickJoinValue = '';
+    quickJoinError = '';
+  }
+
   // Global keyboard shortcuts
   function handleGlobalKeydown(e) {
     // Ctrl+K — open search panel
@@ -78,12 +205,18 @@
     }
 
     // Escape — close panels in priority order:
-    // modal > context menu > emoji picker > profile card > pinned > search > thread
+    // help > quick-join > directory > modal > context menu > emoji > ...
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopImmediatePropagation();
 
-      if (showMobileSidebar) {
+      if (showKeyboardHelp) {
+        showKeyboardHelp = false;
+      } else if (showQuickJoin) {
+        cancelQuickJoin();
+      } else if (showChannelDirectory) {
+        showChannelDirectory = false;
+      } else if (showMobileSidebar) {
         showMobileSidebar = false;
       } else if (showChannelModal) {
         showChannelModal = false;
@@ -392,7 +525,7 @@
     <Sidebar
       {store}
       onCreateChannel={() => showChannelModal = true}
-      onBrowseChannels={() => showConversationBrowser = !showConversationBrowser}
+      onBrowseChannels={() => showChannelDirectory = true}
       onShowProfile={handleShowProfile}
       onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
       onStarToggle={(channelId) => store.toggleStar(channelId)}
@@ -676,6 +809,83 @@
     onClose={() => { showForwardPicker = false; forwardTarget = null; }}
   />
 {/if}
+
+{#if showChannelDirectory}
+  <ChannelDirectoryModal
+    {store}
+    bind:open={showChannelDirectory}
+    onClose={() => { showChannelDirectory = false; }}
+    onChannelClick={(channelId) => {
+      store.switchChannel(channelId);
+      showChannelDirectory = false;
+    }}
+    onChannelJoin={(channelId) => store.joinChannel(channelId)}
+  />
+{/if}
+
+{#if showQuickJoin}
+  <!-- v0.4.0 Step 2.17 — Ctrl+J quick-join prompt. Minimal inline dialog
+       (single text input + submit). Escape closes via the global priority
+       cascade; submit calls store.joinChannel(value). -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="quick-join-backdrop"
+    data-testid="quick-join-backdrop"
+    onclick={(e) => { if (e.target === e.currentTarget) cancelQuickJoin(); }}
+  >
+    <div
+      class="quick-join-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Quick join channel"
+      data-testid="quick-join-dialog"
+    >
+      <label class="quick-join-label" for="quick-join-input">Channel name or ID:</label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        id="quick-join-input"
+        class="quick-join-input"
+        type="text"
+        bind:value={quickJoinValue}
+        data-testid="quick-join-input"
+        autofocus
+        autocomplete="off"
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            submitQuickJoin();
+          }
+        }}
+      />
+      {#if quickJoinError}
+        <p class="quick-join-error" role="alert" data-testid="quick-join-error">
+          {quickJoinError}
+        </p>
+      {/if}
+      <div class="quick-join-actions">
+        <button
+          type="button"
+          class="quick-join-btn secondary"
+          data-testid="quick-join-cancel"
+          onclick={cancelQuickJoin}
+        >Cancel</button>
+        <button
+          type="button"
+          class="quick-join-btn primary"
+          data-testid="quick-join-submit"
+          onclick={submitQuickJoin}
+        >Join</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<KeyboardShortcutsHelp
+  bind:open={showKeyboardHelp}
+  entries={keyboardHelpEntries}
+  onClose={() => { showKeyboardHelp = false; }}
+/>
 
 {#each toasts as toast (toast.id)}
   <NotificationToast
@@ -1012,5 +1222,88 @@
       z-index: 201;
       animation: overlayIn 0.2s ease;
     }
+  }
+
+  /* v0.4.0 Step 2.17 — Ctrl+J quick-join prompt. Matches the heavier
+   * ChannelDirectoryModal visual treatment but compressed for a single
+   * text input + two action buttons. */
+  .quick-join-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9000;
+    padding: 24px;
+    backdrop-filter: blur(2px);
+  }
+  .quick-join-dialog {
+    background: var(--bg-elevated, var(--surface-elevated, #1f1c19));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+    width: min(420px, 100%);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .quick-join-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary, #d3cfc7);
+  }
+  .quick-join-input {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--bg-deepest, #14110f);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--text-primary, #f4f1ec);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+  }
+  .quick-join-input:focus {
+    border-color: var(--ember-700);
+    box-shadow: 0 0 0 3px var(--border-glow);
+  }
+  .quick-join-error {
+    font-size: 12px;
+    color: var(--ember-300, #fbbf24);
+    margin: 0;
+  }
+  .quick-join-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .quick-join-btn {
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-family: inherit;
+    transition: var(--transition-fast);
+  }
+  .quick-join-btn.primary {
+    background: var(--ember-600, #d97706);
+    color: #fff;
+    border-color: var(--ember-600);
+  }
+  .quick-join-btn.primary:hover {
+    background: var(--ember-500, #f59e0b);
+    border-color: var(--ember-500);
+  }
+  .quick-join-btn.secondary:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
   }
 </style>
