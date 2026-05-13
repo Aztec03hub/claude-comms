@@ -93,6 +93,18 @@
     `sidebar-channel-section-${(label || 'section').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-body`,
   );
 
+  // Map the human-facing section ``label`` to the ``sectionVariant`` prop
+  // SidebarChannelRow (Step 2.8) expects. The row uses this token to drive
+  // its variant-specific visual treatments (unread badge gating, topic-line
+  // visibility, star fill, member-chip visibility). Wave E §I.17 retroactive
+  // contract reconciliation — added when integration revealed the prop-name
+  // drift between agents 2.8 and 2.9.
+  let variant = $derived.by(() => {
+    if (label === 'Starred') return 'starred';
+    if (label === 'Available') return 'available';
+    return 'active';
+  });
+
   function toggle() {
     isExpanded = !isExpanded;
   }
@@ -143,8 +155,9 @@
           <SidebarChannelRow
             {channel}
             isActive={channel.id === activeChannelId}
-            {onChannelClick}
-            {onChannelContextMenu}
+            sectionVariant={variant}
+            onClick={onChannelClick}
+            onContextMenu={onChannelContextMenu}
             {onStarToggle}
           />
         {/each}

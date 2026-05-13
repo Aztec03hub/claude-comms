@@ -169,10 +169,14 @@ describe('SidebarChannelSection — header renders unconditionally (M-FIX parity
     expect(rows[1].getAttribute('data-testid')).toBe('sidebar-channel-row-random');
     expect(rows[2].getAttribute('data-testid')).toBe('sidebar-channel-row-alpha');
 
-    // Active highlight prop passes through to the matching row.
-    expect(rows[0].dataset.isActive).toBe('false');
-    expect(rows[1].dataset.isActive).toBe('true');
-    expect(rows[2].dataset.isActive).toBe('false');
+    // Active highlight prop passes through to the matching row. The real
+    // SidebarChannelRow (Step 2.8) surfaces ``isActive`` as ``aria-pressed``
+    // on the row element rather than ``data-is-active`` — the placeholder
+    // stub this spec was originally drafted against used the latter; Wave E
+    // §I.17 retroactive contract reconciliation realigns to 2.8's actual API.
+    expect(rows[0].getAttribute('aria-pressed')).toBe('false');
+    expect(rows[1].getAttribute('aria-pressed')).toBe('true');
+    expect(rows[2].getAttribute('aria-pressed')).toBe('false');
 
     // Empty-state placeholder is absent when rows are present.
     expect(() => getByTestId('sidebar-channel-section-empty-Active')).toThrow();
