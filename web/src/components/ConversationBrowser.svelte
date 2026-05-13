@@ -6,6 +6,37 @@
   @prop {Function} onJoinChannel - Callback invoked with a channel name to join/switch to it.
 -->
 <script>
+  /**
+   * v0.4.0 Step 2.14 refactor (Wave 0 contract per §I.17): when used as the
+   * Browse tab body of ChannelDirectoryModal, this component receives the
+   * filter + sort state from the parent. Standalone usage (today) still
+   * works — props default to controlling-internal-state behavior.
+   *
+   * NEW PROPS (Step 2.14 implementation agent must add these and respect
+   * the names exactly):
+   *
+   * @prop {string} [filterValue] — Parent-controlled filter. When undefined,
+   *   ConversationBrowser uses its own internal filter input as today.
+   *   When provided, the internal input is HIDDEN and the parent's value drives row filtering.
+   *
+   * @prop {string} [sortKey] — Parent-controlled sort key. Locked to
+   *   'alphabetical' per Phil's SORT-LOCK invariant. The parent's
+   *   ChannelDirectoryModal renders a disabled dropdown showing
+   *   "Alphabetical (locked)"; this component just consumes the value.
+   *
+   * @prop {boolean} [embedded] — When true, strip the outer panel chrome
+   *   (the parent ChannelDirectoryModal provides it). When false / undefined,
+   *   render standalone (back-compat for any non-modal call sites).
+   *
+   * @prop {Function} [onChannelClick] — (channelId) => void. Parent overrides
+   *   the default row-click behavior (which is currently store.switchChannel).
+   *   In modal context: clicking a row should close the modal + call this.
+   *
+   * Step 2.14's implementation agent ALSO adds the Spec-§4.4 sub-section
+   * headers ("Public listed" / "Public unlisted (accessible)" / "Archived"
+   * / "My private") — these come from the store's $derived projections
+   * available on `store` (already exposed since Step 2.6).
+   */
   import { Compass, X, Users, Clock, Hash, LogIn } from 'lucide-svelte';
   import { formatTime } from '../lib/utils.js';
   import { API_BASE } from '../lib/api.js';
