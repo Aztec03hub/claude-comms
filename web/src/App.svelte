@@ -394,7 +394,6 @@
       onCreateChannel={() => showChannelModal = true}
       onBrowseChannels={() => showConversationBrowser = !showConversationBrowser}
       onShowProfile={handleShowProfile}
-      onMuteChannel={(channelId) => store.muteChannel(channelId)}
       onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
       onStarToggle={(channelId) => store.toggleStar(channelId)}
     />

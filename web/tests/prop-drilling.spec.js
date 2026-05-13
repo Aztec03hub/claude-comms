@@ -72,21 +72,31 @@ import Sidebar from '../src/components/Sidebar.svelte';
 
 describe('Sidebar — onStarToggle is invoked when supplied by App.svelte', () => {
   function makeStore() {
+    // v0.4.0 Step 2.12: the sidebar shell now reads channelsById +
+    // {starred,active,available}Channels sorted projections. The
+    // SidebarChannelRow inside the section carries data-testid
+    // "row-star-{id}" for the star button (renamed from the legacy
+    // "channel-star-{id}" testid the old Sidebar.svelte rendered).
+    const channelsById = {
+      general: { id: 'general', name: 'general', topic: '', starred: false, unread: 0, muted: false, member: true, mode: 'public', visibility: 'listed', memberCount: 1, createdBy: null },
+      alpha: { id: 'alpha', name: 'alpha', topic: '', starred: true, unread: 0, muted: false, member: true, mode: 'public', visibility: 'listed', memberCount: 1, createdBy: null },
+    };
     const store = {
-      channels: [
-        { id: 'general', topic: '', starred: false, unread: 0, muted: false },
-        { id: 'alpha', topic: '', starred: true, unread: 0, muted: false },
-      ],
+      channelsById,
+      channels: Object.values(channelsById),
       activeChannel: 'general',
       connected: true,
       connectionError: null,
       userProfile: { key: 'me', name: 'me', type: 'human' },
+      messages: [],
+      pinnedMessages: [],
+      get starredChannels() { return Object.values(this.channelsById).filter(c => c.member && c.starred); },
+      get activeChannels() { return Object.values(this.channelsById).filter(c => c.member && !c.starred); },
+      get availableChannels() { return Object.values(this.channelsById).filter(c => !c.member); },
       switchChannel: vi.fn(),
       muteChannel: vi.fn(),
       toggleStar: vi.fn(),
-      get starredChannels() {
-        return this.channels.filter((c) => c.starred);
-      },
+      setStar: vi.fn(),
     };
     return store;
   }
@@ -100,20 +110,20 @@ describe('Sidebar — onStarToggle is invoked when supplied by App.svelte', () =
         onCreateChannel: vi.fn(),
         onBrowseChannels: vi.fn(),
         onShowProfile: vi.fn(),
-        onMuteChannel: vi.fn(),
         onOpenSettings: vi.fn(),
         onStarToggle,
       },
     });
     await tick();
-    // The star button lives inside each channel row. Each carries
-    // data-testid="channel-star-<channelId>" per Sidebar.svelte.
-    const starButtons = container.querySelectorAll('[data-testid^="channel-star-"]');
+    // The star button lives inside each SidebarChannelRow (Step 2.8).
+    // Each carries data-testid="row-star-<channelId>".
+    const starButtons = container.querySelectorAll('[data-testid^="row-star-"]');
     expect(starButtons.length).toBeGreaterThan(0);
     await fireEvent.click(starButtons[0]);
     expect(onStarToggle).toHaveBeenCalledTimes(1);
     // Fallback must NOT fire when the prop is wired.
     expect(store.toggleStar).not.toHaveBeenCalled();
+    expect(store.setStar).not.toHaveBeenCalled();
   });
 });
 

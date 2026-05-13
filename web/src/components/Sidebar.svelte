@@ -1,74 +1,145 @@
 <!--
-  @component Sidebar
-  @description Left sidebar navigation showing the app brand, a channel search input, collapsible Starred and Conversations channel lists with unread badges and mute controls, a "New Conversation" button, and the current user's profile/status footer with a settings gear button.
-  @prop {object} store - The ChatStore instance for channel data, active channel, starring, and user profile.
-  @prop {Function} onCreateChannel - Callback invoked to open the channel creation modal.
-  @prop {Function} onShowProfile - Callback invoked with a participant object to show their profile card.
-  @prop {Function} onMuteChannel - Callback invoked with a channel ID to toggle its mute state.
-  @prop {Function} onOpenSettings - Callback invoked to open the settings panel.
-  @prop {Function} [onStarToggle] - Optional callback invoked with a channel ID to toggle star state. Falls back to store.toggleStar when absent.
+  @component Sidebar (v0.4.0 Step 2.12 thin-shell rewrite). Three
+  SidebarChannelSection instances + brand/search header + footer (profile,
+  connection status) + on-demand ChannelContextMenu / LeaveChannelDialog.
+  SORT-LOCK: no sorting in this file; store $derived projections hand
+  pre-sorted arrays in. See SidebarChannelRow / SidebarChannelSection /
+  ChannelContextMenu / LeaveChannelDialog for the heavy lifting.
 -->
 <script>
-  import { Hash, VolumeX, Plus, Settings, Star, ChevronDown, Command, Compass } from 'lucide-svelte';
+  import { Star, Hash, Globe, Plus, Settings, Command, Compass } from 'lucide-svelte';
+  import SidebarChannelSection from './SidebarChannelSection.svelte';
+  import ChannelContextMenu from './ChannelContextMenu.svelte';
+  import LeaveChannelDialog from './LeaveChannelDialog.svelte';
   import pkg from '../../package.json';
 
-  // UX G-5: brand-version label derives from package.json so the literal
-  // stays in sync with the release process (which bumps package.json
-  // alongside pyproject.toml). Vite resolves JSON imports natively via
-  // its built-in JSON plugin (no `with { type: 'json' }` attribute
-  // needed — that syntax is also valid but the Svelte parser used by
-  // the autofixer doesn't accept it yet).
   const APP_VERSION = pkg?.version || '';
 
-  let { store, onCreateChannel, onBrowseChannels, onShowProfile, onMuteChannel, onOpenSettings, onStarToggle } = $props();
+  let { store, onCreateChannel, onBrowseChannels, onShowProfile, onOpenSettings, onStarToggle } = $props();
 
-  let starredCollapsed = $state(false);
-  let convoCollapsed = $state(false);
-  let searchQuery = $state('');
+  // Footer connection-status binding (UX G-25) — three-state mirror of ConnectionStatus.svelte.
+  let connectionLabel = $derived(store.connected ? 'Online' : (store.connectionError ? 'Offline' : 'Reconnecting…'));
+  let connectionState = $derived(store.connected ? 'online' : (store.connectionError ? 'offline' : 'connecting'));
 
-  // Filter channels by search query (case-insensitive name match)
-  let filteredStarred = $derived(
-    store.starredChannels.filter(c =>
-      !searchQuery.trim() || c.id.toLowerCase().includes(searchQuery.trim().toLowerCase())
-    )
-  );
+  // Context-menu + leave-dialog state. One menu / one dialog at a time.
+  let contextMenuOpen = $state(false);
+  let contextMenuChannel = $state(null);
+  let contextMenuEvent = $state(null);
+  let leaveDialogOpen = $state(false);
+  let leaveDialogChannel = $state(null);
+  let leaveDialogMessageCount = $state(0);
+  let leaveDialogIsStarred = $state(false);
+  let leaveDialogHasPinnedMessages = $state(false);
 
-  // Exclude starred channels from the conversations list to avoid duplicates, then filter
-  let unstarredChannels = $derived(
-    store.channels
-      .filter(c => !c.starred)
-      .filter(c => !searchQuery.trim() || c.id.toLowerCase().includes(searchQuery.trim().toLowerCase()))
-  );
-
-  // UX G-25: derive connection status from the store so the footer
-  // pip+label reflect reality (was hardcoded "Online"). We mirror
-  // ConnectionStatus.svelte's three-state machine:
-  //   connected           → "Online"   (green, matches .connection-dot default)
-  //   !connected && error → "Offline"  (red,   matches .connection-dot.error-dot)
-  //   !connected && !error→ "Reconnecting…" (amber, matches .connection-dot.connecting-dot)
-  let connectionLabel = $derived(
-    store.connected ? 'Online' : (store.connectionError ? 'Offline' : 'Reconnecting…')
-  );
-  let connectionState = $derived(
-    store.connected ? 'online' : (store.connectionError ? 'offline' : 'connecting')
-  );
-
-  function handleChannelClick(channelId) {
-    store.switchChannel(channelId);
+  function openContextMenu(event, channelId) {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    contextMenuChannel = store.channelsById?.[channelId] ?? null;
+    contextMenuEvent = event;
+    contextMenuOpen = true;
+  }
+  function closeContextMenu() {
+    contextMenuOpen = false;
+    contextMenuChannel = null;
+    contextMenuEvent = null;
   }
 
-  // UX G-4: invoked from the per-channel-row star button. stopPropagation
-  // keeps the click from bubbling up to the row-level switchChannel
-  // handler. Prefers the parent-supplied onStarToggle (e.g. for analytics
-  // hooks) but falls back to store.toggleStar so the button works even
-  // when App.svelte hasn't wired the prop yet.
-  function handleStarToggle(e, channelId) {
-    e.stopPropagation();
-    if (typeof onStarToggle === 'function') {
-      onStarToggle(channelId);
-    } else {
-      store.toggleStar(channelId);
+  // Pre-leave gate (Step 2.11 contract): >50 my-messages OR starred OR my-pinned authorship.
+  function countMyMessages(channelId) {
+    const selfKey = store.userProfile?.key;
+    const messages = store.messages;
+    if (!selfKey || !Array.isArray(messages)) return 0;
+    let n = 0;
+    for (const m of messages) if (m?.channel === channelId && m?.from === selfKey) n += 1;
+    return n;
+  }
+  function hasMyPinnedMessages(channelId) {
+    const selfKey = store.userProfile?.key;
+    const pinned = store.pinnedMessages;
+    if (!selfKey || !Array.isArray(pinned)) return false;
+    return pinned.some((m) => m?.channel === channelId && m?.from === selfKey);
+  }
+  function shouldConfirmLeave(channel) {
+    if (!channel) return false;
+    if (channel.starred) return true;
+    if (hasMyPinnedMessages(channel.id)) return true;
+    if (countMyMessages(channel.id) > 50) return true;
+    return false;
+  }
+
+  async function handleContextAction(actionId) {
+    const c = contextMenuChannel;
+    closeContextMenu();
+    if (!c) return;
+    if (actionId === 'toggle-star') return void store.setStar(c.id, !c.starred);
+    if (typeof actionId === 'string' && actionId.startsWith('mute:')) {
+      return void store.setMute(c.id, actionId.split(':')[1]);
     }
+    if (actionId === 'mark-read') return; // v0.4.1 follow-up — no store method yet.
+    if (actionId === 'copy-link') {
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(`/#/c/${encodeURIComponent(c.id)}`);
+        }
+      } catch { /* clipboard blocked (jsdom, denied) — silent */ }
+      return;
+    }
+    if (actionId === 'leave') {
+      if (shouldConfirmLeave(c)) {
+        leaveDialogChannel = c;
+        leaveDialogMessageCount = countMyMessages(c.id);
+        leaveDialogIsStarred = c.starred === true;
+        leaveDialogHasPinnedMessages = hasMyPinnedMessages(c.id);
+        leaveDialogOpen = true;
+      } else {
+        store.leaveChannel(c.id);
+      }
+      return;
+    }
+    if (actionId === 'close') return void store.closeChannel(c.id);
+    if (actionId === 'delete') {
+      // Step 2.13 will replace this with a type-name-to-confirm modal.
+      const ok = typeof window !== 'undefined'
+        ? window.confirm(`Delete #${c.name ?? c.id}? This cannot be undone.`)
+        : false;
+      if (ok) store.deleteChannel(c.id);
+      return;
+    }
+    if (actionId === 'info' && typeof onBrowseChannels === 'function') onBrowseChannels();
+  }
+
+  function handleLeaveConfirm() {
+    const id = leaveDialogChannel?.id;
+    leaveDialogOpen = false;
+    leaveDialogChannel = null;
+    if (id) store.leaveChannel(id);
+  }
+  function handleLeaveCancel() {
+    leaveDialogOpen = false;
+    leaveDialogChannel = null;
+  }
+
+  function handleSwitchChannel(channelId) { store.switchChannel(channelId); }
+  async function handleJoinChannel(channelId) {
+    const result = await store.joinChannel(channelId);
+    if (result && result.success !== false) store.switchChannel(channelId);
+  }
+  // Star toggle — prefer parent onStarToggle prop, fall back to store.setStar.
+  function handleStarToggle(channelId) {
+    if (typeof onStarToggle === 'function') return void onStarToggle(channelId);
+    const c = store.channelsById?.[channelId];
+    if (!c) return;
+    store.setStar(channelId, !c.starred);
+  }
+
+  let contextMenuIsMember = $derived(contextMenuChannel?.member === true);
+  let contextMenuIsCreator = $derived(
+    contextMenuChannel?.createdBy != null
+    && store.userProfile?.key != null
+    && contextMenuChannel.createdBy === store.userProfile.key
+  );
+  function showSelfProfile() {
+    const { key, name, type } = store.userProfile;
+    onShowProfile({ key, name, type, status: 'online' });
   }
 </script>
 
@@ -80,637 +151,145 @@
   </div>
 
   <div class="search-wrap">
-    <input class="search-input" type="text" placeholder="Search conversations..." bind:value={searchQuery} data-testid="sidebar-search">
+    <input class="search-input" type="text" placeholder="Search conversations..." data-testid="sidebar-search">
     <span class="search-kbd"><Command size={11} strokeWidth={2.5} />K</span>
   </div>
 
-  {#if filteredStarred.length > 0}
-    <div class="section-label" class:collapsed={starredCollapsed} data-testid="sidebar-starred-section">
-      <Star size={12} strokeWidth={2.5} class="star-icon" /> Starred
-      <button class="arrow" onclick={() => starredCollapsed = !starredCollapsed} aria-label="Toggle starred" data-testid="sidebar-starred-toggle"><ChevronDown size={14} strokeWidth={2.5} /></button>
-    </div>
-    {#if !starredCollapsed}
-      <div class="channel-list" style="flex: none;">
-        {#each filteredStarred as channel (channel.id)}
-          <div
-            class="channel-item"
-            class:active={channel.id === store.activeChannel}
-            class:unread={channel.unread > 0}
-            class:muted={channel.muted}
-            onclick={() => handleChannelClick(channel.id)}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
-            role="button"
-            tabindex="0"
-            data-testid="starred-channel-item-{channel.id}"
-          >
-            <div class="ch-icon">
-              <Hash size={16} />
-            </div>
-            <div class="ch-info">
-              <div class="ch-name">{channel.id}</div>
-              <div class="ch-preview">{channel.topic || ''}</div>
-            </div>
-            <div class="ch-meta">
-              {#if channel.muted}
-                <VolumeX size={12} class="ch-muted-icon" />
-              {/if}
-              {#if channel.unread > 0}
-                <span class="ch-badge">{channel.unread}</span>
-              {/if}
-            </div>
-            <div class="ch-actions">
-              <button
-                class="ch-action-btn star-toggle starred"
-                title="Unstar"
-                aria-label="Unstar {channel.id}"
-                aria-pressed="true"
-                onclick={(e) => handleStarToggle(e, channel.id)}
-                data-testid="channel-star-{channel.id}"
-              >
-                <Star size={10} fill="currentColor" />
-              </button>
-              <button class="ch-action-btn" title={channel.muted ? 'Unmute' : 'Mute'} onclick={(e) => { e.stopPropagation(); onMuteChannel(channel.id); }} data-testid="channel-mute-{channel.id}">
-                <VolumeX size={10} />
-              </button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <div class="sidebar-divider"></div>
-  {/if}
-
-  <div class="section-label" class:collapsed={convoCollapsed} data-testid="sidebar-conversations-section">
-    Conversations
-    <button class="arrow" onclick={() => convoCollapsed = !convoCollapsed} aria-label="Toggle conversations" data-testid="sidebar-conversations-toggle"><ChevronDown size={14} strokeWidth={2.5} /></button>
+  <div class="sidebar-sections" data-testid="sidebar-sections">
+    <SidebarChannelSection
+      label="Starred"
+      icon={Star}
+      channels={store.starredChannels}
+      activeChannelId={store.activeChannel}
+      emptyState="No starred channels. Right-click a channel to star it."
+      storageKey="claude-comms.sidebar.starred.expanded"
+      defaultExpanded={true}
+      onChannelClick={handleSwitchChannel}
+      onChannelContextMenu={openContextMenu}
+      onStarToggle={handleStarToggle}
+    />
+    <SidebarChannelSection
+      label="Active"
+      icon={Hash}
+      channels={store.activeChannels}
+      activeChannelId={store.activeChannel}
+      emptyState="You haven't joined any channels yet. Browse the directory or create one."
+      storageKey="claude-comms.sidebar.active.expanded"
+      defaultExpanded={true}
+      onChannelClick={handleSwitchChannel}
+      onChannelContextMenu={openContextMenu}
+      onStarToggle={handleStarToggle}
+    />
+    <SidebarChannelSection
+      label="Available"
+      icon={Globe}
+      channels={store.availableChannels}
+      activeChannelId={store.activeChannel}
+      emptyState="No channels available. Create one to get started."
+      storageKey="claude-comms.sidebar.available.expanded"
+      defaultExpanded={true}
+      onChannelClick={handleJoinChannel}
+      onChannelContextMenu={openContextMenu}
+      onStarToggle={handleStarToggle}
+    />
   </div>
-  {#if !convoCollapsed}
-    <div class="channel-list">
-      {#each unstarredChannels as channel (channel.id)}
-        <div
-          class="channel-item"
-          class:active={channel.id === store.activeChannel}
-          class:unread={channel.unread > 0}
-          class:muted={channel.muted}
-          onclick={() => handleChannelClick(channel.id)}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChannelClick(channel.id); }}
-          role="button"
-          tabindex="0"
-          data-testid="channel-item-{channel.id}"
-        >
-          <div class="ch-icon">
-            <Hash size={16} />
-          </div>
-          <div class="ch-info">
-            <div class="ch-name">{channel.id}</div>
-            <div class="ch-preview">{channel.topic || ''}</div>
-          </div>
-          <div class="ch-meta">
-            {#if channel.muted}
-              <VolumeX size={12} class="ch-muted-icon" />
-            {/if}
-            {#if channel.unread > 0}
-              <span class="ch-badge">{channel.unread}</span>
-            {/if}
-          </div>
-          <div class="ch-actions">
-            <button
-              class="ch-action-btn star-toggle"
-              title="Star"
-              aria-label="Star {channel.id}"
-              aria-pressed="false"
-              onclick={(e) => handleStarToggle(e, channel.id)}
-              data-testid="channel-star-{channel.id}"
-            >
-              <Star size={10} />
-            </button>
-            <button class="ch-action-btn" title={channel.muted ? 'Unmute' : 'Mute'} onclick={(e) => { e.stopPropagation(); onMuteChannel(channel.id); }} data-testid="channel-mute-{channel.id}">
-              <VolumeX size={10} />
-            </button>
-          </div>
-        </div>
-      {/each}
-    </div>
-  {/if}
 
   <button class="create-channel" onclick={onCreateChannel} data-testid="sidebar-create-channel">
-    <Plus size={12} />
-    New Conversation
+    <Plus size={12} /> New Conversation
   </button>
-
   <button class="browse-channels" onclick={onBrowseChannels} data-testid="sidebar-browse-channels">
-    <Compass size={12} />
-    Browse All
+    <Compass size={12} /> Browse All
   </button>
 
   <div
     class="user-profile"
     data-testid="sidebar-user-profile"
-    onclick={() => onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' })}
-    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onShowProfile({ key: store.userProfile.key, name: store.userProfile.name, type: store.userProfile.type, status: 'online' }); }}
+    onclick={showSelfProfile}
+    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') showSelfProfile(); }}
     role="button"
     tabindex="0"
   >
     <div class="user-avatar-wrap">
       <div class="user-avatar">{store.userProfile.name.slice(0, 2).toUpperCase()}</div>
-      <div class="status-dot" class:online={connectionState === 'online'} class:connecting={connectionState === 'connecting'} class:offline={connectionState === 'offline'} data-testid="sidebar-status-dot"></div>
+      <div
+        class="status-dot"
+        class:online={connectionState === 'online'}
+        class:connecting={connectionState === 'connecting'}
+        class:offline={connectionState === 'offline'}
+        data-testid="sidebar-status-dot"
+      ></div>
     </div>
     <div class="user-info">
       <div class="uname">{store.userProfile.name}</div>
-      <div class="ustatus" class:online={connectionState === 'online'} class:connecting={connectionState === 'connecting'} class:offline={connectionState === 'offline'} data-testid="sidebar-user-status">{connectionLabel}</div>
+      <div
+        class="ustatus"
+        class:online={connectionState === 'online'}
+        class:connecting={connectionState === 'connecting'}
+        class:offline={connectionState === 'offline'}
+        data-testid="sidebar-user-status"
+      >{connectionLabel}</div>
     </div>
     <button class="user-settings" title="User settings" onclick={(e) => { e.stopPropagation(); onOpenSettings(); }}>
       <Settings size={16} />
     </button>
   </div>
+
+  {#if contextMenuOpen && contextMenuChannel}
+    <ChannelContextMenu
+      channel={contextMenuChannel}
+      anchorEvent={contextMenuEvent}
+      isMember={contextMenuIsMember}
+      isCreator={contextMenuIsCreator}
+      onAction={handleContextAction}
+      onClose={closeContextMenu}
+    />
+  {/if}
+
+  {#if leaveDialogOpen && leaveDialogChannel}
+    <LeaveChannelDialog
+      channel={leaveDialogChannel}
+      messageCount={leaveDialogMessageCount}
+      isStarred={leaveDialogIsStarred}
+      hasPinnedMessages={leaveDialogHasPinnedMessages}
+      onConfirm={handleLeaveConfirm}
+      onCancel={handleLeaveCancel}
+    />
+  {/if}
 </aside>
 
 <style>
-  .sidebar-left {
-    width: var(--sidebar-w);
-    min-width: var(--sidebar-w);
-    background: var(--bg-sidebar);
-    backdrop-filter: blur(20px);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    position: relative;
-    z-index: 1;
-  }
-
-  .sidebar-left::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 1px;
-    background: linear-gradient(180deg, rgba(245,158,11,0.06), transparent 30%, transparent 70%, rgba(245,158,11,0.04));
-    pointer-events: none;
-  }
-
-  .sidebar-left :global(*) {
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .sidebar-brand {
-    padding: 22px 18px 16px;
-    display: flex;
-    align-items: center;
-    gap: 11px;
-  }
-
-  .sidebar-brand h1 {
-    font-size: 17px;
-    font-weight: 800;
-    letter-spacing: -0.4px;
-    background: linear-gradient(135deg, var(--ember-400), var(--ember-300), var(--gold));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .brand-icon {
-    width: 30px;
-    height: 30px;
-    border-radius: 9px;
-    background: linear-gradient(135deg, var(--ember-600), var(--ember-400));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: 800;
-    color: #0a0a0c;
-    box-shadow: 0 2px 8px rgba(245,158,11,0.2), 0 0 0 1px rgba(245,158,11,0.1);
-    position: relative;
-    overflow: visible;
-    animation: brandBreath 4s ease-in-out infinite;
-  }
-
-  .brand-icon::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 9px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.15), transparent 50%);
-    pointer-events: none;
-  }
-
-  .brand-icon::before {
-    content: '';
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--ember-400);
-    opacity: 0;
-    animation: brandParticle 4s ease-in-out infinite 1s;
-  }
-
-  .brand-version {
-    font-size: 9px;
-    font-weight: 600;
-    color: var(--text-faint);
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 5px;
-    margin-left: 2px;
-    letter-spacing: 0.3px;
-  }
-
-  .search-wrap {
-    padding: 0 14px 14px;
-    position: relative;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 9px 12px 9px 36px;
-    background: var(--bg-deepest);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-size: 12.5px;
-    outline: none;
-    transition: var(--transition-med);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%234a4540' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='6' cy='6' r='4.5'/%3E%3Cline x1='9.5' y1='9.5' x2='13' y2='13'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: 12px center;
-  }
-
+  .sidebar-left { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg-sidebar); backdrop-filter: blur(20px); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; position: relative; z-index: 1; }
+  .sidebar-left::after { content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: linear-gradient(180deg, rgba(245,158,11,0.06), transparent 30%, transparent 70%, rgba(245,158,11,0.04)); pointer-events: none; }
+  .sidebar-brand { padding: 22px 18px 16px; display: flex; align-items: center; gap: 11px; }
+  .sidebar-brand h1 { font-size: 17px; font-weight: 800; letter-spacing: -0.4px; background: linear-gradient(135deg, var(--ember-400), var(--ember-300), var(--gold)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .brand-icon { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, var(--ember-600), var(--ember-400)); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #0a0a0c; box-shadow: 0 2px 8px rgba(245,158,11,0.2), 0 0 0 1px rgba(245,158,11,0.1); }
+  .brand-version { font-size: 9px; font-weight: 600; color: var(--text-faint); background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 2px; letter-spacing: 0.3px; }
+  .search-wrap { padding: 0 14px 14px; position: relative; }
+  .search-input { width: 100%; padding: 9px 12px 9px 36px; background: var(--bg-deepest); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 12.5px; outline: none; transition: var(--transition-med); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%234a4540' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='6' cy='6' r='4.5'/%3E%3Cline x1='9.5' y1='9.5' x2='13' y2='13'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 12px center; }
   .search-input::placeholder { color: var(--text-faint); }
-  .search-input:focus {
-    border-color: var(--ember-700);
-    box-shadow: 0 0 0 3px var(--border-glow), 0 0 16px rgba(245,158,11,0.04);
-  }
-
-  .search-kbd {
-    position: absolute;
-    right: 22px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 10px;
-    color: var(--text-faint);
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-family: 'SF Mono', Consolas, monospace;
-    line-height: 1;
-    pointer-events: none;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-
-  .section-label {
-    padding: 8px 18px 6px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.4px;
-    color: var(--text-faint);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    text-transform: uppercase;
-  }
-
-  .section-label :global(.star-icon) { color: var(--ember-500); flex-shrink: 0; }
-
-  .section-label .arrow {
-    color: var(--text-faint);
-    margin-left: auto;
-    transition: transform 0.2s ease;
-    cursor: pointer;
-    user-select: none;
-    background: none;
-    border: none;
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .section-label .arrow:hover { color: var(--text-secondary); }
-
-  .section-label.collapsed .arrow { transform: rotate(-90deg); }
-
-  .channel-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0 8px;
-    scroll-behavior: smooth;
-  }
-
-  .channel-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 10px;
-    margin: 1px 0;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: var(--transition-fast);
-    position: relative;
-  }
-
-  .channel-item:hover { background: var(--bg-surface); }
-  .channel-item.muted { opacity: 0.5; }
-  .channel-item.muted:hover { opacity: 0.75; }
-
-  .channel-item.active {
-    background: var(--bg-surface);
-    box-shadow: 0 0 16px rgba(245,158,11,0.08), inset 0 0 0 1px rgba(245,158,11,0.1);
-  }
-
-  .channel-item.active::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 55%;
-    border-radius: 0 3px 3px 0;
-    background: linear-gradient(180deg, var(--ember-400), var(--ember-600));
-    box-shadow: 0 0 12px rgba(245,158,11,0.4), 0 0 4px rgba(245,158,11,0.6);
-  }
-
-  .channel-item:focus-visible {
-    box-shadow: 0 0 0 2px rgba(245,158,11,0.3);
-  }
-
-  .ch-icon {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    flex-shrink: 0;
-    background: var(--bg-deepest);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    color: var(--text-faint);
-    font-weight: 600;
-    border: 1px solid var(--border-subtle);
-  }
-
-  .channel-item.active .ch-icon {
-    border-color: rgba(245,158,11,0.15);
-    color: var(--text-muted);
-  }
-
-  .ch-info { flex: 1; min-width: 0; }
-
-  .ch-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: -0.15px;
-    transition: var(--transition-fast);
-  }
-
-  .channel-item.active .ch-name { color: var(--ember-300); }
-  .channel-item.unread .ch-name { color: var(--text-primary); font-weight: 700; }
-  .channel-item.unread .ch-preview { color: var(--text-muted); }
-
-  .ch-preview {
-    font-size: 11.5px;
-    color: var(--text-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-top: 1px;
-  }
-
-  .ch-meta {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 3px;
-    flex-shrink: 0;
-  }
-
-  .ch-badge {
-    font-size: 10px;
-    font-weight: 700;
-    color: #0a0a0c;
-    background: linear-gradient(135deg, var(--ember-500), var(--ember-400));
-    border-radius: 10px;
-    padding: 1px 7px;
-    min-width: 18px;
-    text-align: center;
-    box-shadow: 0 0 10px rgba(245,158,11,0.3), 0 0 2px rgba(245,158,11,0.5);
-    animation: badgePulse 3s ease-in-out infinite, badgeBounce 0.3s ease both;
-  }
-
-  .ch-actions {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    display: flex;
-    gap: 1px;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-  }
-
-  .channel-item:hover .ch-actions { opacity: 1; }
-
-  /* G-4: Filled (already-starred) star stays visible at all times so the
-     user can see at a glance that a row is starred. The hollow variant
-     remains opacity:0 until row hover (inherited from .ch-actions). */
-  .ch-action-btn.star-toggle.starred {
-    opacity: 1;
-    color: var(--ember-500);
-  }
-  /* Lift the filled star out of the hover-only wrapper so it shows even
-     when the row isn't hovered. Position the wrapper instead. */
-  .channel-item .ch-actions:has(.star-toggle.starred) { opacity: 1; }
-  /* But within an always-visible action wrapper, only the filled star
-     should display when not hovering — keep the mute button hover-only. */
-  .channel-item:not(:hover) .ch-actions .ch-action-btn:not(.star-toggle.starred) {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .channel-item:hover .ch-actions .ch-action-btn {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .ch-action-btn {
-    width: 22px;
-    height: 22px;
-    border-radius: 4px;
-    border: none;
-    background: var(--bg-elevated);
-    color: var(--text-faint);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: opacity var(--transition-fast), color var(--transition-fast);
-    font-size: 11px;
-  }
-
-  .ch-action-btn:hover { color: var(--text-primary); }
-  .ch-action-btn.star-toggle:hover { color: var(--ember-400); }
-  .ch-action-btn.star-toggle.starred:hover { color: var(--ember-300); }
-
-  .sidebar-divider {
-    height: 1px;
-    background: linear-gradient(90deg, transparent 5%, var(--border) 30%, var(--border) 70%, transparent 95%);
-    margin: 8px 18px;
-  }
-
-  .create-channel {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    margin: 4px 8px 8px;
-    padding: 7px;
-    border-radius: var(--radius-sm);
-    border: 1px dashed var(--border);
-    background: none;
-    color: var(--text-faint);
-    font-size: 11px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: var(--transition-fast);
-    font-family: inherit;
-  }
-
-  .create-channel:hover {
-    border-color: var(--ember-700);
-    border-style: solid;
-    color: var(--ember-400);
-    background: rgba(245,158,11,0.04);
-  }
-
-  .browse-channels {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    margin: 0 8px 8px;
-    padding: 7px;
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(245,158,11,0.15);
-    background: none;
-    color: var(--text-faint);
-    font-size: 11px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: var(--transition-fast);
-    font-family: inherit;
-  }
-
-  .browse-channels:hover {
-    border-color: var(--ember-700);
-    color: var(--ember-400);
-    background: rgba(245,158,11,0.04);
-  }
-
-  .user-profile {
-    margin-top: auto;
-    padding: 14px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: linear-gradient(180deg, transparent, rgba(0,0,0,0.15));
-    cursor: pointer;
-    transition: background 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .user-profile:hover {
-    background: linear-gradient(180deg, rgba(245,158,11,0.05), rgba(0,0,0,0.2));
-  }
-
+  .search-input:focus { border-color: var(--ember-700); box-shadow: 0 0 0 3px var(--border-glow), 0 0 16px rgba(245,158,11,0.04); }
+  .search-kbd { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--text-faint); background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-family: 'SF Mono', Consolas, monospace; line-height: 1; pointer-events: none; display: flex; align-items: center; gap: 2px; }
+  .sidebar-sections { flex: 1; overflow-y: auto; padding: 0 8px; scroll-behavior: smooth; }
+  .create-channel, .browse-channels { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px; border-radius: var(--radius-sm); background: none; color: var(--text-faint); font-size: 11px; font-weight: 500; cursor: pointer; transition: var(--transition-fast); font-family: inherit; }
+  .create-channel { margin: 4px 8px 8px; border: 1px dashed var(--border); }
+  .create-channel:hover { border-color: var(--ember-700); border-style: solid; color: var(--ember-400); background: rgba(245,158,11,0.04); }
+  .browse-channels { margin: 0 8px 8px; border: 1px solid rgba(245,158,11,0.15); }
+  .browse-channels:hover { border-color: var(--ember-700); color: var(--ember-400); background: rgba(245,158,11,0.04); }
+  .user-profile { margin-top: auto; padding: 14px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; background: linear-gradient(180deg, transparent, rgba(0,0,0,0.15)); cursor: pointer; transition: background 0.15s ease; flex-shrink: 0; }
+  .user-profile:hover { background: linear-gradient(180deg, rgba(245,158,11,0.05), rgba(0,0,0,0.2)); }
   .user-avatar-wrap { position: relative; cursor: pointer; }
-
-  .user-avatar {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, var(--ember-600), var(--ember-400));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: 700;
-    color: #0a0a0c;
-  }
-
-  .status-dot {
-    position: absolute;
-    bottom: -1px;
-    right: -1px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #f59e0b;
-    border: 2.5px solid var(--bg-sidebar);
-    box-shadow: 0 0 6px rgba(245,158,11,0.4);
-    transition: background 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  /* G-25: status pip + label color match ConnectionStatus.svelte's
-     three-state palette: green = online, amber = connecting, red = offline. */
-  .status-dot.online {
-    background: #34d399;
-    box-shadow: 0 0 6px rgba(52,211,153,0.4);
-  }
-  .status-dot.connecting {
-    background: var(--ember-400, #f59e0b);
-    box-shadow: 0 0 6px rgba(245,158,11,0.4);
-  }
-  .status-dot.offline {
-    background: #f87171;
-    box-shadow: 0 0 6px rgba(248,113,113,0.4);
-  }
-
+  .user-avatar { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--ember-600), var(--ember-400)); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #0a0a0c; }
+  .status-dot { position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; border: 2.5px solid var(--bg-sidebar); box-shadow: 0 0 6px rgba(245,158,11,0.4); transition: background 0.2s ease, box-shadow 0.2s ease; }
+  .status-dot.online { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.4); }
+  .status-dot.connecting { background: var(--ember-400, #f59e0b); box-shadow: 0 0 6px rgba(245,158,11,0.4); }
+  .status-dot.offline { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.4); }
   .user-info { flex: 1; }
   .user-info .uname { font-size: 13px; font-weight: 600; }
-  .user-info .ustatus {
-    font-size: 11px;
-    color: var(--ember-500);
-    text-shadow: 0 0 10px rgba(245,158,11,0.3);
-    transition: color 0.2s ease;
-  }
+  .user-info .ustatus { font-size: 11px; color: var(--ember-500); text-shadow: 0 0 10px rgba(245,158,11,0.3); transition: color 0.2s ease; }
   .user-info .ustatus.online { color: #34d399; text-shadow: 0 0 10px rgba(52,211,153,0.3); }
   .user-info .ustatus.connecting { color: var(--ember-400, #f59e0b); }
   .user-info .ustatus.offline { color: #f87171; text-shadow: 0 0 10px rgba(248,113,113,0.3); }
-
-  .user-settings {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    border: none;
-    background: none;
-    color: var(--text-faint);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: var(--transition-fast);
-  }
-
-  .user-settings:hover {
-    background: var(--bg-surface);
-    color: var(--text-secondary);
-  }
-
-  @media (max-width: 480px) {
-    .sidebar-left {
-      display: none;
-    }
-  }
+  .user-settings { width: 28px; height: 28px; border-radius: 8px; border: none; background: none; color: var(--text-faint); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: var(--transition-fast); }
+  .user-settings:hover { background: var(--bg-surface); color: var(--text-secondary); }
+  @media (max-width: 480px) { .sidebar-left { display: none; } }
 </style>

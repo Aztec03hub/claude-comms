@@ -1,18 +1,14 @@
-// Sidebar.svelte UX fixes — coverage for v0.3.3 Step 1.4 (G-4 + G-5 + G-25).
+// Sidebar.svelte UX fixes — coverage for v0.3.3 Step 1.4 chrome (G-5 + G-25).
 //
-// These tests render the real component against a hand-rolled store that
-// exposes only the surfaces Sidebar reads. We're not exercising the full
-// ChatStore — the goal is to pin behavior at the seams Sidebar depends on:
-//
-//   G-4   Star toggle button is wired to handleStarToggle(); clicking it
-//         calls store.toggleStar() (or the optional onStarToggle prop),
-//         and the click does NOT bubble up to the row-level
-//         switchChannel handler. Both starred (filled) and unstarred
-//         (hollow) variants are tested.
+// v0.4.0 Step 2.12 (sidebar shell rewrite): the G-4 star-toggle invariants
+// moved out of Sidebar.svelte and now live in SidebarChannelRow
+// (covered by `sidebar-channel-row.spec.js`) plus the new
+// `sidebar.spec.js` shell-shape suite. The G-5 brand version label and
+// G-25 connection-status footer are STILL owned by Sidebar.svelte, so
+// those two suites stay here.
 //
 //   G-5   The brand-version label reflects package.json's version, not a
-//         stale hardcoded literal. Asserted against the real package.json
-//         resolved via the same Vite JSON import the component uses.
+//         stale hardcoded literal.
 //
 //   G-25  The footer ustatus + status-dot reflect store.connected /
 //         store.connectionError using the three-state machine that
@@ -20,43 +16,42 @@
 //           connected            → "Online"        (.online)
 //           !connected && error  → "Offline"       (.offline)
 //           !connected && !error → "Reconnecting…" (.connecting)
-//
-// Test helper: `makeStore()` returns a Svelte 5 reactive plain object
-// (we use `$state.raw` semantics here — plain JS object is fine because
-// the assertions read state immediately after a synchronous prop swap
-// via `rerender`, not across reactive boundaries).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, cleanup } from '@testing-library/svelte';
 
 import Sidebar from '../src/components/Sidebar.svelte';
 import pkg from '../package.json';
 
 // ── Fixtures ───────────────────────────────────────────────────────────
 
-function makeStore({ connected = true, connectionError = null, channels = null } = {}) {
-  const defaultChannels = [
-    { id: 'general', topic: 'Main', starred: false, unread: 0, muted: false },
-    { id: 'project-alpha', topic: 'Project A', starred: true, unread: 0, muted: false },
-    { id: 'lora-training', topic: 'LoRA', starred: true, unread: 0, muted: false },
-    { id: 'random', topic: 'Off-topic', starred: false, unread: 0, muted: false },
-  ];
+function makeStore({ connected = true, connectionError = null } = {}) {
+  // Minimal shape the new shell reads — three sorted-array projections,
+  // channelsById, userProfile, messages, pinnedMessages, lifecycle stubs.
+  const channelsById = {
+    general: { id: 'general', name: 'general', topic: 'Main', starred: false, unread: 0, muted: false, member: true, mode: 'public', visibility: 'listed', createdBy: null },
+  };
   const store = {
-    channels: channels ?? defaultChannels,
+    channelsById,
+    channels: Object.values(channelsById),
     activeChannel: 'general',
     connected,
     connectionError,
     userProfile: { key: 'phil-key', name: 'phil', type: 'human' },
+    messages: [],
+    pinnedMessages: [],
+    get starredChannels() { return Object.values(this.channelsById).filter(c => c.member && c.starred); },
+    get activeChannels() { return Object.values(this.channelsById).filter(c => c.member && !c.starred); },
+    get availableChannels() { return Object.values(this.channelsById).filter(c => !c.member); },
     switchChannel: vi.fn(),
     muteChannel: vi.fn(),
-    toggleStar: vi.fn(function (channelId) {
-      const ch = store.channels.find((c) => c.id === channelId);
-      if (ch) ch.starred = !ch.starred;
-    }),
-    get starredChannels() {
-      return this.channels.filter((c) => c.starred);
-    },
+    toggleStar: vi.fn(),
+    setStar: vi.fn(),
+    setMute: vi.fn(),
+    joinChannel: vi.fn(() => Promise.resolve({ success: true })),
+    leaveChannel: vi.fn(() => ({ done: Promise.resolve({ success: true }), cancel: () => {} })),
+    closeChannel: vi.fn(() => ({ done: Promise.resolve({ success: true }), cancel: () => {} })),
+    deleteChannel: vi.fn(() => Promise.resolve({ success: true })),
   };
   return store;
 }
@@ -68,7 +63,6 @@ function renderSidebar(store, overrides = {}) {
       onCreateChannel: vi.fn(),
       onBrowseChannels: vi.fn(),
       onShowProfile: vi.fn(),
-      onMuteChannel: vi.fn(),
       onOpenSettings: vi.fn(),
       ...overrides,
     },
@@ -77,56 +71,6 @@ function renderSidebar(store, overrides = {}) {
 
 afterEach(() => {
   cleanup();
-});
-
-// ── G-4: Star toggle wiring ────────────────────────────────────────────
-
-describe('Sidebar G-4 — star toggle wiring', () => {
-  it('clicking the star button on an UNSTARRED row calls store.toggleStar with that channel id', async () => {
-    const store = makeStore();
-    const { getByTestId } = renderSidebar(store);
-
-    // 'general' is unstarred — its star button should be present and
-    // clicking it should flip the starred bit via store.toggleStar.
-    const starBtn = getByTestId('channel-star-general');
-    await fireEvent.click(starBtn);
-
-    expect(store.toggleStar).toHaveBeenCalledTimes(1);
-    expect(store.toggleStar).toHaveBeenCalledWith('general');
-    // The row-level switchChannel must NOT fire — event.stopPropagation()
-    // is what keeps the star button from accidentally switching channels.
-    expect(store.switchChannel).not.toHaveBeenCalled();
-  });
-
-  it('clicking the star button on a STARRED row also calls toggleStar and does not bubble', async () => {
-    const store = makeStore();
-    const { getByTestId } = renderSidebar(store);
-
-    // 'project-alpha' lives in the starred section — clicking its star
-    // (the filled variant) must unstar it.
-    const starBtn = getByTestId('channel-star-project-alpha');
-    expect(starBtn.classList.contains('starred')).toBe(true);
-    await fireEvent.click(starBtn);
-
-    expect(store.toggleStar).toHaveBeenCalledTimes(1);
-    expect(store.toggleStar).toHaveBeenCalledWith('project-alpha');
-    expect(store.switchChannel).not.toHaveBeenCalled();
-  });
-
-  it('prefers the parent-supplied onStarToggle prop when provided', async () => {
-    const store = makeStore();
-    const onStarToggle = vi.fn();
-    const { getByTestId } = renderSidebar(store, { onStarToggle });
-
-    await fireEvent.click(getByTestId('channel-star-random'));
-
-    // When the parent supplies onStarToggle, we route through it instead
-    // of touching the store directly — gives the parent a hook for
-    // analytics / optimistic UI / etc. without altering store contract.
-    expect(onStarToggle).toHaveBeenCalledTimes(1);
-    expect(onStarToggle).toHaveBeenCalledWith('random');
-    expect(store.toggleStar).not.toHaveBeenCalled();
-  });
 });
 
 // ── G-5: Version label sourced from package.json ───────────────────────
