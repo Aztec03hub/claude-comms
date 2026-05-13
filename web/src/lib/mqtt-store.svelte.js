@@ -255,6 +255,38 @@ export class MqttChatStore {
    */
   latestArtifactRefNotification = $state(null);
 
+  /**
+   * Reactive single-slot payload describing the latest channel-lifecycle
+   * event the user should see as a toast. Set by ``#emitChannelLifecycleToast``
+   * when a ``deleted`` or ``archived`` event lands on
+   * ``system/conversations`` (v0.4.0 Step 2.7); App.svelte subscribes via
+   * a ``$effect`` and renders a transient pill ("#<name> was deleted by
+   * <user>" / "#<name> was archived by <user>").
+   *
+   * Shape:
+   *   `{ kind: 'deleted' | 'archived',
+   *      channelId: string,
+   *      channelName: string,
+   *      by: string | null,
+   *      epoch: number,
+   *      ts: string }`
+   *
+   * The `epoch` mirrors the pattern used by `latestArtifactRefNotification`
+   * so two back-to-back toasts with otherwise identical payloads still
+   * re-fire the consumer's effect. Suppressed entirely when
+   * `inAppToasts === false` (Settings opt-out).
+   *
+   * @type {{
+   *   kind: 'deleted' | 'archived',
+   *   channelId: string,
+   *   channelName: string,
+   *   by: string | null,
+   *   epoch: number,
+   *   ts: string,
+   * } | null}
+   */
+  latestChannelLifecycleToast = $state(null);
+
   /** @type {mqtt.MqttClient | null} */
   #client = null;
 
@@ -507,9 +539,12 @@ export class MqttChatStore {
    * Test-only seam: dispatch a synthetic ``claude-comms/system/conversations``
    * event through ``#handleSystemConversation`` without standing up an
    * MQTT broker. Mirrors what ``_bootstrapChannelsForTest`` does for the
-   * REST bootstrap path. Used by ``tests/mqtt-store-channels.spec.js`` to
-   * exercise the ``conversation_created`` / ``conversation_topic_changed``
-   * / ``conversation_deleted`` branches.
+   * REST bootstrap path. Used by ``tests/mqtt-store-channels.spec.js``
+   * and ``tests/mqtt-store-system-events.spec.js`` to exercise the full
+   * Step 2.7 event taxonomy: ``created`` / ``conversation_created`` /
+   * ``topic_changed`` / ``conversation_topic_changed`` / ``renamed`` /
+   * ``deleted`` / ``conversation_deleted`` / ``archived`` /
+   * ``unarchived`` / ``member_joined`` / ``member_left``.
    *
    * @param {object} msg - System-event payload.
    */
@@ -2414,28 +2449,75 @@ export class MqttChatStore {
   /**
    * React to a ``claude-comms/system/conversations`` broadcast.
    *
-   * Wire format (set by ``publish_conversation_event`` in mcp_server.py)::
+   * Wire format (set by ``publish_conversation_event`` and
+   * ``_publish_archive_event`` in mcp_server.py, plus the direct
+   * ``conversation_deleted`` publish in ``mcp_tools.tool_comms_conversation_delete``)::
    *
-   *     { type: "conversation_created" | "conversation_topic_changed"
+   *     // v0.3.2 create / topic_changed (key field: ``name``)
+   *     { type: "conversation_created"
+   *             | "conversation_topic_changed"
    *             | "conversation_deleted",
    *       name: "<conv-id>",
-   *       topic: "<optional>",
-   *       creator_key: "<8-hex on create>",
+   *       topic: "<optional>",                # create / topic_changed
+   *       creator_key: "<8-hex>",             # create
+   *       deleted_by: "<actor-name>",         # delete (v0.4.0 extension)
    *       ts: "<ISO8601>" }
    *
-   * Updates the in-store ``channels`` array so the left sidebar reflects
+   *     // v0.4.0 Step 2.2 — alternate "deleted" alias (key field: ``id``)
+   *     { type: "deleted", id, deletedBy, timestamp }
+   *
+   *     // v0.4.0 Step 2.3 — archive lifecycle (key field: ``id``)
+   *     { type: "archived" | "unarchived", id, archivedBy?, timestamp }
+   *
+   *     // Forward-compat — types the backend may publish in v0.4.x
+   *     { type: "renamed", id, name, renamedBy?, timestamp }
+   *     { type: "member_joined" | "member_left", id, key, timestamp }
+   *
+   * Updates the in-store ``channels`` map so the left sidebar reflects
    * remote conversation mutations live, instead of waiting for the next
    * page reload. The REST snapshot remains the authoritative source on
    * page bootstrap; this handler is the live-delta layer on top.
+   *
+   * v0.4.0 Step 2.7 design notes:
+   *   - **Dual id field**: the daemon publishes some events with ``msg.id``
+   *     (Steps 2.2 / 2.3) and others with ``msg.name`` (v0.3.2 originals).
+   *     We accept either and prefer ``id`` if present.
+   *   - **Deletion + archive while viewing**: if the active channel is the
+   *     one being deleted/archived, switch via ``#resetActiveChannelIfStale``
+   *     and clear the local message buffer for that channel so a re-join
+   *     later starts clean.
+   *   - **Lifecycle toast**: writes a single-slot reactive payload to
+   *     ``latestChannelLifecycleToast`` so the App can surface
+   *     "#<name> was deleted by <user>" / "#<name> was archived by <user>"
+   *     without a polling loop. Toast is suppressed when
+   *     ``inAppToasts === false`` (Settings opt-out).
+   *   - **Unknown ``type``**: logs structured context + bumps the parse-
+   *     failure rate (mirrors v0.3.1's ``#receiveMqttFrame`` discipline)
+   *     and skips. Never throws — one rogue type can't freeze the stream.
    */
   #handleSystemConversation(msg) {
-    if (!msg || typeof msg !== 'object' || typeof msg.name !== 'string') return;
-    const name = msg.name;
+    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') {
+      this.#logSystemConversationParseFailure('non-object or missing type', msg);
+      return;
+    }
+    // Dual-format id resolution — Steps 2.2 / 2.3 events carry ``id``,
+    // v0.3.2 events carry ``name``. Prefer id; fall back to name.
+    const id =
+      typeof msg.id === 'string' && msg.id.length > 0
+        ? msg.id
+        : typeof msg.name === 'string' && msg.name.length > 0
+          ? msg.name
+          : null;
+    if (id === null) {
+      this.#logSystemConversationParseFailure('missing both id and name', msg);
+      return;
+    }
     switch (msg.type) {
+      case 'created':
       case 'conversation_created': {
         // Insert if not present. Don't clobber unread / starred state if
         // the user had previously cached this channel locally.
-        if (!this.channelsById[name]) {
+        if (!this.channelsById[id]) {
           // v0.4.0 Step 2.6 — populate the full ChannelRow shape so the
           // new row carries all the fields the 3-section sidebar
           // ($derived projections) needs. The lifecycle event only
@@ -2444,16 +2526,16 @@ export class MqttChatStore {
           // gets flipped to true once their own ``comms_join`` confirms;
           // before that, this row surfaces in Available for everyone
           // including the creator, matching server-truth).
-          this.channelsById[name] = this.#channelRowFromPayload({
-            id: name,
-            name,
+          this.channelsById[id] = this.#channelRowFromPayload({
+            id,
+            name: id,
             topic: typeof msg.topic === 'string' ? msg.topic : '',
             member: false,
             memberCount: 0,
-            lastActivity: typeof msg.ts === 'string' ? msg.ts : null,
+            lastActivity: this.#extractEventTimestamp(msg),
             mode: 'public',
             visibility: 'listed',
-            createdAt: typeof msg.ts === 'string' ? msg.ts : null,
+            createdAt: this.#extractEventTimestamp(msg),
             createdBy: typeof msg.creator_key === 'string' ? msg.creator_key : null,
             myUnread: 0,
             myStarred: false,
@@ -2462,32 +2544,245 @@ export class MqttChatStore {
         }
         break;
       }
+      case 'topic_changed':
       case 'conversation_topic_changed': {
-        const existing = this.channelsById[name];
+        const existing = this.channelsById[id];
         if (existing && typeof msg.topic === 'string') {
           existing.topic = msg.topic;
         }
         break;
       }
-      case 'conversation_deleted': {
-        if (this.channelsById[name]) {
-          delete this.channelsById[name];
+      case 'renamed': {
+        // v0.4.x forward-compat — the daemon does not publish this yet
+        // as of v0.4.0 Step 2.7. When it does, ``msg.name`` carries the
+        // NEW name (distinct from the id field, which is the immutable
+        // conversation id used as the routing key).
+        const existing = this.channelsById[id];
+        if (existing && typeof msg.name === 'string' && msg.name.length > 0) {
+          existing.name = msg.name;
         }
+        break;
+      }
+      case 'deleted':
+      case 'conversation_deleted': {
+        // Snapshot the row name + actor BEFORE we remove the entry so
+        // the toast can render "#<name> was deleted by <user>" even
+        // though the row is about to disappear.
+        const removedRow = this.channelsById[id];
+        const removedName = removedRow ? (removedRow.name || id) : id;
+        const wasActive = this.activeChannel === id;
+        if (removedRow) {
+          delete this.channelsById[id];
+        }
+        // Clear local message buffer for this channel so a future re-
+        // join doesn't surface stale messages from before the delete.
+        this.messages = this.messages.filter((m) => m.channel !== id);
         // If the user was viewing the deleted channel, fall back to the
         // first member channel (alpha-sorted) per the post-Step-2.5
         // follow-up. ``#resetActiveChannelIfStale`` finds a sensible
         // target or leaves ``activeChannel = null`` for the empty-state.
-        if (this.activeChannel === name) {
+        if (wasActive) {
           this.activeChannel = null;
           this.#resetActiveChannelIfStale();
+        }
+        // Surface a lifecycle toast — only when there was actually
+        // something to remove or the user was viewing it. Avoids
+        // spamming a toast for a redundant delete echo.
+        if (removedRow || wasActive) {
+          this.#emitChannelLifecycleToast({
+            kind: 'deleted',
+            channelId: id,
+            channelName: removedName,
+            by: this.#extractEventActor(msg, ['deletedBy', 'deleted_by']),
+          });
+        }
+        break;
+      }
+      case 'archived': {
+        const existing = this.channelsById[id];
+        const wasActive = this.activeChannel === id;
+        if (existing) {
+          existing.archived = true;
+          existing.archived_at = this.#extractEventTimestamp(msg);
+          existing.archived_by = this.#extractEventActor(msg, ['archivedBy', 'archived_by']);
+        }
+        // Clear local message buffer so a future unarchive + re-view
+        // re-fetches fresh history rather than reading the stale buffer.
+        this.messages = this.messages.filter((m) => m.channel !== id);
+        if (wasActive) {
+          this.activeChannel = null;
+          this.#resetActiveChannelIfStale();
+        }
+        if (existing || wasActive) {
+          this.#emitChannelLifecycleToast({
+            kind: 'archived',
+            channelId: id,
+            channelName: existing ? (existing.name || id) : id,
+            by: this.#extractEventActor(msg, ['archivedBy', 'archived_by']),
+          });
+        }
+        break;
+      }
+      case 'unarchived': {
+        const existing = this.channelsById[id];
+        if (existing) {
+          existing.archived = false;
+          existing.archived_at = null;
+          existing.archived_by = null;
+        }
+        // No toast on unarchive — non-destructive, the row re-appearing
+        // in Available is sufficient visual feedback.
+        break;
+      }
+      case 'member_joined': {
+        // Forward-compat: the daemon does not yet publish this on
+        // ``system/conversations`` as of v0.4.0 Step 2.7 (member
+        // presence is fanned out on per-conv presence topics handled
+        // elsewhere). When the daemon adds it, this branch will
+        // increment the local member counter without waiting for the
+        // next REST poll.
+        const existing = this.channelsById[id];
+        if (existing) {
+          existing.memberCount = (existing.memberCount || 0) + 1;
+          const ts = this.#extractEventTimestamp(msg);
+          if (ts) existing.lastActivity = ts;
+          // If the join is for ME and I wasn't a member yet, flip the
+          // flag so the row moves into the Active section.
+          const selfKey = this.userProfile?.key;
+          if (
+            selfKey &&
+            typeof msg.key === 'string' &&
+            msg.key === selfKey &&
+            !existing.member
+          ) {
+            existing.member = true;
+          }
+        }
+        break;
+      }
+      case 'member_left': {
+        // Forward-compat companion to member_joined. Decrements the
+        // counter without going below 0 (defensive — a duplicate left
+        // event should not produce a negative count).
+        const existing = this.channelsById[id];
+        if (existing) {
+          existing.memberCount = Math.max(0, (existing.memberCount || 0) - 1);
+          const ts = this.#extractEventTimestamp(msg);
+          if (ts) existing.lastActivity = ts;
+          const selfKey = this.userProfile?.key;
+          if (
+            selfKey &&
+            typeof msg.key === 'string' &&
+            msg.key === selfKey &&
+            existing.member
+          ) {
+            existing.member = false;
+            // Auto-unstar on self-leave (Design Spec §2.6 — star is a
+            // member-only decoration).
+            if (existing.starred) {
+              existing.starred = false;
+            }
+          }
         }
         break;
       }
       default:
-        // Unknown event type — ignore. Forward-compat: a newer daemon
-        // could add types this web build doesn't recognize.
+        // Unknown event type — log structured context and bump the
+        // parse-failure rate so the App's "decoding errors detected"
+        // banner can surface a spike. NEVER throw.
+        this.#logSystemConversationParseFailure(
+          `unknown type ${JSON.stringify(msg.type)}`,
+          msg,
+        );
         break;
     }
+  }
+
+  /**
+   * Extract a usable ISO timestamp from a system-conversations event
+   * payload. Daemon publishes ``ts`` (v0.3.2 events) or ``timestamp``
+   * (v0.4.0 Steps 2.2 / 2.3 events). Returns the first non-empty
+   * string match or ``null`` if neither is present.
+   * @param {object} msg
+   * @returns {string | null}
+   */
+  #extractEventTimestamp(msg) {
+    if (typeof msg.ts === 'string' && msg.ts.length > 0) return msg.ts;
+    if (typeof msg.timestamp === 'string' && msg.timestamp.length > 0) {
+      return msg.timestamp;
+    }
+    return null;
+  }
+
+  /**
+   * Extract the actor name from a system-conversations event using a
+   * prioritized list of candidate field names. Lets the handler accept
+   * both ``camelCase`` (Steps 2.2 / 2.3) and ``snake_case`` (v0.3.2)
+   * conventions in one call.
+   * @param {object} msg
+   * @param {string[]} candidateFields
+   * @returns {string | null}
+   */
+  #extractEventActor(msg, candidateFields) {
+    for (const field of candidateFields) {
+      const value = msg[field];
+      if (typeof value === 'string' && value.length > 0) return value;
+    }
+    return null;
+  }
+
+  /**
+   * Emit a single-slot reactive payload describing a channel-lifecycle
+   * event the App should surface as a toast. Suppressed when the user
+   * has toggled in-app toasts off in Settings. The ``epoch`` counter
+   * ensures two back-to-back toasts with identical payload still re-
+   * fire the consumer's ``$effect`` (mirrors ``latestArtifactRefNotification``).
+   *
+   * @param {object} toast
+   * @param {'deleted' | 'archived'} toast.kind
+   * @param {string} toast.channelId
+   * @param {string} toast.channelName
+   * @param {string | null} toast.by
+   */
+  #emitChannelLifecycleToast({ kind, channelId, channelName, by }) {
+    if (!this.inAppToasts) return;
+    this.latestChannelLifecycleToast = {
+      kind,
+      channelId,
+      channelName,
+      by: by ?? null,
+      epoch: (this.latestChannelLifecycleToast?.epoch ?? 0) + 1,
+      ts: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Log a parse failure on a ``system/conversations`` payload with the
+   * same structured-context discipline as ``#receiveMqttFrame``'s JSON-
+   * parse failure path. Bumps ``parseFailureRate`` so the App banner
+   * surfaces a spike if multiple bad payloads land in quick succession.
+   * @param {string} reason
+   * @param {*} msg
+   */
+  #logSystemConversationParseFailure(reason, msg) {
+    let payloadPreview;
+    try {
+      const serialized = JSON.stringify(msg);
+      const PREVIEW_LIMIT = 500;
+      payloadPreview =
+        typeof serialized === 'string' && serialized.length > PREVIEW_LIMIT
+          ? serialized.slice(0, PREVIEW_LIMIT) + `... [truncated, total=${serialized.length}]`
+          : serialized;
+    } catch {
+      payloadPreview = '<unserializable>';
+    }
+    console.error('[claude-comms] system/conversations event rejected', {
+      topic: 'claude-comms/system/conversations',
+      reason,
+      payloadPreview,
+      timestamp: new Date().toISOString(),
+    });
+    this.#recordParseFailure();
   }
 
   #handleChatMessage(channel, msg) {
