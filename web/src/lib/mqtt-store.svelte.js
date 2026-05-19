@@ -329,6 +329,29 @@ export class MqttChatStore {
    */
   channelRoles = $state({});
 
+  /**
+   * v0.4.2 Step 3.5b (Wave E.4): reactive in-memory mirror of the
+   * per-user global-mute localStorage state. Keyed by participant key
+   * (8 hex chars); values are ``true`` when muted, absent otherwise.
+   *
+   * Source of truth across reloads is localStorage under
+   * ``cc:user-muted:{targetKey}``; this $state map is the reactive
+   * view so components reading ``isUserGloballyMuted`` re-render on
+   * toggles without polling. The localStorage round-trip happens
+   * inside ``muteUserGlobally`` so callers don't have to choose
+   * between session and persistent state.
+   *
+   * Per Q4 (Phil's localStorage-only pattern for personal-preference
+   * state, matching the per-channel mute precedent from v0.4.0): the
+   * global-user-mute state intentionally does NOT go over MQTT or MCP.
+   *
+   * Plain ``$state`` object (NOT ``$state.raw``) so per-key writes
+   * trigger reactivity on consumers reading ``userMutes[key]``.
+   *
+   * @type {Record<string, boolean>}
+   */
+  userMutes = $state({});
+
   /** @type {mqtt.MqttClient | null} */
   #client = null;
 
@@ -2713,6 +2736,179 @@ export class MqttChatStore {
       return { success: false, error: result.error };
     }
     return { success: true };
+  }
+
+  // ── v0.4.2 Step 3.5b (Wave E.4): member-context-menu accessors ──
+  //
+  // Three frontend store methods that wire the new MemberContextMenu UI
+  // (kick / start DM / global mute) to Wave E.3's backend MCP tools.
+  // `kickMember` + `startDM` round-trip `/mcp`; `muteUserGlobally` +
+  // `isUserGloballyMuted` are localStorage-only per Q4's pattern (same
+  // model as per-channel mute, which keeps an axis of personal user
+  // preference off the wire).
+  //
+  // Disconnected-state semantics (mirror Wave B):
+  //   - kickMember: direct-reject when disconnected. Kicks are
+  //     authoritative server actions; queuing them while offline would
+  //     accept stale role state. The UI re-fires after reconnect.
+  //   - startDM:   direct-reject when disconnected. DM creation is
+  //     server-deterministic via _dm_slug; the UI prompts a retry.
+  //   - muteUserGlobally / isUserGloballyMuted: localStorage-only,
+  //     always available, no wire round-trip.
+
+  /**
+   * Eject a participant from a channel via Wave E.3's ``comms_kick``
+   * MCP tool. Owner or admin only — the backend enforces the role gate
+   * via ``RegistryStore.get_channel_role`` (mcp_tools.py:2664). The UI
+   * is also expected to hide the affordance for non-owner/non-admin
+   * callers via ``getChannelRole``, but the server is the
+   * authoritative gate; clients that bypass the visibility check still
+   * hit the role check and get an error envelope back.
+   *
+   * Disconnected: rejects immediately with
+   * ``{ success: false, error: 'Not connected.' }`` rather than queuing
+   * — kicks reflect ephemeral role state and shouldn't replay across
+   * a reconnect window that may have shifted ownership.
+   *
+   * Wire shape (Wave E.3 pinned):
+   *   ``comms_kick`` with payload
+   *   ``{ key, conversation, target_key }``. Response on success:
+   *   ``{ status: 'kicked', target_key, conversation }``.
+   *
+   * @param {string} channelId - Channel id to kick from.
+   * @param {string} targetKey - 8-hex-char participant key to eject.
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async kickMember(channelId, targetKey) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof targetKey !== 'string' || !targetKey) {
+      return { success: false, error: 'Missing target key.' };
+    }
+    if (!this.connected) {
+      return { success: false, error: 'Not connected.' };
+    }
+
+    const result = await mcpCall('comms_kick', {
+      key: this.userProfile.key,
+      conversation: channelId,
+      target_key: targetKey,
+    });
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Open (or look up) a deterministic two-party DM channel via Wave
+   * E.3's ``comms_dm_open`` MCP tool. Idempotent on the backend:
+   * a second call for the same pair returns ``status='existed'`` and
+   * the existing slug. On success, this accessor also navigates the UI
+   * into the DM via ``switchChannel`` so the caller doesn't have to
+   * juggle a second store call.
+   *
+   * Disconnected: rejects immediately with
+   * ``{ success: false, error: 'Not connected.' }``. The DM slug is
+   * deterministic so a retry after reconnect is equivalent; we don't
+   * queue because the round-trip is what produces the slug we need to
+   * switch into.
+   *
+   * Wire shape (Wave E.3 pinned):
+   *   ``comms_dm_open`` with payload ``{ key, target_key }``.
+   *   Response on success: ``{ status: 'opened'|'existed', conversation }``.
+   *
+   * @param {string} targetKey - 8-hex-char participant key to DM.
+   * @returns {Promise<{ success: boolean, conversation?: string, status?: string, error?: string }>}
+   */
+  async startDM(targetKey) {
+    if (typeof targetKey !== 'string' || !targetKey) {
+      return { success: false, error: 'Missing target key.' };
+    }
+    if (!this.connected) {
+      return { success: false, error: 'Not connected.' };
+    }
+
+    const result = await mcpCall('comms_dm_open', {
+      key: this.userProfile.key,
+      target_key: targetKey,
+    });
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+    const payload = result.payload || {};
+    const conversation = payload.conversation;
+    if (typeof conversation !== 'string' || !conversation) {
+      return { success: false, error: 'DM open returned no conversation slug.' };
+    }
+    // Navigate into the DM. ``switchChannel`` is a no-op if we are
+    // already viewing it (e.g. `status === 'existed'` and the user
+    // re-clicked from a profile card).
+    this.switchChannel(conversation);
+    return { success: true, conversation, status: payload.status };
+  }
+
+  /**
+   * Toggle a global per-user mute (localStorage-only, per Q4 pattern).
+   * Storage key: ``cc:user-muted:{targetKey}`` value ``'1'`` when
+   * muted, absent otherwise. Mirrors the per-channel mute precedent
+   * from v0.4.0: personal-preference state stays client-side, never
+   * touches MQTT or MCP.
+   *
+   * Also writes through to ``this.userMutes`` (a reactive ``$state``
+   * map) so any component reading ``isUserGloballyMuted`` re-renders
+   * without prop wiring. The localStorage write is the source of
+   * truth across reloads; the in-memory map is the reactive view.
+   *
+   * @param {string} targetKey - 8-hex-char participant key.
+   * @param {boolean} [muted=true] - True to mute, false to unmute.
+   * @returns {void}
+   */
+  muteUserGlobally(targetKey, muted = true) {
+    if (typeof targetKey !== 'string' || !targetKey) return;
+    const storageKey = `cc:user-muted:${targetKey}`;
+    if (muted) {
+      this.userMutes[targetKey] = true;
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(storageKey, '1');
+        } catch {
+          // localStorage may be unavailable (private mode / quota); the
+          // in-memory map still drives the session-local reactive view.
+        }
+      }
+    } else {
+      delete this.userMutes[targetKey];
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {
+          // ditto.
+        }
+      }
+    }
+  }
+
+  /**
+   * Read the global per-user mute state. Returns true when
+   * ``cc:user-muted:{targetKey}`` is present in localStorage OR the
+   * in-memory ``userMutes`` map has the key — the map mirrors the
+   * persistent store so components reading this in a $derived block
+   * re-run on mute toggles without a page reload.
+   *
+   * @param {string} targetKey
+   * @returns {boolean}
+   */
+  isUserGloballyMuted(targetKey) {
+    if (typeof targetKey !== 'string' || !targetKey) return false;
+    if (this.userMutes[targetKey] === true) return true;
+    if (typeof localStorage === 'undefined') return false;
+    try {
+      return localStorage.getItem(`cc:user-muted:${targetKey}`) === '1';
+    } catch {
+      return false;
+    }
   }
 
   /**

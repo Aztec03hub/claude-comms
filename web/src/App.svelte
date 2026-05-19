@@ -25,6 +25,7 @@
   import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp.svelte';
   import TypeNameConfirmDialog from './components/TypeNameConfirmDialog.svelte';
   import UndoToast from './components/UndoToast.svelte';
+  import MemberContextMenu from './components/MemberContextMenu.svelte';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import * as api from './lib/api.js';
 
@@ -46,6 +47,10 @@
   let showProfileCard = $state(false);
   let profileCardTarget = $state(null);
   let contextMenu = $state({ show: false, x: 0, y: 0, message: null });
+  // v0.4.2 Step 3.5b (Wave E.4): MemberContextMenu mount slot. Single
+  // shared mount; right-clicking a row in MemberList populates the
+  // {member, x, y} triple and we render a fresh menu instance.
+  let memberCtxMenu = $state(/** @type {{show: boolean, x: number, y: number, member: any} | null} */ (null));
   let toasts = $state([]);
   let threadParent = $state(null);
   let emojiPickerTarget = $state(null);
@@ -607,6 +612,54 @@
     showProfileCard = true;
   }
 
+  // v0.4.2 Step 3.5b (Wave E.4): MemberContextMenu open/close + action
+  // dispatch. The MemberList right-clicks deliver
+  // ``(event, member)``; we capture the cursor coords and the member
+  // row so the mounted menu can render at the cursor and route Kick /
+  // Mute / DM into the matching store accessors. The destructive Kick
+  // gate flows through ``confirmDestructive`` (severity='danger') so
+  // the user types the participant's name before the wire call fires;
+  // this matches Polish Wave Batch 2's pattern.
+  function handleMemberContextMenu(event, member) {
+    if (!member || typeof member !== 'object' || !member.key) return;
+    memberCtxMenu = {
+      show: true,
+      x: event?.clientX ?? 0,
+      y: event?.clientY ?? 0,
+      member,
+    };
+  }
+
+  function closeMemberContextMenu() {
+    memberCtxMenu = null;
+  }
+
+  async function handleMemberContextAction(actionId) {
+    const member = memberCtxMenu?.member;
+    if (!member || !member.key) return;
+    const channelId = store.activeChannel;
+    const channel = channelId ? store.channelsById?.[channelId] : null;
+
+    if (actionId === 'kick') {
+      if (!channel) return;
+      const proceed = await confirmDestructive({
+        resourceName: member.name || member.key,
+        title: `Kick ${member.name || member.key}?`,
+        body: `This will remove ${member.name || member.key} from #${channel.name ?? channel.id}. They will need an invite to rejoin.`,
+        confirmLabel: 'Kick',
+        severity: 'danger',
+      });
+      if (!proceed) return;
+      await store.kickMember(channel.id, member.key);
+    } else if (actionId === 'mute') {
+      store.muteUserGlobally(member.key, true);
+    } else if (actionId === 'unmute') {
+      store.muteUserGlobally(member.key, false);
+    } else if (actionId === 'dm') {
+      await store.startDM(member.key);
+    }
+  }
+
   function handleReact(message, emoji) {
     if (emoji) {
       // Toggle existing reaction directly (clicked a reaction pill)
@@ -833,9 +886,24 @@
       getMemberConversations={(key) => store.getMemberConversations(key)}
       typingUsers={store.typingUsers}
       onShowProfile={handleShowProfile}
+      onMemberContextMenu={handleMemberContextMenu}
     />
   {/if}
 </div>
+
+{#if memberCtxMenu && memberCtxMenu.show && memberCtxMenu.member}
+  <MemberContextMenu
+    member={memberCtxMenu.member}
+    channel={store.activeChannel ? store.channelsById?.[store.activeChannel] : null}
+    currentChannelRole={store.activeChannel ? store.getChannelRole(store.activeChannel) : 'member'}
+    currentUserKey={store.userProfile?.key ?? ''}
+    isMuted={store.isUserGloballyMuted(memberCtxMenu.member.key)}
+    x={memberCtxMenu.x}
+    y={memberCtxMenu.y}
+    onAction={handleMemberContextAction}
+    onClose={closeMemberContextMenu}
+  />
+{/if}
 
 {#if showChannelModal}
   <ChannelModal

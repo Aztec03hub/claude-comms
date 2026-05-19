@@ -7,6 +7,10 @@
   @prop {Array} offline - Array of offline member objects.
   @prop {object} typingUsers - Map of participant keys to typing state objects ({ typing: boolean }).
   @prop {Function} onShowProfile - Callback invoked with a member object to display their profile.
+  @prop {Function} [onMemberContextMenu] - Optional callback invoked with
+    ``(event: MouseEvent, member)`` when a member row is right-clicked.
+    The parent (App.svelte) mounts a ``MemberContextMenu`` at the cursor.
+    v0.4.2 Step 3.5b (Wave E.4).
 -->
 <script>
   import { Search, Globe, Monitor, Plug, Terminal, Link } from 'lucide-svelte';
@@ -28,7 +32,24 @@
     getMemberConversations = () => [],
     typingUsers = {},
     onShowProfile,
+    /** v0.4.2 Step 3.5b (Wave E.4): right-click on a row opens the
+     *  MemberContextMenu in the parent. Optional so legacy mounts that
+     *  don't wire it stay no-op (matches the v0.3.2 contract). */
+    onMemberContextMenu,
   } = $props();
+
+  /**
+   * v0.4.2 Step 3.5b (Wave E.4): row-level oncontextmenu hook. Calls
+   * preventDefault so the native browser context menu doesn't compete
+   * with ours, then delegates to the parent. When ``onMemberContextMenu``
+   * is not wired (legacy mounts), we let the browser's default menu
+   * through unchanged so we don't accidentally suppress copy/paste etc.
+   */
+  function handleContextMenu(event, member) {
+    if (typeof onMemberContextMenu !== 'function') return;
+    event.preventDefault();
+    onMemberContextMenu(event, member);
+  }
 
   // Per-section disclosure widgets. M-FIX (v0.3.3): Phil's hard constraint —
   // all three section headers (Active / Online elsewhere / Offline) always
@@ -210,6 +231,7 @@
     onkeydown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') onShowProfile(member);
     }}
+    oncontextmenu={(e) => handleContextMenu(e, member)}
     role="button"
     tabindex="0"
     data-testid="member-{member.key}"
@@ -415,6 +437,7 @@
             onkeydown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') onShowProfile(member);
             }}
+            oncontextmenu={(e) => handleContextMenu(e, member)}
             role="button"
             tabindex="0"
             data-testid="member-{member.key}"
