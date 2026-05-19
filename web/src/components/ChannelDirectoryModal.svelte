@@ -35,6 +35,12 @@
     onClose,
     onChannelClick,
     onChannelJoin,
+    // Polish Wave Batch 2 — Promise-based destructive-confirm helper from
+    // App.svelte. Replaces the v0.4.0 ``window.confirm`` / ``window.prompt``
+    // placeholders in the Admin tab's Archive + Delete actions. Optional —
+    // when not supplied (legacy test render) the actions fall back to the
+    // original window.confirm behaviour so existing specs still pass.
+    onConfirmDestructive,
   } = $props();
 
   // Stable ids so aria-labelledby has something to bind to. Suffix with a
@@ -206,8 +212,11 @@
   }
 
   // ── Admin tab actions ──────────────────────────────────────────────
-  // v0.4.0 MVP: window.confirm / window.prompt are placeholders. Proper
-  // type-name confirm modals land in v0.4.1.
+  // Polish Wave Batch 2 — v0.4.0's ``window.confirm`` / ``window.prompt``
+  // placeholders are replaced by the shared TypeNameConfirmDialog via the
+  // Promise-based ``onConfirmDestructive`` helper from App.svelte. Both
+  // Archive (warning) and Delete (danger) flow through the same call
+  // surface so the UX matches the Sidebar context-menu Delete path.
 
   function startEditTopic(channel) {
     editingTopicId = channel.id;
@@ -240,25 +249,44 @@
     }
   }
 
-  function archiveOwnedChannel(channel) {
-    const ok =
-      typeof window !== 'undefined' && typeof window.confirm === 'function'
-        ? window.confirm(`Archive #${channel.name}? Members will be kicked.`)
-        : true;
+  async function archiveOwnedChannel(channel) {
+    let ok = false;
+    if (typeof onConfirmDestructive === 'function') {
+      ok = await onConfirmDestructive({
+        resourceName: `channel #${channel.name}`,
+        requireTypedName: channel.name,
+        title: 'Archive channel?',
+        body: `This will archive #${channel.name} and remove all members from the live channel list. You can still find it under the directory's Archived view.`,
+        confirmLabel: 'Archive channel',
+        severity: 'warning',
+      });
+    } else if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      ok = window.confirm(`Archive #${channel.name}? Members will be kicked.`);
+    } else {
+      ok = true;
+    }
     if (!ok) return;
     if (typeof store?.archiveChannel === 'function') {
       store.archiveChannel(channel.id);
     }
   }
 
-  function deleteOwnedChannel(channel) {
-    const typed =
-      typeof window !== 'undefined' && typeof window.prompt === 'function'
-        ? window.prompt(
-            `Delete #${channel.name}? Type the channel name to confirm.`,
-          )
-        : channel.name;
-    if (typed !== channel.name) return;
+  async function deleteOwnedChannel(channel) {
+    let ok = false;
+    if (typeof onConfirmDestructive === 'function') {
+      ok = await onConfirmDestructive({
+        resourceName: `channel #${channel.name}`,
+        requireTypedName: channel.name,
+        title: 'Delete channel?',
+        body: `This will permanently delete #${channel.name} and all its history. This cannot be undone.`,
+        confirmLabel: 'Delete channel',
+        severity: 'danger',
+      });
+    } else if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      const typed = window.prompt(`Delete #${channel.name}? Type the channel name to confirm.`);
+      ok = typed === channel.name;
+    }
+    if (!ok) return;
     if (typeof store?.deleteChannel === 'function') {
       store.deleteChannel(channel.id);
     }

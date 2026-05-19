@@ -15,7 +15,21 @@
 
   const APP_VERSION = pkg?.version || '';
 
-  let { store, onCreateChannel, onBrowseChannels, onShowProfile, onOpenSettings, onStarToggle } = $props();
+  let {
+    store,
+    onCreateChannel,
+    onBrowseChannels,
+    onShowProfile,
+    onOpenSettings,
+    onStarToggle,
+    // Polish Wave Batch 2 wiring — App.svelte injects these so the Sidebar
+    // doesn't have to know how the destructive-confirm dialog or undo-toast
+    // are mounted. ``onConfirmDestructive(opts) => Promise<boolean>``;
+    // ``onShowUndoToast({ message, onUndo, onExpire })``. Tests can stub
+    // them with vi.fn() that resolves on demand.
+    onConfirmDestructive,
+    onShowUndoToast,
+  } = $props();
 
   // Footer connection-status binding (UX G-25) — three-state mirror of ConnectionStatus.svelte.
   let connectionLabel = $derived(store.connected ? 'Online' : (store.connectionError ? 'Offline' : 'Reconnecting…'));
@@ -66,6 +80,25 @@
     return false;
   }
 
+  /**
+   * Spawn an undo toast for an in-flight ``{ done, cancel }`` envelope.
+   * Polish Wave Batch 2 — converts the store's leave/archive/close envelopes
+   * into the ``{ message, onUndo, onExpire }`` shape App.svelte's
+   * ``onShowUndoToast`` consumes. No-op when the host hasn't supplied the
+   * prop (e.g. test renders that don't care about toast wiring).
+   */
+  function spawnUndoToast(handle, message) {
+    if (typeof onShowUndoToast !== 'function') return;
+    if (!handle || typeof handle.cancel !== 'function') return;
+    onShowUndoToast({
+      message,
+      onUndo: () => { try { handle.cancel(); } catch { /* already committed */ } },
+      // onExpire is a no-op: the store's internal 15s timer commits the
+      // action on its own; we don't need to push a second commit signal.
+      onExpire: () => {},
+    });
+  }
+
   async function handleContextAction(actionId) {
     const c = contextMenuChannel;
     closeContextMenu();
@@ -74,7 +107,7 @@
     if (typeof actionId === 'string' && actionId.startsWith('mute:')) {
       return void store.setMute(c.id, actionId.split(':')[1]);
     }
-    if (actionId === 'mark-read') return; // v0.4.1 follow-up — no store method yet.
+    if (actionId === 'mark-read') return void store.markAllRead(c.id);
     if (actionId === 'copy-link') {
       try {
         if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -91,16 +124,36 @@
         leaveDialogHasPinnedMessages = hasMyPinnedMessages(c.id);
         leaveDialogOpen = true;
       } else {
-        store.leaveChannel(c.id);
+        const handle = store.leaveChannel(c.id);
+        spawnUndoToast(handle, `Left #${c.name ?? c.id}`);
       }
       return;
     }
-    if (actionId === 'close') return void store.closeChannel(c.id);
+    if (actionId === 'close') {
+      const handle = store.closeChannel(c.id);
+      spawnUndoToast(handle, `Closed #${c.name ?? c.id}`);
+      return;
+    }
     if (actionId === 'delete') {
-      // Step 2.13 will replace this with a type-name-to-confirm modal.
-      const ok = typeof window !== 'undefined'
-        ? window.confirm(`Delete #${c.name ?? c.id}? This cannot be undone.`)
-        : false;
+      // Polish Wave Batch 2 — replace the v0.4.0 window.confirm placeholder
+      // with the shared TypeNameConfirmDialog via the Promise-based
+      // onConfirmDestructive helper from App.svelte. When the helper is
+      // not supplied (test render), fall back to the previous boolean
+      // semantics so existing tests don't break.
+      const channelName = c.name ?? c.id;
+      let ok = false;
+      if (typeof onConfirmDestructive === 'function') {
+        ok = await onConfirmDestructive({
+          resourceName: `channel #${channelName}`,
+          requireTypedName: channelName,
+          title: 'Delete channel?',
+          body: `This will permanently delete #${channelName} and all its history. This cannot be undone.`,
+          confirmLabel: 'Delete channel',
+          severity: 'danger',
+        });
+      } else if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        ok = window.confirm(`Delete #${channelName}? This cannot be undone.`);
+      }
       if (ok) store.deleteChannel(c.id);
       return;
     }
@@ -108,10 +161,14 @@
   }
 
   function handleLeaveConfirm() {
-    const id = leaveDialogChannel?.id;
+    const ch = leaveDialogChannel;
+    const id = ch?.id;
     leaveDialogOpen = false;
     leaveDialogChannel = null;
-    if (id) store.leaveChannel(id);
+    if (id) {
+      const handle = store.leaveChannel(id);
+      spawnUndoToast(handle, `Left #${ch?.name ?? id}`);
+    }
   }
   function handleLeaveCancel() {
     leaveDialogOpen = false;

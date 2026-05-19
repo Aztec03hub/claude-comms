@@ -24,7 +24,10 @@
   import ThemeToggle from './components/ThemeToggle.svelte';
   import ChannelDirectoryModal from './components/ChannelDirectoryModal.svelte';
   import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp.svelte';
+  import TypeNameConfirmDialog from './components/TypeNameConfirmDialog.svelte';
+  import UndoToast from './components/UndoToast.svelte';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
+  import * as api from './lib/api.js';
   import { Users, Search, Pin, Settings, Menu, FileText } from 'lucide-svelte';
 
   const store = new MqttChatStore();
@@ -200,6 +203,123 @@
     quickJoinValue = '';
     quickJoinError = '';
   }
+
+  // ── Polish Wave Batch 2 — destructive-action confirm helper ────────────
+  //
+  // ``confirmDestructive`` wraps a single shared ``TypeNameConfirmDialog``
+  // mount in a Promise-based call surface so any caller (App, Sidebar's
+  // context-menu Delete, ChannelDirectoryModal's Admin tab Archive/Delete)
+  // can ``await`` for the user's decision instead of juggling its own
+  // dialog-mount lifecycle. The shared mount is gated on
+  // ``confirmDialogProps`` so only one destructive dialog is ever open at
+  // a time; concurrent calls reject all but the first via the immediate-
+  // false-resolve guard below. The returned Promise resolves ``true`` on
+  // Confirm and ``false`` on Cancel / Escape / outside-click.
+  //
+  // The helper is exposed through prop drilling: Sidebar receives it as
+  // ``onConfirmDestructive`` and the ChannelDirectoryModal receives it the
+  // same way. We pass it as a prop (not via context or a global) so the
+  // component shape stays testable in isolation — tests can stub a fake
+  // helper that resolves true/false on demand.
+  let confirmDialogProps = $state(null);
+
+  function confirmDestructive(opts) {
+    if (confirmDialogProps !== null) {
+      // A destructive dialog is already open; reject the second call so
+      // the caller treats it as "user declined" rather than racing the
+      // existing dialog.
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      confirmDialogProps = {
+        resourceName: opts?.resourceName ?? '',
+        requireTypedName: opts?.requireTypedName ?? '',
+        title: opts?.title,
+        body: opts?.body ?? '',
+        confirmLabel: opts?.confirmLabel,
+        severity: opts?.severity ?? 'danger',
+        onConfirm: () => {
+          confirmDialogProps = null;
+          resolve(true);
+        },
+        onCancel: () => {
+          confirmDialogProps = null;
+          resolve(false);
+        },
+      };
+    });
+  }
+
+  // ── Polish Wave Batch 2 — UndoToast slot ───────────────────────────────
+  //
+  // A single ``UndoToast`` mount gated on ``undoToastProps``. The Sidebar
+  // (and any future caller) populates the slot via ``showUndoToast`` to
+  // feed the toast the ``{ message, onUndo, onExpire }`` triple derived
+  // from the store's ``{ done, cancel }`` envelope (leaveChannel /
+  // archiveChannel / closeChannel).
+  //
+  // Separate from the existing ``toasts`` queue (NotificationToast) on
+  // purpose: this slot is for destructive-action undo affordances, the
+  // queue is for incoming-message notifications, and Phil's plan §11
+  // risks register explicitly calls out that they should NOT share a
+  // queue. One undo toast at a time is sufficient because the user can
+  // only fire one destructive action per click; if a second one arrives
+  // while the first is still visible the existing toast is replaced
+  // (oldest-loses) since the underlying envelope's 15s commit window has
+  // already started independent of the UI.
+  let undoToastProps = $state(null);
+
+  function showUndoToast({ message, onUndo, onExpire }) {
+    // Replace any in-flight undo toast — the previous one's commit window
+    // has already started in the store, so dropping the UI affordance
+    // doesn't invalidate it. The store-side timer fires regardless.
+    undoToastProps = {
+      message,
+      onUndo: () => {
+        if (typeof onUndo === 'function') onUndo();
+        undoToastProps = null;
+      },
+      onExpire: () => {
+        if (typeof onExpire === 'function') onExpire();
+        undoToastProps = null;
+      },
+    };
+  }
+
+  // ── Polish Wave Batch 2 — slashCommand bus listener ────────────────────
+  //
+  // MessageInput dispatches a bubbling ``slashCommand`` CustomEvent for
+  // app-level routing of ``/list`` (opens the channel directory) and
+  // ``/nick`` (updates the display name via ``api.updateName``). This
+  // effect mounts a single window-level listener (safe because the
+  // listener body does not read any reactive state — only sets it, which
+  // doesn't tracker-feedback into the effect's deps).
+  $effect(() => {
+    function handler(event) {
+      const detail = event?.detail ?? {};
+      const trigger = detail.trigger;
+      const value = detail.value;
+      if (trigger === 'openDirectory') {
+        showChannelDirectory = true;
+      } else if (trigger === 'updateName' && typeof value === 'string') {
+        api.updateName(store.userProfile.key, value).then((result) => {
+          if (result && result.success) {
+            store.userProfile.name = result.name ?? value;
+            store.nameUnset = false;
+          } else {
+            // Surface via console; the slash-command parser also emits a
+            // requestToast for the user-visible feedback path so we don't
+            // double-toast here.
+            console.warn('[claude-comms] /nick failed', result?.error);
+          }
+        }).catch((err) => {
+          console.warn('[claude-comms] /nick threw', err);
+        });
+      }
+    }
+    window.addEventListener('slashCommand', handler);
+    return () => window.removeEventListener('slashCommand', handler);
+  });
 
   // Global keyboard shortcuts
   function handleGlobalKeydown(e) {
@@ -536,6 +656,8 @@
       onShowProfile={handleShowProfile}
       onOpenSettings={() => showSettingsPanel = !showSettingsPanel}
       onStarToggle={(channelId) => store.toggleStar(channelId)}
+      onConfirmDestructive={confirmDestructive}
+      onShowUndoToast={showUndoToast}
     />
   </div>
 
@@ -827,6 +949,7 @@
       showChannelDirectory = false;
     }}
     onChannelJoin={(channelId) => store.joinChannel(channelId)}
+    onConfirmDestructive={confirmDestructive}
   />
 {/if}
 
@@ -906,6 +1029,41 @@
     onDismiss={() => dismissToast(toast.id)}
   />
 {/each}
+
+<!--
+  Polish Wave Batch 2 — destructive-action confirmation slot. A single
+  shared mount driven by the Promise-based ``confirmDestructive`` helper.
+  Callers (Sidebar's Delete, ChannelDirectoryModal's Admin tab Archive/
+  Delete) ``await`` the helper to get the user's boolean decision and
+  never touch the props object directly.
+-->
+{#if confirmDialogProps}
+  <TypeNameConfirmDialog
+    resourceName={confirmDialogProps.resourceName}
+    requireTypedName={confirmDialogProps.requireTypedName}
+    title={confirmDialogProps.title}
+    body={confirmDialogProps.body}
+    confirmLabel={confirmDialogProps.confirmLabel}
+    severity={confirmDialogProps.severity}
+    onConfirm={confirmDialogProps.onConfirm}
+    onCancel={confirmDialogProps.onCancel}
+  />
+{/if}
+
+<!--
+  Polish Wave Batch 2 — undo-toast slot. Sidebar (and any future caller)
+  populates this via ``showUndoToast`` to surface the 15-second affordance
+  paired with the store's ``{ done, cancel }`` envelope. One in-flight
+  toast at a time; a second call replaces the first (oldest-loses) since
+  the store-side timer for the first action has already started.
+-->
+{#if undoToastProps}
+  <UndoToast
+    message={undoToastProps.message}
+    onUndo={undoToastProps.onUndo}
+    onExpire={undoToastProps.onExpire}
+  />
+{/if}
 
 <style>
   /* Surfaced when the MQTT message-parse failure rate crosses 5 per 30s.
