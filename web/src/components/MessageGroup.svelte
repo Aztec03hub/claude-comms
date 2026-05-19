@@ -1,6 +1,16 @@
 <!--
   @component MessageGroup
-  @description Renders a group of consecutive messages from the same sender, marking the first as a full bubble (with avatar/name) and subsequent ones as consecutive (compact layout).
+  @description Renders a group of consecutive messages from the same sender,
+    marking the first as a full bubble (with avatar/name) and subsequent ones
+    as consecutive (compact layout).
+
+    v0.4.2 Wave E.1 Step 3.11 (UX G-58): when the incoming ``messages`` array
+    is a run of system events (``sender.type === 'system'``), MessageGroup
+    delegates to ``SystemMessageGroup`` which collapses runs of 3+ into a
+    single muted summary row with click-to-expand. Runs of 1 or 2 system
+    events still render inline. Non-system runs render through MessageBubble
+    exactly as they did pre-3.11 (zero behaviour change for regular chat).
+
   @prop {Array} messages - Array of message objects in this group.
   @prop {object} currentUser - The current user's profile.
   @prop {object} participants - Map of participant keys to participant objects.
@@ -12,20 +22,34 @@
 -->
 <script>
   import MessageBubble from './MessageBubble.svelte';
+  import SystemMessageGroup from './SystemMessageGroup.svelte';
 
   let { messages = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onRetryMessage } = $props();
+
+  // A group is "system" when every entry is a system event. Defensive: an
+  // empty array is not a system group (renders to nothing via the each
+  // block below). We check ALL entries rather than just the first to avoid
+  // a malformed mixed group sneaking into the SystemMessageGroup branch.
+  let isSystemGroup = $derived(
+    messages.length > 0 &&
+      messages.every((m) => m?.sender?.type === 'system')
+  );
 </script>
 
-{#each messages as msg, i (msg.id)}
-  <MessageBubble
-    message={msg}
-    consecutive={i > 0}
-    {currentUser}
-    {participants}
-    {onOpenThread}
-    {onContextMenu}
-    {onShowProfile}
-    {onReact}
-    onRetry={onRetryMessage}
-  />
-{/each}
+{#if isSystemGroup}
+  <SystemMessageGroup {messages} />
+{:else}
+  {#each messages as msg, i (msg.id)}
+    <MessageBubble
+      message={msg}
+      consecutive={i > 0}
+      {currentUser}
+      {participants}
+      {onOpenThread}
+      {onContextMenu}
+      {onShowProfile}
+      {onReact}
+      onRetry={onRetryMessage}
+    />
+  {/each}
+{/if}
