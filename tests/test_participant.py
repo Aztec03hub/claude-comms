@@ -133,9 +133,24 @@ class TestSerialization:
         assert restored == p
 
     def test_json_keys(self) -> None:
+        # v0.4.2 Step 3.14 (Wave A2): the Participant model gained three
+        # ``profile_status_*`` fields, so the JSON-serialised key set is
+        # the v0.4.0 baseline plus the new triplet. Keeping the assertion
+        # as an exact set match preserves the original "no stowaway fields"
+        # contract — adding any future field will require a deliberate
+        # update here, which is the intent.
         p = Participant(key="a3f7b2c1", name="test", type="claude")
         data = json.loads(p.to_mqtt_payload())
-        assert set(data.keys()) == {"key", "name", "type", "client", "connections"}
+        assert set(data.keys()) == {
+            "key",
+            "name",
+            "type",
+            "client",
+            "connections",
+            "profile_status_emoji",
+            "profile_status_text",
+            "profile_status_expires_at",
+        }
 
 
 # ---------------------------------------------------------------------------

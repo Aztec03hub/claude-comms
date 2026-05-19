@@ -96,13 +96,17 @@ def test_role_table_exists_after_init(store: RegistryStore) -> None:
 
 
 def test_schema_version_bumped_to_2(store: RegistryStore) -> None:
-    """schema_meta records ``schema_version = '2'`` after init."""
+    """schema_meta records the current ``SCHEMA_VERSION`` after init.
+
+    Test name kept verbatim from 3.0a so historical traceability holds;
+    the literal assertion was widened in v0.4.2 Step 3.14 when
+    ``SCHEMA_VERSION`` bumped 2 -> 3 (profile_status_* triplet).
+    """
     row = store._conn.execute(  # noqa: SLF001
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()
     assert row is not None
-    assert row[0] == "2"
-    assert SCHEMA_VERSION == 2
+    assert row[0] == str(SCHEMA_VERSION)
 
 
 # ---------------------------------------------------------------------------
@@ -272,10 +276,15 @@ def test_backfill_grandfathers_creator_as_owner(tmp_path: Path) -> None:
     store = RegistryStore.open(data_dir)
     try:
         # Post-migration: version bumped, backfill seeded the owner row.
+        # Compares against the live ``SCHEMA_VERSION`` constant so this
+        # assertion survives v0.4.2 Step 3.14's 2 -> 3 bump (and any
+        # future bumps) — historical "must end at v2 specifically"
+        # intent is preserved by the 1 -> 2 backfill assertion below
+        # (which is what this test actually covers).
         ver = store._conn.execute(  # noqa: SLF001
             "SELECT value FROM schema_meta WHERE key='schema_version'"
         ).fetchone()
-        assert ver[0] == "2"
+        assert ver[0] == str(SCHEMA_VERSION)
         assert store.get_channel_role("general", "1234abcd") == OWNER_ROLE
         assert store.list_channel_roles("general") == {"1234abcd": "owner"}
     finally:
@@ -364,7 +373,11 @@ def test_migration_smoke_v1_db_opens_clean_at_v2(tmp_path: Path) -> None:
         ver = store._conn.execute(  # noqa: SLF001
             "SELECT value FROM schema_meta WHERE key='schema_version'"
         ).fetchone()
-        assert ver[0] == "2"
+        # Widened from literal "2" to ``str(SCHEMA_VERSION)`` so this
+        # 1 -> latest smoke survives v0.4.2 Step 3.14's 2 -> 3 bump and
+        # any future column-only bumps. The test's substantive coverage
+        # (system-creator skip + clean open) is unchanged.
+        assert ver[0] == str(SCHEMA_VERSION)
         # No role row for 'general' because created_by='system'.
         assert store.list_channel_roles("general") == {}
     finally:

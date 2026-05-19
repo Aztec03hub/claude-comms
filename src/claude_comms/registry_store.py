@@ -38,17 +38,26 @@ from claude_comms.participant import (
 logger = logging.getLogger(__name__)
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 # Schema DDL is kept verbatim so it can be inspected from tests and audit logs.
+#
+# The participants table has three profile_status_* columns appended in
+# schema v3 (v0.4.2 Step 3.14, Wave A2 re-issue post-§I.18-collision-rename).
+# Fresh installs get them via the inline DDL below; v0.4.0-v0.4.2-Wave-A
+# installs get them via the idempotent ``PRAGMA table_info(participants)``
+# guarded ALTER TABLE block in ``_init_schema`` (2 -> 3 migration).
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS participants (
-    key         TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    type        TEXT NOT NULL CHECK (type IN ('claude','human')),
-    created_at  TEXT NOT NULL,
-    last_seen   TEXT NOT NULL
+    key                         TEXT PRIMARY KEY,
+    name                        TEXT NOT NULL,
+    type                        TEXT NOT NULL CHECK (type IN ('claude','human')),
+    created_at                  TEXT NOT NULL,
+    last_seen                   TEXT NOT NULL,
+    profile_status_emoji        TEXT NULL,
+    profile_status_text         TEXT NULL,
+    profile_status_expires_at   TEXT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_participants_name_lower ON participants (LOWER(name));
@@ -165,10 +174,16 @@ class RegistryStore:
         """Create tables if missing and run any pending migrations.
 
         Migration strategy: the DDL itself is idempotent (every CREATE uses
-        IF NOT EXISTS) so re-running it on an old database simply adds the
-        new ``conversation_roles`` table. The schema_version row tells us
-        whether we are looking at fresh data (no row yet) or a populated
-        v0.4.0-era database that needs the creator-grandfather backfill.
+        IF NOT EXISTS) so re-running it on an old database simply adds any
+        new tables. Column-level additions (e.g. v3's
+        ``profile_status_*`` triplet on the ``participants`` table) cannot
+        ride on ``CREATE TABLE IF NOT EXISTS`` and need explicit
+        ``ALTER TABLE`` statements gated by ``PRAGMA table_info(...)`` so
+        they are idempotent across daemon restarts.
+
+        The schema_version row tells us which structural migrations still
+        need to run; per-version blocks below remain in chronological
+        order (1 -> 2 first, then 2 -> 3).
         """
         with self._lock:
             # Observe prior version BEFORE we touch the schema, so we can
@@ -192,6 +207,27 @@ class RegistryStore:
                 "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
             )
+
+            # 2 -> 3 column-level migration: add the three profile_status_*
+            # columns to ``participants``. Idempotent via
+            # ``PRAGMA table_info(...)`` introspection so re-running on a
+            # post-v3 database is a guaranteed no-op. Fresh installs already
+            # have these columns from ``_SCHEMA_DDL`` above, so the guard
+            # short-circuits on the first iteration.
+            existing_cols = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(participants)")
+            }
+            for col_name, col_type in (
+                ("profile_status_emoji", "TEXT NULL"),
+                ("profile_status_text", "TEXT NULL"),
+                ("profile_status_expires_at", "TEXT NULL"),
+            ):
+                if col_name not in existing_cols:
+                    self._conn.execute(
+                        f"ALTER TABLE participants ADD COLUMN {col_name} {col_type}"
+                    )
+
             self._conn.commit()
 
         # Run the 1 -> 2 backfill only on an actual upgrade. Fresh installs
@@ -320,11 +356,19 @@ class RegistryStore:
         """
         with self._lock:
             snap = RegistrySnapshot()
-            for row in self._conn.execute("SELECT key, name, type FROM participants"):
+            for row in self._conn.execute(
+                "SELECT key, name, type, "
+                "profile_status_emoji, profile_status_text, "
+                "profile_status_expires_at "
+                "FROM participants"
+            ):
                 snap.participants[row["key"]] = Participant(
                     key=row["key"],
                     name=row["name"],
                     type=row["type"],
+                    profile_status_emoji=row["profile_status_emoji"],
+                    profile_status_text=row["profile_status_text"],
+                    profile_status_expires_at=row["profile_status_expires_at"],
                 )
                 # Ensure every participant has at least an empty membership
                 # set so callers can do ``setdefault`` style mutations
@@ -522,6 +566,74 @@ class RegistryStore:
                 (conversation,),
             )
             return {row["participant_key"]: row["role"] for row in cur}
+
+    # -- Profile status (v0.4.2 Step 3.14, Wave A2 re-issue) --------------
+
+    def set_profile_status(
+        self,
+        participant_key: str,
+        *,
+        emoji: str | None,
+        text: str | None,
+        expires_at: str | None,
+    ) -> None:
+        """Persist the profile-status triplet for ``participant_key``.
+
+        Single UPDATE statement so the three columns always move together
+        — mirrors the §I.18-collision rename rule that profile_status is
+        one logical fact, not three independent toggles. Idempotent: a
+        repeated identical call simply re-writes the same values.
+
+        ``expires_at`` is the caller-canonical ISO 8601 string OR None.
+        Storage is TEXT (NULL when None); the auto-expire coroutine compares
+        as ISO strings via ``expire_profile_statuses_before``.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE participants SET "
+                "profile_status_emoji = ?, "
+                "profile_status_text = ?, "
+                "profile_status_expires_at = ? "
+                "WHERE key = ?",
+                (emoji, text, expires_at, participant_key),
+            )
+            self._conn.commit()
+
+    def clear_profile_status(self, participant_key: str) -> None:
+        """NULL out the profile-status triplet for ``participant_key``.
+
+        Idempotent: clearing an already-cleared row is a no-op (single
+        UPDATE that writes the same NULLs). Used by both the explicit
+        ``comms_profile_status_clear`` MCP tool and the auto-expire sweep.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE participants SET "
+                "profile_status_emoji = NULL, "
+                "profile_status_text = NULL, "
+                "profile_status_expires_at = NULL "
+                "WHERE key = ?",
+                (participant_key,),
+            )
+            self._conn.commit()
+
+    def list_expired_profile_statuses(self, now_iso_str: str) -> list[str]:
+        """Return participant keys whose ``profile_status_expires_at`` < now.
+
+        The auto-expire coroutine calls this on each tick, then issues
+        per-key ``clear_profile_status`` + presence republish. Returning
+        a small list (not a generator) keeps the lock window tight and
+        the sweep idempotent — repeated reads see fewer expired rows
+        each pass.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT key FROM participants "
+                "WHERE profile_status_expires_at IS NOT NULL "
+                "  AND profile_status_expires_at < ?",
+                (now_iso_str,),
+            )
+            return [row["key"] for row in cur]
 
     # -- Admin -------------------------------------------------------------
 

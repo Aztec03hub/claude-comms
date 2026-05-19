@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -128,6 +129,34 @@ class Participant(BaseModel):
     connections: dict[str, ConnectionInfo] = Field(
         default_factory=dict,
         description="Active connections keyed by '{client}-{instanceId}'",
+    )
+    # ------------------------------------------------------------------
+    # Profile status (v0.4.2 Step 3.14, Wave A2 re-issue post-collision-rename)
+    # ------------------------------------------------------------------
+    # Durable per-participant ornament shown in the MemberList tooltip and
+    # the SettingsPanel (Wave E StatusEditor consumes these as the source
+    # of truth via the MCP tools ``comms_profile_status_set`` /
+    # ``comms_profile_status_clear``).  Persisted on the ``participants``
+    # table (schema v3); ephemeral connection-level ``activity`` is the
+    # v0.4.0 Activity API and lives on ``ConnectionInfo`` — the two never
+    # share storage or topology (see worklog §I.18 collision-rename for
+    # the full naming rationale).
+    profile_status_emoji: str | None = Field(
+        default=None,
+        description="Single emoji glyph (no length cap; client clamps display).",
+    )
+    profile_status_text: str | None = Field(
+        default=None,
+        max_length=140,
+        description="Short status sentence; <= 140 chars to keep tooltips tidy.",
+    )
+    profile_status_expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "ISO 8601 timestamp after which the auto-expire sweep clears "
+            "the three profile_status_* columns to NULL.  None means the "
+            "status never auto-expires (caller-cleared only)."
+        ),
     )
 
     @field_validator("key")

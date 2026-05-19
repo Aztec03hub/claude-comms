@@ -1494,8 +1494,16 @@ def start(
             )
             await pub_client.__aenter__()
 
-            async def _do_publish(topic: str, payload: bytes) -> None:
-                await pub_client.publish(topic, payload, qos=1)
+            async def _do_publish(
+                topic: str, payload: bytes, retain: bool = False
+            ) -> None:
+                # v0.4.2 Step 3.14: ``retain`` widening so the profile_status
+                # auto-expire + set/clear publish paths (and the long-standing
+                # ``publish_mcp_presence_on_join`` + ``_publish_offline``
+                # callers) reach the broker with the retained-message flag
+                # intact. Default False preserves every existing call-site
+                # behaviour where the kwarg was previously omitted.
+                await pub_client.publish(topic, payload, qos=1, retain=retain)
 
             _mcp_mod._publish_fn = _do_publish
 
@@ -1506,6 +1514,25 @@ def start(
                 console.print(
                     "  [green]Presence manager[/green] started (TTL cleanup active)"
                 )
+
+            # ── v0.4.2 Step 3.14, Wave A2 re-issue post-§I.18 rename ──
+            # Attach the standalone profile_status auto-expire coroutine.
+            # Standalone (not piggybacked into PresenceManager) because
+            # presence.py is read-only for this step per the brief; piggyback
+            # would require modifying ``_sweep_once`` in someone else's
+            # source. See worklog §6 for the LOC-based decision basis.
+            from claude_comms.mcp_tools import auto_expire_profile_statuses_loop
+
+            _profile_status_expire_task = asyncio.create_task(
+                auto_expire_profile_statuses_loop(
+                    _mcp_mod._registry,
+                    publish_fn_provider=lambda: _mcp_mod._publish_fn,
+                )
+            )
+            console.print(
+                "  [green]Profile-status auto-expire[/green] sweep started "
+                "(~60s tick)"
+            )
 
             console.print(
                 f"  [green]MCP server[/green] ready on http://{mcp_host}:{mcp_port}"

@@ -57,6 +57,8 @@ from claude_comms.mcp_tools import (
     tool_comms_read,
     tool_comms_send,
     tool_comms_thread_read,
+    tool_comms_profile_status_clear,
+    tool_comms_profile_status_set,
     tool_comms_status_clear,
     tool_comms_status_set,
     tool_comms_update_name,
@@ -1292,6 +1294,82 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             _get_registry(),
             key=key,
             conversation=conversation,
+            publish_fn=_publish_fn,
+        )
+
+    # ── v0.4.2 Step 3.14, Wave A2 re-issue post-§I.18-collision-rename ──
+    # Profile status is the DURABLE per-participant ornament Wave E's
+    # StatusEditor consumes; distinct from the ephemeral activity tools
+    # above (those broadcast on conv/{conv}/activity; these augment the
+    # retained presence topic per the brief's edge map). The MCP tool
+    # surface intentionally omits a ``key`` argument — caller identity
+    # is single-tenant via ``_config["identity"]["key"]``.
+
+    @mcp.tool()
+    async def comms_profile_status_set(
+        emoji: Annotated[
+            str | None,
+            Field(description="Single emoji glyph or None to leave unset."),
+        ],
+        text: Annotated[
+            str | None,
+            Field(description="Short status sentence, <= 140 chars, or None."),
+        ],
+        expires_at: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional ISO 8601 timestamp after which the auto-expire "
+                    "sweep (~60s tick) clears this status. None = no auto-expire."
+                )
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Set the caller's durable profile-status triplet.
+
+        Persists ``profile_status_emoji`` / ``profile_status_text`` /
+        ``profile_status_expires_at`` on the participants row and broadcasts
+        the augmented retained presence payload on
+        ``claude-comms/presence/{key}/{connKey}`` for every active connection.
+
+        Caller identity comes from the daemon's configured
+        ``identity.key`` (single-tenant).
+        """
+        assert _config is not None, "MCP server config not initialised"
+        caller_key = _config.get("identity", {}).get("key")
+        if not caller_key:
+            return {
+                "error": True,
+                "message": "Daemon config missing identity.key.",
+            }
+        _touch(caller_key)
+        return await tool_comms_profile_status_set(
+            _get_registry(),
+            key=caller_key,
+            emoji=emoji,
+            text=text,
+            expires_at=expires_at,
+            publish_fn=_publish_fn,
+        )
+
+    @mcp.tool()
+    async def comms_profile_status_clear() -> dict[str, Any]:
+        """Clear the caller's profile-status triplet.
+
+        Idempotent. Broadcasts the cleared payload so subscribers drop
+        stale tooltips even when the local row was already NULL.
+        """
+        assert _config is not None, "MCP server config not initialised"
+        caller_key = _config.get("identity", {}).get("key")
+        if not caller_key:
+            return {
+                "error": True,
+                "message": "Daemon config missing identity.key.",
+            }
+        _touch(caller_key)
+        return await tool_comms_profile_status_clear(
+            _get_registry(),
+            key=caller_key,
             publish_fn=_publish_fn,
         )
 

@@ -11,6 +11,7 @@ server uses ``stateless_http=True`` -- each request is independent).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -1350,6 +1351,314 @@ async def tool_comms_status_clear(
             )
 
     return {"status": "cleared", "key": key, "count": cleared}
+
+
+# ---------------------------------------------------------------------------
+# Profile status (v0.4.2 Step 3.14, Wave A2 re-issue post-§I.18 rename)
+# ---------------------------------------------------------------------------
+#
+# DURABLE per-participant ornament shown in MemberList tooltips + the Wave E
+# StatusEditor.  Distinct from the v0.4.0 ephemeral activity API above:
+#   - Tool names: ``comms_profile_status_set`` / ``..._clear``
+#                 (NOT ``comms_status_*`` — that's the activity tools)
+#   - Storage: ``participants.profile_status_*`` columns (schema v3)
+#              (NOT ``ConnectionInfo.activity``)
+#   - Topology: augments retained ``claude-comms/presence/{key}/{connKey}``
+#               (NOT ``claude-comms/conv/{conv}/activity``)
+#   - Identity: caller derived from ``config.identity.key`` single-tenant
+#               (NOT a per-request ``key`` arg)
+#
+# See ``.worklogs/v042-3.14-HALTED-collision-report.md`` and the re-issue
+# brief for the full collision matrix that drove the rename.
+
+
+def profile_status_presence_topic(key: str, conn_key: str) -> str:
+    """Return the per-connection presence topic the augmented payload lands on.
+
+    Centralised so tests can assert on the exact string and so future
+    topic-format work stays single-source-of-truth.
+    """
+    return f"claude-comms/presence/{key}/{conn_key}"
+
+
+def _build_profile_status_presence_payload(
+    p: Participant,
+    *,
+    conn_key: str,
+    emoji: str | None,
+    text: str | None,
+    expires_at: str | None,
+) -> bytes:
+    """Compose the augmented retained presence payload for one connection.
+
+    Preserves the canonical presence keys (``key``, ``name``, ``type``,
+    ``status``, ``client``, ``ts``) and appends the three
+    ``profile_status_*`` keys per the §I.18 edge-map contract Wave E
+    consumes.  Clear is encoded as the three keys = ``None``.
+    """
+    conn = p.connections.get(conn_key)
+    client = conn.client if conn is not None else "mcp"
+    payload = {
+        "key": p.key,
+        "name": p.name,
+        "type": p.type,
+        "status": "online",
+        "client": client,
+        "ts": now_iso(),
+        "profile_status_emoji": emoji,
+        "profile_status_text": text,
+        "profile_status_expires_at": expires_at,
+    }
+    return json.dumps(payload).encode()
+
+
+async def _publish_profile_status_to_all_connections(
+    p: Participant,
+    *,
+    emoji: str | None,
+    text: str | None,
+    expires_at: str | None,
+    publish_fn: PublishFn | None,
+) -> list[str]:
+    """Publish the augmented presence payload retained to every connKey.
+
+    Returns the list of connection keys that received a publish (for
+    observability in the tool response + tests).  Swallows broker
+    exceptions so a hiccup never breaks the tool path; callers see the
+    successful-publish list, not an exception.
+    """
+    if publish_fn is None:
+        return []
+    published: list[str] = []
+    for conn_key in list(p.connections.keys()):
+        payload = _build_profile_status_presence_payload(
+            p,
+            conn_key=conn_key,
+            emoji=emoji,
+            text=text,
+            expires_at=expires_at,
+        )
+        topic = profile_status_presence_topic(p.key, conn_key)
+        try:
+            await publish_fn(topic, payload, retain=True)
+            published.append(conn_key)
+        except Exception:
+            logger.exception(
+                "Failed to publish profile_status presence for %s/%s",
+                p.key,
+                conn_key,
+            )
+    return published
+
+
+async def tool_comms_profile_status_set(
+    registry: ParticipantRegistry,
+    *,
+    key: str,
+    emoji: str | None,
+    text: str | None,
+    expires_at: str | None = None,
+    publish_fn: PublishFn | None = None,
+) -> dict[str, Any]:
+    """Persist the caller's profile-status triplet and broadcast it.
+
+    Side effects:
+
+    1. ``RegistryStore.set_profile_status`` writes the three columns.
+       (No-op when the registry was built without a store, e.g. unit
+       tests that only exercise the in-memory model.)
+    2. The in-memory ``Participant`` model fields are updated to match
+       so subsequent ``get_member`` / ``/api/participants`` reads see
+       the new values without another DB round-trip.
+    3. The augmented retained presence payload is published per
+       connection on ``claude-comms/presence/{key}/{connKey}``.
+
+    ``expires_at`` is treated as an opaque ISO 8601 string OR ``None``;
+    no server-side reinterpretation. The auto-expire coroutine compares
+    via string ordering against ``now_iso()``.
+
+    If ``emoji`` and ``text`` are BOTH None, the call short-circuits to
+    a successful clear (matches the §I.18 rule that the three columns
+    move atomically — a set with no payload is semantically a clear).
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    p = result
+
+    # Normalise empty/whitespace strings to None so the columns + payload
+    # stay tidy (an empty-string text would render as a stray quote in
+    # the MemberList tooltip).
+    if isinstance(emoji, str) and not emoji.strip():
+        emoji = None
+    if isinstance(text, str) and not text.strip():
+        text = None
+
+    # Optional bounds: defensive cap matching the Participant pydantic
+    # max_length on profile_status_text. Returning a structured error here
+    # (rather than letting pydantic raise) keeps the MCP surface uniform.
+    if text is not None and len(text) > 140:
+        return _error("profile_status_text must be <= 140 characters.")
+
+    # Both-None short-circuits to clear semantics. ``set with nothing`` is
+    # ambiguous otherwise (a future caller could rely on either behaviour),
+    # so we collapse early and document the choice.
+    is_clear = emoji is None and text is None
+
+    # Persist + mutate in-memory model.
+    store = getattr(registry, "_store", None)
+    if store is not None:
+        if is_clear:
+            store.clear_profile_status(p.key)
+        else:
+            store.set_profile_status(
+                p.key,
+                emoji=emoji,
+                text=text,
+                expires_at=expires_at,
+            )
+
+    # In-memory mirror so REST readers see fresh values.
+    from datetime import datetime as _dt
+
+    p.profile_status_emoji = None if is_clear else emoji
+    p.profile_status_text = None if is_clear else text
+    if is_clear or expires_at is None:
+        p.profile_status_expires_at = None
+    else:
+        try:
+            p.profile_status_expires_at = _dt.fromisoformat(expires_at)
+        except (TypeError, ValueError):
+            # Unparseable string — keep DB write but null in-memory so
+            # the auto-expire path doesn't crash on a bad ISO. Returned
+            # status remains "set" since persistence succeeded.
+            p.profile_status_expires_at = None
+
+    applied = await _publish_profile_status_to_all_connections(
+        p,
+        emoji=None if is_clear else emoji,
+        text=None if is_clear else text,
+        expires_at=None if is_clear else expires_at,
+        publish_fn=publish_fn,
+    )
+
+    return {
+        "status": "cleared" if is_clear else "set",
+        "key": p.key,
+        "emoji": None if is_clear else emoji,
+        "text": None if is_clear else text,
+        "expires_at": None if is_clear else expires_at,
+        "published_to_connections": applied,
+    }
+
+
+async def tool_comms_profile_status_clear(
+    registry: ParticipantRegistry,
+    *,
+    key: str,
+    publish_fn: PublishFn | None = None,
+) -> dict[str, Any]:
+    """NULL the caller's profile-status triplet and broadcast the clear.
+
+    Idempotent: clearing an already-clear status still publishes a clear
+    payload so any out-of-sync subscriber drops the stale tooltip.
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    p = result
+
+    store = getattr(registry, "_store", None)
+    if store is not None:
+        store.clear_profile_status(p.key)
+
+    p.profile_status_emoji = None
+    p.profile_status_text = None
+    p.profile_status_expires_at = None
+
+    applied = await _publish_profile_status_to_all_connections(
+        p,
+        emoji=None,
+        text=None,
+        expires_at=None,
+        publish_fn=publish_fn,
+    )
+
+    return {
+        "status": "cleared",
+        "key": p.key,
+        "published_to_connections": applied,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Profile-status auto-expire coroutine
+# ---------------------------------------------------------------------------
+
+DEFAULT_PROFILE_STATUS_SWEEP_INTERVAL_SECONDS = 60
+
+
+async def auto_expire_profile_statuses_once(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn | None = None,
+) -> list[str]:
+    """One sweep tick: NULL every profile_status whose expires_at < now.
+
+    Standalone (NOT piggybacked into ``PresenceManager``) because the
+    brief marks ``presence.py`` as read-only for this step and inlining
+    the call would require modifying ``PresenceManager._sweep_once``.
+    See ``.worklogs/v042-3.14-profile-status-backend.md`` §6 for the
+    full decision basis.
+
+    Returns the list of participant keys that were cleared this tick.
+    """
+    store = getattr(registry, "_store", None)
+    if store is None:
+        return []
+    now_str = now_iso()
+    expired_keys = store.list_expired_profile_statuses(now_str)
+    if not expired_keys:
+        return []
+    for key in expired_keys:
+        p = registry.get(key)
+        store.clear_profile_status(key)
+        if p is not None:
+            p.profile_status_emoji = None
+            p.profile_status_text = None
+            p.profile_status_expires_at = None
+            await _publish_profile_status_to_all_connections(
+                p,
+                emoji=None,
+                text=None,
+                expires_at=None,
+                publish_fn=publish_fn,
+            )
+    return expired_keys
+
+
+async def auto_expire_profile_statuses_loop(
+    registry: ParticipantRegistry,
+    publish_fn_provider: Any,
+    *,
+    interval_seconds: int = DEFAULT_PROFILE_STATUS_SWEEP_INTERVAL_SECONDS,
+) -> None:
+    """Long-running ~60s coroutine that calls the sweep on every tick.
+
+    ``publish_fn_provider`` is a zero-arg callable (typically a lambda
+    over ``_mcp_mod._publish_fn``) so the loop picks up the live
+    publish function — at daemon startup the publish function is
+    initially a no-op and gets swapped once aiomqtt is up. Resolving
+    on every tick keeps the loop independent of startup ordering.
+    """
+    while True:
+        try:
+            publish_fn = publish_fn_provider() if callable(publish_fn_provider) else None
+            await auto_expire_profile_statuses_once(registry, publish_fn=publish_fn)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("profile_status auto-expire sweep raised; continuing")
+        await asyncio.sleep(interval_seconds)
 
 
 def tool_comms_conversations(
