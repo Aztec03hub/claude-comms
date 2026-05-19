@@ -21,14 +21,12 @@
   import ConversationBrowser from './components/ConversationBrowser.svelte';
   import UserProfileView from './components/UserProfileView.svelte';
   import ForwardPicker from './components/ForwardPicker.svelte';
-  import ThemeToggle from './components/ThemeToggle.svelte';
   import ChannelDirectoryModal from './components/ChannelDirectoryModal.svelte';
   import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp.svelte';
   import TypeNameConfirmDialog from './components/TypeNameConfirmDialog.svelte';
   import UndoToast from './components/UndoToast.svelte';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import * as api from './lib/api.js';
-  import { Users, Search, Pin, Settings, Menu, FileText } from 'lucide-svelte';
 
   const store = new MqttChatStore();
   const keyboard = getKeyboardRegistry();
@@ -726,35 +724,6 @@
       </div>
     {/if}
 
-    <header class="chat-header" data-testid="chat-header">
-      <button class="mobile-menu-btn" type="button" data-testid="mobile-menu-btn" onclick={() => showMobileSidebar = !showMobileSidebar} aria-label="Open sidebar menu">
-        <Menu size={20} strokeWidth={2} />
-      </button>
-      <div class="header-icon">#</div>
-      <span class="header-name" data-testid="header-channel-name">{store.activeChannel}</span>
-      <span class="header-sep"></span>
-      <span class="header-topic">{store.activeChannelMeta?.topic || ''}</span>
-      <button class="header-members" type="button" data-testid="header-members-count" onclick={() => showMemberList = !showMemberList}>
-        <Users size={12} strokeWidth={2} />
-        {store.onlineCount + store.offlineParticipants.length}
-      </button>
-      <div class="header-actions">
-        <button class="header-btn" title="Search" onclick={() => { showSearchPanel = !showSearchPanel; showThreadPanel = false; }} data-testid="header-search-btn">
-          <Search size={16} strokeWidth={2} />
-        </button>
-        <button class="header-btn" title="Pinned messages" onclick={() => showPinnedPanel = !showPinnedPanel} data-testid="header-pin-btn">
-          <Pin size={16} strokeWidth={2} />
-        </button>
-        <button class="header-btn" title="Artifacts" onclick={() => showArtifactPanel = !showArtifactPanel} data-testid="header-artifacts-btn">
-          <FileText size={16} strokeWidth={2} />
-        </button>
-        <ThemeToggle mode={theme} onToggle={toggleTheme} />
-        <button class="header-btn" title="Settings" onclick={() => showSettingsPanel = !showSettingsPanel} data-testid="header-settings-btn">
-          <Settings size={16} strokeWidth={2} />
-        </button>
-      </div>
-    </header>
-
     {#if showPinnedPanel}
       <PinnedPanel
         messages={store.activePinnedMessages}
@@ -772,6 +741,8 @@
       onReact={handleReact}
       onRetryMessage={(messageId) => store.retryMessage(messageId)}
       {store}
+      showChatHeader={true}
+      currentUserRole={store.getChannelRole?.(store.activeChannel) ?? null}
     />
 
     {#if showThreadPanel && threadParent}
@@ -1188,133 +1159,6 @@
 
   /* Scanline overlay removed - not in design spec */
 
-  .chat-header {
-    padding: 14px 22px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-bottom: 1px solid var(--border);
-    position: relative;
-    z-index: 101;
-    background: linear-gradient(180deg, var(--bg-base), var(--bg-base));
-    backdrop-filter: blur(16px) saturate(1.2);
-  }
-
-  .chat-header::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-    height: 1px;
-    pointer-events: none;
-    background: linear-gradient(90deg, transparent, var(--ember-700), var(--ember-500), var(--ember-700), transparent);
-    background-size: 200% 100%;
-    animation: headerGlow 8s ease infinite;
-    opacity: 0.6;
-  }
-
-  .header-icon {
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    color: var(--text-muted);
-    font-weight: 300;
-  }
-
-  .header-name {
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: -0.2px;
-  }
-
-  .header-sep {
-    width: 1px;
-    height: 18px;
-    background: var(--border);
-    margin: 0 4px;
-  }
-
-  .header-topic {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    flex: 1;
-  }
-
-  .header-members {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
-    border-radius: 20px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    font-size: 11px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: var(--transition-fast);
-    font-family: inherit;
-  }
-
-  .header-members :global(svg) { opacity: 0.7; }
-
-  .header-members:hover {
-    border-color: var(--ember-700);
-    color: var(--text-secondary);
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 2px;
-    margin-left: auto;
-  }
-
-  .header-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    border: none;
-    background: none;
-    color: var(--text-faint);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: var(--transition-fast);
-  }
-
-  .header-btn:hover {
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
-
-  /* ── Mobile menu button ── */
-  .mobile-menu-btn {
-    display: none;
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    border: none;
-    background: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    align-items: center;
-    justify-content: center;
-    transition: var(--transition-fast);
-    flex-shrink: 0;
-  }
-
-  .mobile-menu-btn:hover {
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
-
   /* ── Mobile sidebar wrapper ── */
   .sidebar-mobile-wrapper {
     display: contents;
@@ -1325,26 +1169,6 @@
   }
 
   @media (max-width: 480px) {
-    .chat-header {
-      padding: 10px 12px;
-      gap: 6px;
-    }
-
-    .header-topic,
-    .header-sep,
-    .header-members {
-      display: none;
-    }
-
-    .header-btn {
-      width: 28px;
-      height: 28px;
-    }
-
-    .mobile-menu-btn {
-      display: flex;
-    }
-
     .sidebar-mobile-wrapper {
       display: block;
       position: fixed;

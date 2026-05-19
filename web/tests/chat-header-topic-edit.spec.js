@@ -28,7 +28,7 @@
 //      - When store.setTopic resolves { success: false, error }, the
 //        onEditTopicError callback fires with that error string.
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
@@ -268,5 +268,223 @@ describe('ChatHeader — error surfacing', () => {
 
     expect(onEditTopicError).toHaveBeenCalledTimes(1);
     expect(onEditTopicError).toHaveBeenCalledWith('Server rejected the topic.');
+  });
+});
+
+// ── 5. App.svelte wire (v0.4.2 Wave E.2 follow-up) ─────────────────────
+//
+// After flipping `showChatHeader={true}` on App.svelte's ChatView mount
+// AND deleting the legacy inline `<header class="chat-header">` block at
+// the top of the main pane, the new ChatHeader.svelte must take over.
+// These tests mount the real App with a mocked MqttChatStore and assert:
+//
+//   1. Owner sees the inline-edit affordance (pencil button)
+//   2. Member does NOT see the pencil button
+//   3. store.getChannelRole is called with the active channel id
+//   4. The legacy inline header markup is gone from the DOM (only the
+//      new ChatHeader with data-testid="chat-header-new" remains)
+
+// JSDOM shims for App's transitive deps (rAF / IntersectionObserver /
+// ResizeObserver / Notification). Mirrors prop-drilling.spec.js's setup.
+{
+  const realRAF = globalThis.requestAnimationFrame ?? ((cb) => setTimeout(cb, 16));
+  const safeRAF = (cb) => realRAF((ts) => {
+    try { cb(ts); } catch { /* swallow teardown-race throws */ }
+  });
+  globalThis.requestAnimationFrame = safeRAF;
+  if (typeof window !== 'undefined') window.requestAnimationFrame = safeRAF;
+}
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class {
+    constructor() {}
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() { return []; }
+  };
+}
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    constructor() {}
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+if (typeof globalThis.Notification === 'undefined') {
+  globalThis.Notification = class {
+    static permission = 'default';
+    static requestPermission = () => Promise.resolve('default');
+  };
+}
+
+// Module-level registry for the App-constructed store instance. App's
+// constructor pushes onto this so each test can reach the live mock.
+globalThis.__chatHeaderAppStoreInstances = globalThis.__chatHeaderAppStoreInstances ?? [];
+
+// Per-instance role override the test sets BEFORE rendering App. The
+// mocked constructor reads this so each test can pin the role surface
+// independently. Default is 'owner' so the affordance renders.
+globalThis.__chatHeaderAppRoleOverride = 'owner';
+
+vi.mock('../src/lib/mqtt-store.svelte.js', () => {
+  class MqttChatStoreMock {
+    constructor() {
+      globalThis.__chatHeaderAppStoreInstances.push(this);
+      this.connected = true;
+      this.connectionError = null;
+      this.parseFailureRate = 0;
+      this.serverUnreachable = false;
+      this.nameUnset = false;
+      this.activeChannel = 'general';
+      this.activeChannelMeta = {
+        id: 'general',
+        name: 'general',
+        topic: 'a place for general chatter',
+        memberCount: 5,
+        unread: 0,
+        unreadFrom: null,
+      };
+      this.onlineCount = 1;
+      this.offlineParticipants = [];
+      this.activePinnedMessages = [];
+      this.activeMessages = [];
+      this.activeChannelReplies = [];
+      this.activeTypingUsers = [];
+      this.activeMembers = [];
+      this.onlineElsewhere = [];
+      this.typingUsers = [];
+      this.userProfile = { key: 'me-key', name: 'me', type: 'human' };
+      this.messages = [];
+      this.channels = [{ id: 'general', muted: false }];
+      this.channelsById = { general: this.activeChannelMeta };
+      this.starredChannels = [];
+      this.activeChannels = [{ id: 'general', muted: false }];
+      this.availableChannels = [];
+      this.participants = { 'me-key': { key: 'me-key', name: 'me', type: 'human' } };
+      this.inAppToasts = true;
+      this.composerPrefill = '';
+      this.channelRoles = {};
+      // Spied surfaces App reads or invokes.
+      this.switchChannel = vi.fn();
+      this.goToMessage = vi.fn();
+      this.connect = vi.fn();
+      this.disconnect = vi.fn();
+      this.markThreadSeen = vi.fn();
+      this.markSeen = vi.fn();
+      this.markUnread = vi.fn();
+      this.togglePin = vi.fn();
+      this.toggleStar = vi.fn();
+      this.retryMessage = vi.fn();
+      this.addReaction = vi.fn();
+      this.deleteMessage = vi.fn();
+      this.forwardMessage = vi.fn();
+      this.muteChannel = vi.fn();
+      this.createChannel = vi.fn();
+      this.joinChannel = vi.fn();
+      this.leaveChannel = vi.fn();
+      this.getMemberConversations = vi.fn(() => []);
+      this.notifyTyping = vi.fn();
+      this.sendMessage = vi.fn();
+      this.setTopic = vi.fn().mockResolvedValue({ success: true });
+      // The Wave B accessor we wire from App.svelte. Honors the per-test
+      // override so member / owner / null can each be exercised.
+      this.getChannelRole = vi.fn(() => globalThis.__chatHeaderAppRoleOverride);
+    }
+  }
+  return { MqttChatStore: MqttChatStoreMock };
+});
+
+vi.mock('../src/lib/notifications.svelte.js', () => ({
+  requestPermission: vi.fn(),
+  sendNotification: vi.fn(),
+}));
+
+// eslint-disable-next-line import/first
+import App from '../src/App.svelte';
+
+async function flushAppMount() {
+  // Drain the rAF queue ChatView's auto-scroll effect schedules.
+  await new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    } else {
+      setTimeout(resolve, 50);
+    }
+  });
+  await tick();
+}
+
+describe('App.svelte — ChatHeader wire (v0.4.2 Wave E.2 follow-up)', () => {
+  beforeEach(() => {
+    globalThis.__chatHeaderAppStoreInstances.length = 0;
+    globalThis.__chatHeaderAppRoleOverride = 'owner';
+  });
+
+  it('owner sees the ChatHeader inline-edit pencil after the App.svelte wire flip', async () => {
+    globalThis.__chatHeaderAppRoleOverride = 'owner';
+    const { queryByTestId } = render(App);
+    await flushAppMount();
+    // The new component-scoped header mounts.
+    expect(queryByTestId('chat-header-new')).not.toBeNull();
+    // And because the role resolves to owner, the pencil renders.
+    expect(queryByTestId('chat-header-topic-edit-btn')).not.toBeNull();
+  });
+
+  it('member does NOT see the ChatHeader inline-edit pencil', async () => {
+    globalThis.__chatHeaderAppRoleOverride = 'member';
+    const { queryByTestId } = render(App);
+    await flushAppMount();
+    expect(queryByTestId('chat-header-new')).not.toBeNull();
+    // Role is member → pencil hidden, static button disabled.
+    expect(queryByTestId('chat-header-topic-edit-btn')).toBeNull();
+    const staticBtn = queryByTestId('chat-header-topic-static');
+    expect(staticBtn).not.toBeNull();
+    expect(staticBtn.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('App.svelte calls store.getChannelRole with the active channel id', async () => {
+    globalThis.__chatHeaderAppRoleOverride = 'owner';
+    render(App);
+    await flushAppMount();
+    const store = globalThis.__chatHeaderAppStoreInstances.at(-1);
+    expect(store).toBeDefined();
+    // The wire passes `store.activeChannel` (the id string 'general') to
+    // the role accessor.
+    expect(store.getChannelRole).toHaveBeenCalled();
+    const calls = store.getChannelRole.mock.calls;
+    // Every call must use the active channel id; we don't pin call count
+    // because Svelte's reactivity may re-evaluate the derivation when
+    // other reactive deps settle during mount.
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    for (const args of calls) {
+      expect(args[0]).toBe('general');
+    }
+  });
+
+  it('legacy inline <header class="chat-header"> markup is gone from the App DOM', async () => {
+    globalThis.__chatHeaderAppRoleOverride = 'owner';
+    const { container, queryByTestId } = render(App);
+    await flushAppMount();
+    // The legacy header carried data-testid="chat-header" plus children
+    // data-testid="header-channel-name", "header-members-count",
+    // "header-search-btn", "header-pin-btn", "header-artifacts-btn",
+    // "header-settings-btn", and "mobile-menu-btn". After the wire flip
+    // none of those should be in the DOM; the new ChatHeader.svelte
+    // renders only `chat-header-new` + its scoped children.
+    expect(queryByTestId('chat-header')).toBeNull();
+    expect(queryByTestId('header-channel-name')).toBeNull();
+    expect(queryByTestId('header-members-count')).toBeNull();
+    expect(queryByTestId('header-search-btn')).toBeNull();
+    expect(queryByTestId('header-pin-btn')).toBeNull();
+    expect(queryByTestId('header-artifacts-btn')).toBeNull();
+    expect(queryByTestId('header-settings-btn')).toBeNull();
+    expect(queryByTestId('mobile-menu-btn')).toBeNull();
+    // Sanity: only ONE chat-header is in the DOM and it is the new one.
+    const headers = container.querySelectorAll('header');
+    const newHeaders = Array.from(headers).filter(
+      (h) => h.getAttribute('data-testid') === 'chat-header-new',
+    );
+    expect(newHeaders.length).toBe(1);
   });
 });
