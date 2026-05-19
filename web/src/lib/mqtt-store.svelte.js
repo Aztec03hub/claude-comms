@@ -654,6 +654,23 @@ export class MqttChatStore {
   }
 
   /**
+   * Test-only seam: dispatch a synthetic chat-message into
+   * ``#handleChatMessage`` without standing up an MQTT broker. Mirrors
+   * what the production MQTT dispatch path does when a
+   * ``claude-comms/conv/{id}/messages`` frame arrives. Used by
+   * ``tests/mention-dot.spec.js`` (v0.4.2 Step 3.10) to pin the
+   * Design Spec §8.2 invariant: live mention messages raise
+   * ``unreadHasMention`` so the sidebar mention dot fires even on
+   * muted channels.
+   *
+   * @param {string} channel - Target conversation id.
+   * @param {object} msg - Wire message payload.
+   */
+  _handleChatMessageForTest(channel, msg) {
+    this.#handleChatMessage(channel, msg);
+  }
+
+  /**
    * Fetch message history from the REST API for a given channel.
    * Messages are deduplicated against the seen-ID set so live MQTT
    * messages that arrived before the history response don't appear twice.
@@ -3712,7 +3729,24 @@ export class MqttChatStore {
     // Update unread count if not active channel
     if (channel !== this.activeChannel) {
       const ch = this.channelsById[channel];
-      if (ch) ch.unread++;
+      if (ch) {
+        ch.unread++;
+        // v0.4.2 Step 3.10: propagate mention dot from live messages.
+        // Mirrors the bootstrap path in ``checkChannels`` (line ~2824):
+        // when ``msg.mentions`` is an explicit list including the
+        // caller's participant key, raise ``unreadHasMention`` so the
+        // sidebar's mention-dot variant fires even while the channel
+        // is muted (Design Spec §8.2 invariant). Pre-3.10, only the
+        // bootstrap fetch surfaced this flag; live messages silently
+        // bumped ``unread`` without ever flipping the mention bit.
+        if (
+          Array.isArray(msg.mentions) &&
+          this.userProfile?.key &&
+          msg.mentions.includes(this.userProfile.key)
+        ) {
+          ch.unreadHasMention = true;
+        }
+      }
     }
 
     // Real-time artifact panel refresh (plan §1): any chat message carrying
