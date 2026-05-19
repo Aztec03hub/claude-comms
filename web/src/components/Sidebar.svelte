@@ -11,6 +11,7 @@
   import SidebarChannelSection from './SidebarChannelSection.svelte';
   import ChannelContextMenu from './ChannelContextMenu.svelte';
   import LeaveChannelDialog from './LeaveChannelDialog.svelte';
+  import StatusEditor from './StatusEditor.svelte';
   import pkg from '../../package.json';
 
   const APP_VERSION = pkg?.version || '';
@@ -44,6 +45,23 @@
   let leaveDialogMessageCount = $state(0);
   let leaveDialogIsStarred = $state(false);
   let leaveDialogHasPinnedMessages = $state(false);
+
+  // StatusEditor popover state (UX G-24, v0.4.2 Step 3.13).
+  // Anchored to the identity row's status line click. Open / close is
+  // local boolean; the editor itself is self-positioning (fixed
+  // bottom-left of viewport) so the sidebar's overflow:hidden doesn't
+  // clip it.
+  let statusEditorOpen = $state(false);
+  function openStatusEditor() { statusEditorOpen = true; }
+  function closeStatusEditor() { statusEditorOpen = false; }
+  async function handleStatusSave(emoji, text, expiresAt) {
+    statusEditorOpen = false;
+    await store.setProfileStatus(emoji, text, expiresAt);
+  }
+  async function handleStatusClear() {
+    statusEditorOpen = false;
+    await store.clearProfileStatus();
+  }
 
   function openContextMenu(event, channelId) {
     if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -285,11 +303,37 @@
         class:offline={connectionState === 'offline'}
         data-testid="sidebar-user-status"
       >{connectionLabel}</div>
+      <button
+        type="button"
+        class="profile-status-row"
+        class:has-status={store.userProfile.profileStatus != null}
+        onclick={(e) => { e.stopPropagation(); openStatusEditor(); }}
+        data-testid="sidebar-profile-status"
+        title="Set a status"
+      >
+        {#if store.userProfile.profileStatus}
+          {#if store.userProfile.profileStatus.emoji}
+            <span class="ps-emoji" data-testid="sidebar-profile-status-emoji">{store.userProfile.profileStatus.emoji}</span>
+          {/if}
+          <span class="ps-text" data-testid="sidebar-profile-status-text">{store.userProfile.profileStatus.text ?? ''}</span>
+        {:else}
+          <span class="ps-placeholder">Set a status</span>
+        {/if}
+      </button>
     </div>
     <button class="user-settings" title="User settings" onclick={(e) => { e.stopPropagation(); onOpenSettings(); }}>
       <Settings size={16} />
     </button>
   </div>
+
+  {#if statusEditorOpen}
+    <StatusEditor
+      currentStatus={store.userProfile.profileStatus}
+      onSave={handleStatusSave}
+      onClear={handleStatusClear}
+      onCancel={closeStatusEditor}
+    />
+  {/if}
 
   {#if contextMenuOpen && contextMenuChannel}
     <ChannelContextMenu
@@ -346,6 +390,12 @@
   .user-info .ustatus.online { color: #34d399; text-shadow: 0 0 10px rgba(52,211,153,0.3); }
   .user-info .ustatus.connecting { color: var(--ember-400, #f59e0b); }
   .user-info .ustatus.offline { color: #f87171; text-shadow: 0 0 10px rgba(248,113,113,0.3); }
+  .profile-status-row { display: flex; align-items: center; gap: 5px; margin-top: 3px; padding: 1px 0; background: none; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; max-width: 100%; overflow: hidden; text-align: left; font-family: inherit; }
+  .profile-status-row:hover { color: var(--text-secondary); }
+  .profile-status-row.has-status { color: var(--text-secondary); }
+  .profile-status-row .ps-emoji { font-size: 12px; line-height: 1; flex-shrink: 0; }
+  .profile-status-row .ps-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .profile-status-row .ps-placeholder { color: var(--text-faint); font-style: italic; }
   .user-settings { width: 28px; height: 28px; border-radius: 8px; border: none; background: none; color: var(--text-faint); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: var(--transition-fast); }
   .user-settings:hover { background: var(--bg-surface); color: var(--text-secondary); }
   @media (max-width: 480px) { .sidebar-left { display: none; } }

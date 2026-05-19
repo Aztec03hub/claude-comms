@@ -180,7 +180,15 @@ export class MqttChatStore {
   userProfile = $state({
     key: '',
     name: '(unset)',
-    type: 'human'
+    type: 'human',
+    /**
+     * Profile status (UX G-24, v0.4.2 Step 3.13). Either ``null`` ("no
+     * status set") OR an object with the three Wave A2 keys verbatim:
+     *   { emoji: string|null, text: string|null, expires_at: string|null }
+     * Snake-case ``expires_at`` mirrors the MCP boundary so wire-state
+     * round-trips don't need a key-rename layer.
+     */
+    profileStatus: null,
   });
 
   /**
@@ -3012,6 +3020,83 @@ export class MqttChatStore {
    */
   async _simulateVisibilityRegainForTest() {
     return this.#maybeCheckChannels();
+  }
+
+  /**
+   * Set the local user's profile status (UX G-24, v0.4.2 Step 3.13).
+   * Calls Wave A2's ``comms_profile_status_set`` MCP tool. The MCP-boundary
+   * arg names are snake_case (``emoji``, ``text``, ``expires_at``) — do
+   * not rename without coordinating with Step 3.14's backend wrapper.
+   *
+   * Optimistic local update: the caller's ``userProfile.profileStatus``
+   * is rewritten BEFORE the MCP call lands so the Sidebar status row
+   * refreshes instantly. On failure the previous status is restored.
+   *
+   * Disconnected-state behaviour: mirrors the Wave B admin accessors
+   * (``setTopic``, ``deleteChannel``, ``renameChannel``) — they fire the
+   * MCP HTTP request regardless of MQTT broker connection state and
+   * surface ``{ success: false, error }`` if it fails. The
+   * ``#pendingSends`` queue is reserved for outgoing MQTT chat messages
+   * (UX G-62), not for MCP admin calls.
+   *
+   * @param {string|null} emoji - Single emoji glyph or null to omit.
+   * @param {string|null} text - Status text (server enforces a 60-char
+   *   cap — we don't pre-truncate here, but the StatusEditor UI does).
+   * @param {string|null} [expiresAt=null] - ISO-8601 expiry timestamp
+   *   ("never expires" if null). Forwarded to the MCP tool's
+   *   ``expires_at`` arg.
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async setProfileStatus(emoji, text, expiresAt = null) {
+    // Both emoji + text being absent is treated as a "clear" request;
+    // the explicit clear accessor is preferred but tolerate this here.
+    if (emoji == null && text == null) {
+      return this.clearProfileStatus();
+    }
+
+    const prevStatus = this.userProfile.profileStatus
+      ? { ...this.userProfile.profileStatus }
+      : null;
+    this.userProfile.profileStatus = {
+      emoji: emoji ?? null,
+      text: text ?? null,
+      expires_at: expiresAt ?? null,
+    };
+
+    const result = await mcpCall('comms_profile_status_set', {
+      key: this.userProfile.key,
+      emoji: emoji ?? null,
+      text: text ?? null,
+      expires_at: expiresAt ?? null,
+    });
+    if (!result.success) {
+      this.userProfile.profileStatus = prevStatus;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Clear the local user's profile status (UX G-24, v0.4.2 Step 3.13).
+   * Calls Wave A2's ``comms_profile_status_clear`` MCP tool (no args
+   * beyond ``key``). Optimistic local clear with rollback on failure.
+   *
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async clearProfileStatus() {
+    const prevStatus = this.userProfile.profileStatus
+      ? { ...this.userProfile.profileStatus }
+      : null;
+    this.userProfile.profileStatus = null;
+
+    const result = await mcpCall('comms_profile_status_clear', {
+      key: this.userProfile.key,
+    });
+    if (!result.success) {
+      this.userProfile.profileStatus = prevStatus;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
   }
 
   /**
