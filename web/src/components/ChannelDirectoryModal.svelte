@@ -10,6 +10,13 @@
   - Modal a11y (focus trap, Escape closes, return focus to invoker)
   - Admin tab gating + content (Edit topic / Archive / Delete)
 
+  v0.4.2 Step 3.1: the Admin tab body now mounts ChannelAdminPanel.svelte
+  per owned channel (Q6 role-gated actions: Rename / Visibility / Mode /
+  Transfer / Archive / Delete). The inline admin row + helpers were
+  lifted into the panel. severity routing ('warning' for Archive,
+  'danger' for Delete + Transfer) and the ``onConfirmDestructive``
+  helper from App.svelte are unchanged.
+
   PUBLIC CONTRACT (do not rename or restructure):
 -->
 <script>
@@ -23,9 +30,9 @@
    * @prop {Function} onChannelJoin — (channelId) => void. Fired when user clicks Join on a non-member row. Defaults to store.joinChannel.
    */
   import { untrack } from 'svelte';
-  import { X, Search, Hash, Lock } from 'lucide-svelte';
+  import { X, Search } from 'lucide-svelte';
   import ConversationBrowser from './ConversationBrowser.svelte';
-  import { EMPTY_STATES } from '../lib/copy/emptyStates.js';
+  import ChannelAdminPanel from './ChannelAdminPanel.svelte';
 
   let {
     store,
@@ -75,12 +82,25 @@
   );
   let hasOwnedChannels = $derived(ownedChannels.length > 0);
 
-  // Inline edit state for the Admin tab's "Edit topic" affordance. Keyed
-  // by channel id; only one edit can be active at a time, but we use a
-  // map for symmetry with future per-row state.
-  /** @type {string | null} */
-  let editingTopicId = $state(null);
-  let editingTopicValue = $state('');
+  // ── v0.4.2 Step 3.1 — currentChannelRole accessor ────────────────────
+  // [VERIFY] until Wave B lands ``store.getChannelRole(channelId)``, the
+  // modal infers ownership from the existing ``createdBy === userKey``
+  // projection (the same gate that populates ``ownedChannels`` above)
+  // and threads ``'owner'`` for those channels. Any other role
+  // (``'admin'``, ``'member'``) requires the Wave B accessor + the
+  // server-side role table from Step 3.0a. Until then non-owned channels
+  // simply never appear in the admin tab because the tab is gated on
+  // ``hasOwnedChannels``, so the prop is always ``'owner'`` in practice.
+  function roleForChannel(channelId) {
+    if (typeof store?.getChannelRole === 'function') {
+      return store.getChannelRole(channelId);
+    }
+    const ch = store?.channelsById?.[channelId];
+    if (ch && ch.createdBy && ch.createdBy === store?.userProfile?.key) {
+      return 'owner';
+    }
+    return null;
+  }
 
   // Lifecycle effect: ONLY focus management. Capture
   // previously-focused element when modal opens; restore on close.
@@ -124,11 +144,10 @@
     // Reset internal UI state so a subsequent reopen starts fresh from
     // the props (this is the "re-init on reopen" semantic, executed in
     // the close handler rather than $effect to keep the open-effect
-    // side-effect-only).
+    // side-effect-only). ChannelAdminPanel owns its own edit-state
+    // teardown via its component lifecycle.
     activeTab = initialTab === 'admin' ? 'admin' : 'browse';
     filterText = initialFilter;
-    editingTopicId = null;
-    editingTopicValue = '';
     onClose?.();
   }
 
@@ -212,85 +231,14 @@
   }
 
   // ── Admin tab actions ──────────────────────────────────────────────
-  // Polish Wave Batch 2 — v0.4.0's ``window.confirm`` / ``window.prompt``
-  // placeholders are replaced by the shared TypeNameConfirmDialog via the
-  // Promise-based ``onConfirmDestructive`` helper from App.svelte. Both
-  // Archive (warning) and Delete (danger) flow through the same call
-  // surface so the UX matches the Sidebar context-menu Delete path.
-
-  function startEditTopic(channel) {
-    editingTopicId = channel.id;
-    editingTopicValue = channel.topic ?? '';
-  }
-
-  function cancelEditTopic() {
-    editingTopicId = null;
-    editingTopicValue = '';
-  }
-
-  async function commitEditTopic(channel) {
-    const newTopic = editingTopicValue;
-    editingTopicId = null;
-    editingTopicValue = '';
-    if (newTopic === channel.topic) return;
-    if (typeof store?.setTopic === 'function') {
-      await store.setTopic(channel.id, newTopic);
-    }
-  }
-
-  function handleTopicInputKeydown(e, channel) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      commitEditTopic(channel);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      cancelEditTopic();
-    }
-  }
-
-  async function archiveOwnedChannel(channel) {
-    let ok = false;
-    if (typeof onConfirmDestructive === 'function') {
-      ok = await onConfirmDestructive({
-        resourceName: `channel #${channel.name}`,
-        requireTypedName: channel.name,
-        title: 'Archive channel?',
-        body: `This will archive #${channel.name} and remove all members from the live channel list. You can still find it under the directory's Archived view.`,
-        confirmLabel: 'Archive channel',
-        severity: 'warning',
-      });
-    } else if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      ok = window.confirm(`Archive #${channel.name}? Members will be kicked.`);
-    } else {
-      ok = true;
-    }
-    if (!ok) return;
-    if (typeof store?.archiveChannel === 'function') {
-      store.archiveChannel(channel.id);
-    }
-  }
-
-  async function deleteOwnedChannel(channel) {
-    let ok = false;
-    if (typeof onConfirmDestructive === 'function') {
-      ok = await onConfirmDestructive({
-        resourceName: `channel #${channel.name}`,
-        requireTypedName: channel.name,
-        title: 'Delete channel?',
-        body: `This will permanently delete #${channel.name} and all its history. This cannot be undone.`,
-        confirmLabel: 'Delete channel',
-        severity: 'danger',
-      });
-    } else if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
-      const typed = window.prompt(`Delete #${channel.name}? Type the channel name to confirm.`);
-      ok = typed === channel.name;
-    }
-    if (!ok) return;
-    if (typeof store?.deleteChannel === 'function') {
-      store.deleteChannel(channel.id);
-    }
-  }
+  // v0.4.2 Step 3.1 — all per-channel admin actions (rename, topic edit,
+  // visibility toggle, mode toggle, transfer ownership, archive, delete)
+  // are owned by ChannelAdminPanel.svelte, mounted once per owned
+  // channel in the admin tab body below. The previous inline
+  // archive/delete helpers were lifted into the panel along with the
+  // typed-name confirm flow (severity 'warning' for Archive, 'danger'
+  // for Delete + Transfer). The shared ``onConfirmDestructive`` prop
+  // is threaded straight through.
 </script>
 
 {#if open}
@@ -416,58 +364,23 @@
           data-testid="channel-directory-admin-panel"
         >
           <p class="directory-admin-intro">
-            Channels you created. Edit the topic, archive when done, or
-            permanently delete.
+            Channels you created or admin. Use the per-channel panel to
+            rename, toggle visibility or mode, transfer ownership,
+            archive, or permanently delete.
           </p>
           <ul class="directory-admin-list" data-testid="channel-directory-admin-list">
             {#each ownedChannels as channel (channel.id)}
-              <li class="directory-admin-row" data-testid={`channel-directory-admin-row-${channel.id}`}>
-                <div class="directory-admin-row-main">
-                  <div class="directory-admin-row-name">
-                    {#if channel.mode === 'private'}
-                      <Lock size={14} strokeWidth={2} aria-hidden="true" />
-                    {:else}
-                      <Hash size={14} strokeWidth={2} aria-hidden="true" />
-                    {/if}
-                    <span>{channel.name}</span>
-                  </div>
-                  {#if editingTopicId === channel.id}
-                    <input
-                      class="directory-admin-topic-input"
-                      type="text"
-                      bind:value={editingTopicValue}
-                      onkeydown={(e) => handleTopicInputKeydown(e, channel)}
-                      onblur={() => commitEditTopic(channel)}
-                      placeholder="Channel topic"
-                      aria-label={`Topic for ${channel.name}`}
-                      data-testid={`channel-directory-admin-topic-input-${channel.id}`}
-                    />
-                  {:else}
-                    <p class="directory-admin-topic" data-testid={`channel-directory-admin-topic-${channel.id}`}>
-                      {channel.topic || EMPTY_STATES.noTopicSet}
-                    </p>
-                  {/if}
-                </div>
-                <div class="directory-admin-row-actions">
-                  <button
-                    type="button"
-                    class="directory-admin-btn"
-                    onclick={() => startEditTopic(channel)}
-                    data-testid={`channel-directory-admin-edit-${channel.id}`}
-                  >Edit topic</button>
-                  <button
-                    type="button"
-                    class="directory-admin-btn"
-                    onclick={() => archiveOwnedChannel(channel)}
-                    data-testid={`channel-directory-admin-archive-${channel.id}`}
-                  >Archive</button>
-                  <button
-                    type="button"
-                    class="directory-admin-btn danger"
-                    onclick={() => deleteOwnedChannel(channel)}
-                    data-testid={`channel-directory-admin-delete-${channel.id}`}
-                  >Delete</button>
-                </div>
+              <li
+                class="directory-admin-row"
+                data-testid={`channel-directory-admin-row-${channel.id}`}
+              >
+                <ChannelAdminPanel
+                  {channel}
+                  currentChannelRole={roleForChannel(channel.id)}
+                  {store}
+                  {onConfirmDestructive}
+                  onClose={close}
+                />
               </li>
             {/each}
           </ul>
@@ -654,89 +567,10 @@
   }
 
   .directory-admin-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 12px 14px;
-    background: var(--bg-surface);
+    background: transparent;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-  }
-
-  .directory-admin-row-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .directory-admin-row-name {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .directory-admin-topic {
-    margin: 0;
-    font-size: 12px;
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .directory-admin-topic-input {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 6px 8px;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 12px;
-    outline: none;
-  }
-
-  .directory-admin-topic-input:focus {
-    border-color: var(--ember-500, #f97316);
-  }
-
-  .directory-admin-row-actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-
-  .directory-admin-btn {
-    padding: 6px 12px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: var(--transition-fast);
-  }
-
-  .directory-admin-btn:hover {
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
-
-  .directory-admin-btn.danger {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.3);
-  }
-
-  .directory-admin-btn.danger:hover {
-    background: rgba(248, 113, 113, 0.1);
-    color: #ef4444;
+    padding: 12px;
   }
 
   @keyframes overlayIn {

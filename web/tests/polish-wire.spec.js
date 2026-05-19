@@ -382,7 +382,7 @@ describe('Polish Wave Batch 2 — ChannelDirectoryModal Admin tab wiring (Task E
     });
 
     await tick();
-    await fireEvent.click(getByTestId('channel-directory-admin-archive-myChannel'));
+    await fireEvent.click(getByTestId('channel-admin-action-archive'));
     await Promise.resolve();
     await Promise.resolve();
     await tick();
@@ -412,7 +412,7 @@ describe('Polish Wave Batch 2 — ChannelDirectoryModal Admin tab wiring (Task E
     });
 
     await tick();
-    await fireEvent.click(getByTestId('channel-directory-admin-delete-myChannel'));
+    await fireEvent.click(getByTestId('channel-admin-action-delete'));
     await Promise.resolve();
     await Promise.resolve();
     await tick();
@@ -442,7 +442,7 @@ describe('Polish Wave Batch 2 — ChannelDirectoryModal Admin tab wiring (Task E
     });
 
     await tick();
-    await fireEvent.click(getByTestId('channel-directory-admin-archive-myChannel'));
+    await fireEvent.click(getByTestId('channel-admin-action-archive'));
     await Promise.resolve();
     await Promise.resolve();
     await tick();
@@ -468,7 +468,7 @@ describe('Polish Wave Batch 2 — ChannelDirectoryModal Admin tab wiring (Task E
     });
 
     await tick();
-    await fireEvent.click(getByTestId('channel-directory-admin-delete-myChannel'));
+    await fireEvent.click(getByTestId('channel-admin-action-delete'));
     await Promise.resolve();
     await Promise.resolve();
     await tick();
@@ -480,6 +480,11 @@ describe('Polish Wave Batch 2 — ChannelDirectoryModal Admin tab wiring (Task E
   it('Admin tab no longer calls window.confirm or window.prompt when onConfirmDestructive is wired', async () => {
     // Regression guard for the original v0.4.0 placeholder behavior. After
     // wiring, these globals must not be touched.
+    // v0.4.2 Step 3.1: Archive + Delete now both auto-close the modal
+    // (via onClose -> close) on commit, so this test only clicks Archive
+    // (single destructive button is enough to prove globals are not
+    // touched). The companion test cases above already pin the Delete
+    // severity routing independently.
     const store = makeOwnedStore();
     const onConfirmDestructive = vi.fn(() => Promise.resolve(true));
     const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => {
@@ -503,11 +508,7 @@ describe('Polish Wave Batch 2 — ChannelDirectoryModal Admin tab wiring (Task E
 
     try {
       await tick();
-      await fireEvent.click(getByTestId('channel-directory-admin-archive-myChannel'));
-      await Promise.resolve();
-      await Promise.resolve();
-      await tick();
-      await fireEvent.click(getByTestId('channel-directory-admin-delete-myChannel'));
+      await fireEvent.click(getByTestId('channel-admin-action-archive'));
       await Promise.resolve();
       await Promise.resolve();
       await tick();

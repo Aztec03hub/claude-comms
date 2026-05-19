@@ -262,7 +262,13 @@ describe('ChannelDirectoryModal — browse tab body', () => {
 // ── 4. Admin tab body ──────────────────────────────────────────────────
 
 describe('ChannelDirectoryModal — admin tab body', () => {
-  it('shows Edit topic / Archive / Delete buttons for each owned channel', async () => {
+  it('mounts a ChannelAdminPanel per owned channel with the full owner-role actions', async () => {
+    // v0.4.2 Step 3.1: the inline Edit topic / Archive / Delete row UI
+    // was lifted into ChannelAdminPanel.svelte. The modal now mounts
+    // one panel per owned channel inside the admin-list row wrapper.
+    // The roleForChannel() helper infers 'owner' from createdBy
+    // === userProfile.key (the [VERIFY] punt until Wave B lands
+    // store.getChannelRole).
     const props = makeProps({
       initialTab: 'admin',
       store: makeStore({
@@ -271,15 +277,22 @@ describe('ChannelDirectoryModal — admin tab body', () => {
         },
       }),
     });
-    const { getByTestId } = render(ChannelDirectoryModal, { props });
+    const { getByTestId, getAllByTestId } = render(ChannelDirectoryModal, { props });
+    // The list row wrapper testid is preserved (stable contract).
     expect(getByTestId('channel-directory-admin-row-mine')).not.toBeNull();
-    expect(getByTestId('channel-directory-admin-edit-mine')).not.toBeNull();
-    expect(getByTestId('channel-directory-admin-archive-mine')).not.toBeNull();
-    expect(getByTestId('channel-directory-admin-delete-mine')).not.toBeNull();
-    // Topic line shows the current topic.
-    expect(getByTestId('channel-directory-admin-topic-mine').textContent.trim()).toBe(
-      'My project',
-    );
+    // The panel mounts inside the row with all 6 owner actions reachable.
+    const panels = getAllByTestId('channel-admin-panel');
+    expect(panels).toHaveLength(1);
+    expect(panels[0].getAttribute('data-role')).toBe('owner');
+    expect(getByTestId('channel-admin-action-rename')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-edit-topic')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-visibility')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-mode')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-transfer')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-archive')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-delete')).not.toBeNull();
+    // Topic still rendered (panel owns it now).
+    expect(getByTestId('channel-admin-topic').textContent.trim()).toBe('My project');
   });
 });
 
