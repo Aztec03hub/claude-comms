@@ -26,6 +26,7 @@
   import TypeNameConfirmDialog from './components/TypeNameConfirmDialog.svelte';
   import UndoToast from './components/UndoToast.svelte';
   import MemberContextMenu from './components/MemberContextMenu.svelte';
+  import InviteParticipantDialog from './components/InviteParticipantDialog.svelte';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import * as api from './lib/api.js';
 
@@ -51,6 +52,17 @@
   // shared mount; right-clicking a row in MemberList populates the
   // {member, x, y} triple and we render a fresh menu instance.
   let memberCtxMenu = $state(/** @type {{show: boolean, x: number, y: number, member: any} | null} */ (null));
+
+  // v0.4.2 Step 3.3 (Wave F): InviteParticipantDialog mount slot. When
+  // ChannelContextMenu's "Invite participant..." action fires, it
+  // dispatches a window-level ``claude-comms:invite-participant``
+  // CustomEvent carrying the channel object; the listener below
+  // populates this state and the {#if inviteDialog} block at the bottom
+  // of the template mounts the dialog. We bus through window because
+  // Sidebar.svelte (which mounts ChannelContextMenu) is read-only in
+  // the Wave F scope and can't be touched to add a new
+  // onInviteParticipant callback prop.
+  let inviteDialog = $state(/** @type {{channel: any} | null} */ (null));
   let toasts = $state([]);
   let threadParent = $state(null);
   let emojiPickerTarget = $state(null);
@@ -323,6 +335,67 @@
     window.addEventListener('slashCommand', handler);
     return () => window.removeEventListener('slashCommand', handler);
   });
+
+  // ── v0.4.2 Step 3.3 (Wave F) — invite-participant bus listener ─────────
+  //
+  // ChannelContextMenu dispatches ``claude-comms:invite-participant`` on
+  // window when its "Invite participant..." item activates. The detail
+  // carries the channel object so we can mount InviteParticipantDialog
+  // without re-resolving the row from the store.
+  //
+  // Parallel-but-separate from the slashCommand bus so each cross-cutting
+  // concern owns its own listener; the cleanup function still tears down
+  // cleanly on hot-reload + unmount.
+  $effect(() => {
+    function handler(event) {
+      const detail = event?.detail ?? {};
+      if (detail.channel) {
+        inviteDialog = { channel: detail.channel };
+      }
+    }
+    window.addEventListener('claude-comms:invite-participant', handler);
+    return () =>
+      window.removeEventListener('claude-comms:invite-participant', handler);
+  });
+
+  // Submit handler for InviteParticipantDialog. Calls
+  // ``store.inviteParticipant`` with the picked key + note, surfaces a
+  // notification toast on success / error, and unmounts the dialog. The
+  // error-surfacing branches on the HTTP status code ``apiPost`` attaches
+  // to the rejected Error so the user-visible copy is tailored to the
+  // failure mode (403 = no permission, 404 = unknown channel, 409 =
+  // already a member, 400 = bad input, anything else = generic).
+  async function handleInviteSubmit({ inviteeKey, note }) {
+    const dlg = inviteDialog;
+    if (!dlg || !dlg.channel) return;
+    const channelId = dlg.channel.id;
+    inviteDialog = null;
+    const result = await store.inviteParticipant(channelId, inviteeKey, note);
+    if (!result || result.success === false) {
+      let msg = result?.error || 'Invite failed.';
+      if (result?.status === 403) msg = 'You do not have permission to invite to this channel.';
+      else if (result?.status === 404) msg = 'Channel no longer exists.';
+      else if (result?.status === 409) msg = 'That participant is already a member.';
+      else if (result?.status === 400) msg = msg || 'Invalid invite request.';
+      addToast({
+        id: 'invite-err-' + Date.now(),
+        sender: { name: 'System', key: 'system', type: 'system' },
+        channel: channelId,
+        text: msg,
+      });
+      return;
+    }
+    addToast({
+      id: 'invite-ok-' + Date.now(),
+      sender: { name: 'System', key: 'system', type: 'system' },
+      channel: channelId,
+      text: 'Invite sent.',
+    });
+  }
+
+  function handleInviteCancel() {
+    inviteDialog = null;
+  }
 
   // Global keyboard shortcuts
   function handleGlobalKeydown(e) {
@@ -909,6 +982,25 @@
   <ChannelModal
     onClose={() => showChannelModal = false}
     onCreate={(id, topic) => { store.createChannel(id, topic); showChannelModal = false; }}
+  />
+{/if}
+
+<!--
+  v0.4.2 Step 3.3 (Wave F) — InviteParticipantDialog slot. Mounted in
+  response to the ``claude-comms:invite-participant`` window CustomEvent
+  dispatched by ChannelContextMenu. Pre-computed ``existingMemberKeys``
+  collapses the store's ``channelMembers[channelId]`` map into a key
+  array so the dialog stays presentation-only and doesn't have to
+  understand membership shape.
+-->
+{#if inviteDialog && inviteDialog.channel}
+  <InviteParticipantDialog
+    channel={inviteDialog.channel}
+    participants={Object.values(store.participants ?? {})}
+    existingMemberKeys={Object.keys(store.channelMembers?.[inviteDialog.channel.id] ?? {})}
+    currentUserKey={store.userProfile?.key ?? ''}
+    onSubmit={handleInviteSubmit}
+    onCancel={handleInviteCancel}
   />
 {/if}
 

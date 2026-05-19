@@ -63,6 +63,7 @@
     Trash2,
     Info,
     ChevronRight,
+    UserPlus,
   } from 'lucide-svelte';
 
   let {
@@ -106,6 +107,20 @@
           icon: CheckCheck,
         });
       }
+      // v0.4.2 Step 3.3 (Wave F): Invite participant... Visible to any
+      // member; the server enforces auth and re-invite returns 409 so
+      // we don't need a role gate client-side. Activation dispatches a
+      // ``claude-comms:invite-participant`` window CustomEvent carrying
+      // the channel object; App.svelte listens and mounts
+      // ``InviteParticipantDialog``. Sidebar's existing
+      // ``handleContextAction`` switch will no-op on this actionId,
+      // which is the intentional integration pattern (Sidebar stays
+      // read-only per the Wave F file ownership table).
+      list.push({
+        id: 'invite',
+        label: 'Invite participant...',
+        icon: UserPlus,
+      });
     }
 
     list.push({ id: 'copy-link', label: 'Copy channel link', icon: LinkIcon });
@@ -194,6 +209,29 @@
   }
 
   function fireAction(actionId) {
+    // v0.4.2 Step 3.3 (Wave F): the Invite action skips the standard
+    // ``onAction`` routing through Sidebar (which is read-only in this
+    // wave and has no handler for ``'invite'``) and emits a window-
+    // level CustomEvent that App.svelte listens for. The event detail
+    // carries the channel object so App.svelte can populate
+    // ``InviteParticipantDialog`` without re-resolving the row.
+    if (
+      actionId === 'invite' &&
+      typeof window !== 'undefined' &&
+      typeof CustomEvent === 'function'
+    ) {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('claude-comms:invite-participant', {
+            detail: { channel },
+          }),
+        );
+      } catch {
+        // Defensive: if the host environment disallows CustomEvent
+        // construction, fall back to the standard onAction path so
+        // a future Sidebar handler can still pick it up.
+      }
+    }
     onAction?.(actionId);
     onClose?.();
   }

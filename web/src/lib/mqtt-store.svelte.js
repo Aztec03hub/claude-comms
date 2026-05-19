@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
-import { API_BASE, apiGet, mcpCall } from './api.js';
+import { API_BASE, apiGet, apiPost, mcpCall } from './api.js';
 
 // Derive the MQTT broker URL from the current page hostname.
 // API origin derivation now lives in lib/api.js (exported as API_BASE);
@@ -2847,6 +2847,84 @@ export class MqttChatStore {
     // re-clicked from a profile card).
     this.switchChannel(conversation);
     return { success: true, conversation, status: payload.status };
+  }
+
+  /**
+   * Invite a participant into a channel via Wave A's POST ``/api/invite``
+   * REST surface (v0.4.2 Step 3.3, Wave F). Bridges the daemon-side
+   * ``tool_comms_invite`` flow without the browser having to speak MCP
+   * JSON-RPC directly — the daemon's identity is the inviter (configured
+   * via ``identity.key``), so this surface implicitly authenticates the
+   * caller as whoever the daemon is configured as.
+   *
+   * Wire shape (Wave A 3.4 pinned, commit ``16013e2``):
+   *   POST ``/api/invite`` with body
+   *   ``{ conversation_id, invitee_key, note? }``. Response on success:
+   *   ``{ invited: true, invitee_key, conversation_id }``. Errors:
+   *     400 → malformed body / missing fields / unknown invitee
+   *     403 → daemon's identity is not a member of the conversation
+   *     404 → conversation does not exist
+   *     409 → already a member (idempotency conflict)
+   *
+   * Disconnected: rejects immediately with
+   * ``{ success: false, error: 'Not connected.' }``. Invites are
+   * authoritative server actions tied to live registry membership;
+   * queuing while offline could fire a stale or duplicate invite once
+   * the caller's role state has shifted, so we direct-reject (matching
+   * ``kickMember`` / ``startDM``).
+   *
+   * Caller's note is forwarded verbatim; the server treats it as opaque
+   * text and surfaces it via the system message ``tool_comms_invite``
+   * publishes. Empty / missing note is fine — defaults to empty string
+   * on the server.
+   *
+   * @param {string} channelId - Target conversation id.
+   * @param {string} inviteeKey - 8-hex-char participant key to invite.
+   * @param {string} [note] - Optional note included in the invite
+   *   system message. Defaults to empty string.
+   * @returns {Promise<{ success: boolean, invited?: boolean, invitee_key?: string, conversation_id?: string, status?: number, error?: string }>}
+   */
+  async inviteParticipant(channelId, inviteeKey, note) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof inviteeKey !== 'string' || !inviteeKey) {
+      return { success: false, error: 'Missing invitee key.' };
+    }
+    if (!this.connected) {
+      return { success: false, error: 'Not connected.' };
+    }
+
+    const body = {
+      conversation_id: channelId,
+      invitee_key: inviteeKey,
+    };
+    if (typeof note === 'string' && note.length > 0) body.note = note;
+
+    try {
+      const payload = await apiPost('/api/invite', body);
+      // Server returns ``{ invited: true, invitee_key, conversation_id }``
+      // on the 200 path. We pass through the truthy ``invited`` flag so
+      // the caller can branch on fresh-invite vs already-member without
+      // duplicating server-shape knowledge.
+      return {
+        success: true,
+        invited: payload?.invited !== false,
+        invitee_key: payload?.invitee_key ?? inviteeKey,
+        conversation_id: payload?.conversation_id ?? channelId,
+      };
+    } catch (err) {
+      // ``apiPost`` throws ``Error`` with ``.status`` set on non-2xx
+      // (including the 409 already-member idempotency conflict). We
+      // surface the status code so the UI can render a tailored toast
+      // per failure mode (403 = no permission, 404 = unknown channel,
+      // 409 = already a member, 400 = bad input).
+      const status = err && typeof err === 'object' && typeof err.status === 'number'
+        ? err.status
+        : undefined;
+      const message = err && err.message ? err.message : 'Invite failed.';
+      return { success: false, status, error: message };
+    }
   }
 
   /**
