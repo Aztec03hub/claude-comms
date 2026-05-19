@@ -29,6 +29,8 @@
   @prop {string} body - Body text explaining what will happen (e.g. "This will delete the channel and all its history.").
   @prop {string} [confirmLabel] - Label for the confirm button. Default: "Confirm".
   @prop {'danger' | 'warning' | 'primary'} [severity] - Drives button color. Default: 'danger'.
+    When `'warning'`, the typed-name input is hidden and Confirm is enabled
+    by default (used by Archive flows per Phil's Archive UX lock-in).
   @prop {Function} onConfirm - Called when the user types the correct string + clicks Confirm.
   @prop {Function} onCancel - Called on Cancel, Escape, or outside-click.
 -->
@@ -58,9 +60,10 @@
   // gate trivially passable, so guard against that defensively (callers
   // SHOULD always pass a non-empty string).
   let canConfirm = $derived(
-    typeof requireTypedName === 'string' &&
-      requireTypedName.length > 0 &&
-      inputValue === requireTypedName
+    severity === 'warning' ||
+      (typeof requireTypedName === 'string' &&
+        requireTypedName.length > 0 &&
+        inputValue === requireTypedName)
   );
 
   /** @type {HTMLButtonElement | undefined} */
@@ -209,21 +212,23 @@
           Resource: <span class="type-name-resource-value">{resourceName}</span>
         </p>
       {/if}
-      <label class="type-name-prompt" for={promptId} id={`${promptId}-label`}>
-        Type <span class="type-name-required" data-testid="type-name-confirm-required">"{requireTypedName}"</span> to confirm:
-      </label>
-      <input
-        id={promptId}
-        type="text"
-        class="type-name-input"
-        data-testid="type-name-confirm-input"
-        autocomplete="off"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-        bind:value={inputValue}
-        onkeydown={handleInputKeydown}
-      />
+      {#if severity !== 'warning'}
+        <label class="type-name-prompt" for={promptId} id={`${promptId}-label`}>
+          Type <span class="type-name-required" data-testid="type-name-confirm-required">"{requireTypedName}"</span> to confirm:
+        </label>
+        <input
+          id={promptId}
+          type="text"
+          class="type-name-input"
+          data-testid="type-name-confirm-input"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          bind:value={inputValue}
+          onkeydown={handleInputKeydown}
+        />
+      {/if}
     </div>
 
     <div class="type-name-footer">
