@@ -560,6 +560,259 @@ def build_artifact_post_options_route(config: dict):
     )
 
 
+# ---------------------------------------------------------------------------
+# v0.4.2 Step 3.4: POST /api/invite REST surface bridging ``comms_invite`` MCP
+# tool. Same indirection-via-provider pattern as build_artifact_post_route so
+# tests can mount with fake registries and the daemon binds the live ones.
+#
+# Caller-identity policy: the body does NOT carry a caller_key. The handler
+# uses the daemon's configured ``identity.key`` as the inviter, matching the
+# existing ``/api/conversations`` convention. Multi-tenant browser support
+# is a follow-up (out of scope for Step 3.4). A request from a daemon whose
+# configured identity is not a member of the target conversation returns 403.
+# ---------------------------------------------------------------------------
+
+
+def build_invite_post_route(
+    config: dict,
+    *,
+    registry_provider,
+    publish_fn_provider,
+    conv_data_dir_provider,
+):
+    """POST /api/invite — bridge to ``tool_comms_invite``.
+
+    Body schema: ``{"conversation_id": str, "invitee_key": str, "note": str?}``.
+
+    Returns ``{"invited": true, "invitee_key": ..., "conversation_id": ...}``
+    on success. 403 when the caller (daemon identity) is not a member of the
+    target conversation. 400 on malformed body / missing fields / unknown
+    invitee key. 404 when the conversation does not exist. 409 when the
+    invitee is already a member (idempotency contract: re-invite returns
+    409 with ``{"invited": false, "reason": "already_member", ...}`` so the
+    client can distinguish a fresh invite from a no-op).
+
+    Side effects belong to ``tool_comms_invite`` itself (system message on
+    ``claude-comms/conv/general/messages``). This handler is the REST
+    surface only.
+    """
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    from claude_comms.mcp_tools import tool_comms_invite
+    from claude_comms.message import validate_conv_id
+    from claude_comms.participant import validate_key
+
+    web_cfg = config.get("web", {}) or {}
+    strict = bool(web_cfg.get("strict_cors", True))
+    web_port = web_cfg.get("port", 9921)
+    allow_list = [
+        f"http://localhost:{web_port}",
+        f"http://127.0.0.1:{web_port}",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
+    api_base = web_cfg.get("api_base")
+    if api_base:
+        allow_list.append(api_base)
+
+    identity_cfg = config.get("identity", {}) or {}
+    caller_key_default = identity_cfg.get("key", "")
+
+    def _cors(request: Request) -> dict[str, str]:
+        return _cors_headers(
+            request,
+            allow_list,
+            strict=strict,
+            methods="POST, OPTIONS",
+            extra_headers="Content-Type",
+        )
+
+    async def _handler(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"error": "Request body must be valid JSON"},
+                status_code=400,
+                headers=_cors(request),
+            )
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"error": "Request body must be a JSON object"},
+                status_code=400,
+                headers=_cors(request),
+            )
+
+        conversation_id = body.get("conversation_id", "")
+        invitee_key = body.get("invitee_key", "")
+        note = body.get("note", "") or ""
+
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return JSONResponse(
+                {"error": "Missing required field 'conversation_id'"},
+                status_code=400,
+                headers=_cors(request),
+            )
+        if not isinstance(invitee_key, str) or not invitee_key:
+            return JSONResponse(
+                {"error": "Missing required field 'invitee_key'"},
+                status_code=400,
+                headers=_cors(request),
+            )
+        if not isinstance(note, str):
+            return JSONResponse(
+                {"error": "'note' must be a string"},
+                status_code=400,
+                headers=_cors(request),
+            )
+        if not validate_conv_id(conversation_id):
+            return JSONResponse(
+                {"error": "Invalid conversation_id"},
+                status_code=400,
+                headers=_cors(request),
+            )
+        if not validate_key(invitee_key):
+            return JSONResponse(
+                {
+                    "error": (
+                        f"Invalid invitee_key format: {invitee_key!r}. "
+                        "Must be 8 lowercase hex chars."
+                    )
+                },
+                status_code=400,
+                headers=_cors(request),
+            )
+
+        registry = registry_provider()
+        publish_fn = publish_fn_provider()
+        conv_data_dir = conv_data_dir_provider()
+        if registry is None or publish_fn is None or conv_data_dir is None:
+            return JSONResponse(
+                {"error": "Daemon not fully initialised"},
+                status_code=503,
+                headers=_cors(request),
+            )
+
+        # Authorization: the caller (daemon identity) must be a member.
+        if not caller_key_default:
+            return JSONResponse(
+                {"error": "Daemon has no configured identity"},
+                status_code=503,
+                headers=_cors(request),
+            )
+        if conversation_id not in registry.conversations_for(caller_key_default):
+            return JSONResponse(
+                {
+                    "error": (
+                        f"Caller {caller_key_default!r} is not a member of "
+                        f"conversation {conversation_id!r}"
+                    )
+                },
+                status_code=403,
+                headers=_cors(request),
+            )
+
+        # Resolve invitee key -> name (the MCP tool takes target_name).
+        invitee = registry.get(invitee_key)
+        if invitee is None:
+            return JSONResponse(
+                {"error": f"Unknown invitee_key {invitee_key!r}"},
+                status_code=400,
+                headers=_cors(request),
+            )
+
+        result = await tool_comms_invite(
+            registry,
+            publish_fn,
+            key=caller_key_default,
+            conversation=conversation_id,
+            target_name=invitee.name,
+            message=note,
+            conv_data_dir=conv_data_dir,
+        )
+
+        # Tool error mapping. ``tool_comms_invite`` returns one of:
+        #   {"status": "invited"}        -> 200 success
+        #   {"status": "already_member"} -> 409 idempotency conflict
+        #   _error(msg) with "not found" -> 404
+        #   _error(msg) otherwise        -> 400
+        if result.get("error"):
+            msg = str(result.get("message", "")).lower()
+            if "not found" in msg:
+                status = 404
+            else:
+                status = 400
+            return JSONResponse(
+                {"error": result.get("message", "Invite failed")},
+                status_code=status,
+                headers=_cors(request),
+            )
+
+        if result.get("status") == "already_member":
+            return JSONResponse(
+                {
+                    "invited": False,
+                    "reason": "already_member",
+                    "invitee_key": invitee_key,
+                    "conversation_id": conversation_id,
+                },
+                status_code=409,
+                headers=_cors(request),
+            )
+
+        return JSONResponse(
+            {
+                "invited": True,
+                "invitee_key": invitee_key,
+                "conversation_id": conversation_id,
+            },
+            status_code=200,
+            headers=_cors(request),
+        )
+
+    return Route("/api/invite", _handler, methods=["POST"])
+
+
+def build_invite_options_route(config: dict):
+    """OPTIONS preflight for POST /api/invite — matches the POST CORS policy."""
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    web_cfg = config.get("web", {}) or {}
+    strict = bool(web_cfg.get("strict_cors", True))
+    web_port = web_cfg.get("port", 9921)
+    allow_list = [
+        f"http://localhost:{web_port}",
+        f"http://127.0.0.1:{web_port}",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
+    api_base = web_cfg.get("api_base")
+    if api_base:
+        allow_list.append(api_base)
+
+    async def _handler(request: Request) -> JSONResponse:
+        return JSONResponse(
+            {},
+            headers=_cors_headers(
+                request,
+                allow_list,
+                strict=strict,
+                methods="POST, OPTIONS",
+                extra_headers="Content-Type",
+            ),
+        )
+
+    return Route("/api/invite", _handler, methods=["OPTIONS"])
+
+
 def _version_callback(value: bool) -> None:
     if value:
         from claude_comms import __version__
@@ -1106,6 +1359,21 @@ def start(
                 ),
             )
 
+            # ── v0.4.2 Step 3.4: POST /api/invite + preflight ──
+            # Bridges to ``tool_comms_invite`` MCP tool. Bound here (not
+            # inside the build_invite_post_route factory) so the provider
+            # closures see the live module-level state on every request.
+            starlette_app.routes.insert(
+                12,
+                build_invite_post_route(
+                    config,
+                    registry_provider=lambda: _mcp_mod._registry,
+                    publish_fn_provider=lambda: _mcp_mod._publish_fn,
+                    conv_data_dir_provider=lambda: _mcp_mod._conv_data_dir,
+                ),
+            )
+            starlette_app.routes.insert(13, build_invite_options_route(config))
+
             # ── NEW: capabilities + bearer token + conditional POST edit ──
             # Generate a fresh bearer token for this daemon run (R3-4).
             _web_token = _generate_web_token()
@@ -1113,9 +1381,9 @@ def start(
             _persist_web_token(_web_token)
 
             # Capabilities (same-origin, no auth, cacheable).
-            starlette_app.routes.insert(12, build_capabilities_route(config))
+            starlette_app.routes.insert(14, build_capabilities_route(config))
             # Bearer-token endpoint (loopback-only).
-            starlette_app.routes.insert(13, build_web_token_route())
+            starlette_app.routes.insert(15, build_web_token_route())
 
             # Conditional POST /api/artifacts/{conv}/{name}. Returns None
             # when allow_remote_edits is false OR the daemon is in
@@ -1128,9 +1396,9 @@ def start(
                 data_dir_provider=lambda: _mcp_mod._data_dir,
             )
             if _post_route is not None:
-                starlette_app.routes.insert(14, _post_route)
+                starlette_app.routes.insert(16, _post_route)
                 starlette_app.routes.insert(
-                    15, build_artifact_post_options_route(config)
+                    17, build_artifact_post_options_route(config)
                 )
                 console.print(
                     "  [yellow]Artifact edit-in-place[/yellow] POST route registered"
