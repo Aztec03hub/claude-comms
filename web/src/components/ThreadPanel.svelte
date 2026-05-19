@@ -1,35 +1,138 @@
 <!--
   @component ThreadPanel
-  @description Slide-in panel for viewing and replying to a message thread. Shows the parent message, a scrollable list of threaded replies with avatars and timestamps, and a reply input with send button.
+  @description Slide-in panel for viewing and replying to a message thread.
+    Shows the parent message, a scrollable list of threaded replies with
+    avatars and timestamps, and a reply composer that delegates to the
+    shared `MessageInput` component when a `store` is provided (UX G-36,
+    v0.4.2 Step 3.12), with a backward-compatible inline `<input>`
+    fallback when only the legacy `onSendReply` callback is supplied.
+
+    Composer parity: the thread reply box reuses `MessageInput.svelte` so
+    threads inherit @mentions, the slash-command registry (/me, /help,
+    /who, /clear, etc.), over-limit handling (G-28), the format toolbar,
+    the snippet inserter, and the emoji-picker trigger. Before Step 3.12
+    threads had their own inline `<input>` with none of that polish.
+
+    Thread routing strategy: MessageInput is consumed as-is — it knows
+    nothing about threads. ThreadPanel constructs a `threadStore` proxy
+    over the real store whose `sendMessage(body, replyTo, opts)`
+    intercept stamps `replyTo = parentMessage.id` whenever the caller
+    passed `null` (i.e. the default autocomplete path, the `/me` action
+    path, and the `/dm` path). Sends that already carry an explicit
+    `replyTo` (e.g. `/reply <uuid>`) are forwarded verbatim so users
+    can't accidentally re-thread a reply. All other store reads (
+    `participants`, `userProfile`, `composerPrefill`, `activeChannel`,
+    `notifyTyping`) pass through unchanged via Object property getters,
+    preserving reactivity (the underlying $state proxies are still the
+    ones MessageInput's $derived chains observe).
+
+    Backward-compat: callers that mount ThreadPanel with the legacy
+    `onSendReply` callback but no `store` keep working — the panel falls
+    back to its previous inline input. This lets us land Step 3.12
+    without simultaneously touching App.svelte's mount call site
+    (read-only per the wave scope); App.svelte can adopt the new
+    `store=...` prop in a follow-up. A `[VERIFY]` line in the worklog
+    flags this for the orchestrator.
+
   @prop {object} parentMessage - The root message that started the thread.
   @prop {Array} messages - Array of reply message objects in the thread.
-  @prop {object} participants - Map of participant keys to participant objects.
-  @prop {object} currentUser - The current user's profile.
+  @prop {object} [participants] - Map of participant keys to participant objects (legacy display path; kept for avatar / member counts).
+  @prop {object} [currentUser] - The current user's profile (legacy display path).
   @prop {Function} onClose - Callback invoked to close the thread panel.
-  @prop {Function} onSendReply - Callback invoked with the reply text string.
+  @prop {object} [store] - The ChatStore instance. When supplied, the composer is the shared MessageInput; the proxy below stamps `parentMessage.id` as `replyTo` on every send.
+  @prop {string} [channelName] - The active channel name; forwarded to MessageInput so the slash-command registry sees the right currentChannelId context.
+  @prop {Array} [typingUsers] - Forwarded to MessageInput so typing-indicator rendering works inside the thread composer too.
+  @prop {Function} [onOpenEmoji] - Forwarded to MessageInput so the thread composer's emoji button opens the shared picker.
+  @prop {Function} [onSendReply] - Legacy callback `(body: string) => void`. Used only when `store` is NOT supplied; preserves pre-3.12 callers (App.svelte's current mount) until they migrate.
 -->
 <script>
   import Avatar from './Avatar.svelte';
+  import MessageInput from './MessageInput.svelte';
   import { MessageSquare, Send, X } from 'lucide-svelte';
   import { formatTime, getParticipantColor } from '../lib/utils.js';
 
-  let { parentMessage, messages = [], participants, currentUser, onClose, onSendReply } = $props();
+  let {
+    parentMessage,
+    messages = [],
+    participants,
+    currentUser,
+    onClose,
+    store = null,
+    channelName,
+    typingUsers = [],
+    onOpenEmoji,
+    onSendReply,
+  } = $props();
 
-  let replyText = $state('');
   let parentColor = $derived(getParticipantColor(parentMessage.sender.key));
 
-  function handleSend() {
+  // Whether to render the shared MessageInput composer (3.12) or the
+  // pre-3.12 inline `<input>` fallback. The new path is preferred when a
+  // live store is supplied — App.svelte still passes `onSendReply` and
+  // no store, so it keeps the legacy path until its mount is updated in
+  // a follow-up.
+  let useSharedComposer = $derived(store !== null && store !== undefined);
+
+  // ── Legacy inline-input state ────────────────────────────────────────
+  let replyText = $state('');
+
+  function handleLegacySend() {
     if (!replyText.trim()) return;
-    onSendReply(replyText);
+    onSendReply?.(replyText);
     replyText = '';
   }
 
-  function handleKeydown(e) {
+  function handleLegacyKeydown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      handleLegacySend();
     }
   }
+
+  // ── Thread-scoped store proxy (3.12 path) ────────────────────────────
+  //
+  // We expose the real store to MessageInput but rewrite `sendMessage`
+  // to stamp the thread parent id as `replyTo`. Property getters delegate
+  // each read to the underlying store so MessageInput's $derived /
+  // $effect chains keep observing the same reactive $state proxies — no
+  // reactivity is lost by the indirection. `composerPrefill` needs a
+  // setter too because MessageInput writes back to clear it after the
+  // prefill effect fires.
+  //
+  // Sends that already carry an explicit `replyTo` (the `/reply <uuid>`
+  // path inside MessageInput.sendMessage) are forwarded verbatim. This
+  // preserves the user's intent if they type `/reply <other-id> hi` from
+  // inside a thread — the explicit id wins. The default autocomplete
+  // path, the `/me` action path, and the `/dm` path all pass `null` for
+  // `replyTo`, so they get rewritten to the thread's parent id.
+  let threadStore = $derived(
+    useSharedComposer
+      ? {
+          get participants() { return store.participants; },
+          get userProfile() { return store.userProfile; },
+          get activeChannel() { return store.activeChannel; },
+          get activeMembers() { return store.activeMembers; },
+          get channelsById() { return store.channelsById; },
+          get composerPrefill() { return store.composerPrefill; },
+          set composerPrefill(v) { store.composerPrefill = v; },
+          notifyTyping: (...args) => store.notifyTyping?.(...args),
+          sendMessage: (body, replyTo = null, opts = {}) => {
+            const effectiveReplyTo = replyTo ?? parentMessage.id;
+            return store.sendMessage(body, effectiveReplyTo, opts);
+          },
+          // Slash-command registry handlers reach for these — forward
+          // them verbatim so /join, /leave, /topic etc. fired from
+          // inside a thread act on the underlying channel rather than
+          // no-op.
+          joinChannel: (...args) => store.joinChannel?.(...args),
+          leaveChannel: (...args) => store.leaveChannel?.(...args),
+          closeChannel: (...args) => store.closeChannel?.(...args),
+          setTopic: (...args) => store.setTopic?.(...args),
+          setStar: (...args) => store.setStar?.(...args),
+          setMute: (...args) => store.setMute?.(...args),
+        }
+      : null,
+  );
 </script>
 
 <div class="thread-panel" data-testid="thread-panel" role="complementary" aria-label="Thread replies">
@@ -71,22 +174,33 @@
     {/each}
   </div>
 
-  <div class="thread-input">
-    <div class="thread-input-wrap">
-      <label for="thread-reply-input-field" class="sr-only">Reply in thread</label>
-      <input
-        id="thread-reply-input-field"
-        type="text"
-        placeholder="Reply in thread..."
-        bind:value={replyText}
-        onkeydown={handleKeydown}
-        data-testid="thread-reply-input"
-      >
-      <button class="thread-send" onclick={handleSend} aria-label="Send reply" data-testid="thread-send">
-        <Send size={12} strokeWidth={2} />
-      </button>
+  {#if useSharedComposer && threadStore}
+    <div class="thread-composer" data-testid="thread-composer">
+      <MessageInput
+        store={threadStore}
+        channelName={channelName ?? store?.activeChannel ?? ''}
+        typingUsers={typingUsers}
+        onOpenEmoji={onOpenEmoji ?? (() => {})}
+      />
     </div>
-  </div>
+  {:else}
+    <div class="thread-input" data-testid="thread-input-legacy">
+      <div class="thread-input-wrap">
+        <label for="thread-reply-input-field" class="sr-only">Reply in thread</label>
+        <input
+          id="thread-reply-input-field"
+          type="text"
+          placeholder="Reply in thread..."
+          bind:value={replyText}
+          onkeydown={handleLegacyKeydown}
+          data-testid="thread-reply-input"
+        >
+        <button class="thread-send" onclick={handleLegacySend} aria-label="Send reply" data-testid="thread-send">
+          <Send size={12} strokeWidth={2} />
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -218,6 +332,16 @@
   .thread-reply-time { font-size: 10px; color: var(--text-faint); }
   .thread-reply-text { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
 
+  /* 3.12 path — MessageInput owns its own border-top + padding; override
+     the top padding so it sits flush against the replies list without
+     doubling the gap that already exists in MessageInput's own
+     `.input-area` (12px 22px 18px). */
+  .thread-composer :global(.input-area) {
+    padding: 10px 14px 12px;
+  }
+
+  /* Legacy inline-input fallback (pre-3.12). Preserved verbatim for
+     callers that haven't migrated to the `store=...` prop yet. */
   .thread-input {
     padding: 12px 14px;
     border-top: 1px solid var(--border);
