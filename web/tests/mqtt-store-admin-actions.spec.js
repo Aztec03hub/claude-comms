@@ -129,10 +129,14 @@ describe('MqttChatStore Step 3.6 renameChannel', () => {
 
     expect(result).toEqual({ success: true });
     expect(store.channelsById['ch-1'].name).toBe('new-name');
+    // v0.4.2 Wave C [VERIFY-3.6b-3] reconciliation: wire field is
+    // `display_name`, not the legacy `name`. The slug (`conversation`)
+    // is immutable per 3.6b's tightened validator; only the human-
+    // readable display name is mutable.
     expect(mcpCallMock).toHaveBeenCalledWith('comms_conversation_update', {
       key: '0123abcd',
       conversation: 'ch-1',
-      name: 'new-name',
+      display_name: 'new-name',
     });
   });
 
@@ -165,10 +169,12 @@ describe('MqttChatStore Step 3.6 renameChannel', () => {
     // Simulate reconnect drain.
     await store._drainPendingAdminActionsForTest();
 
+    // v0.4.2 Wave C [VERIFY-3.6b-3] reconciliation: queued rename
+    // also drains with `display_name`.
     expect(mcpCallMock).toHaveBeenCalledWith('comms_conversation_update', {
       key: '0123abcd',
       conversation: 'ch-1',
-      name: 'queued-name',
+      display_name: 'queued-name',
     });
     expect(store._pendingAdminActionsLengthForTest()).toBe(0);
   });
@@ -372,9 +378,10 @@ describe('MqttChatStore Step 3.6 admin-action queue behavior', () => {
     await store._drainPendingAdminActionsForTest();
 
     // All three MCP calls fired in insertion order.
+    // v0.4.2 Wave C [VERIFY-3.6b-3]: rename now lands on `display_name`.
     expect(mcpCallMock).toHaveBeenCalledTimes(3);
     const calls = mcpCallMock.mock.calls.map((c) => c[1]);
-    expect(calls[0].name).toBe('a-renamed');
+    expect(calls[0].display_name).toBe('a-renamed');
     expect(calls[1].visibility).toBe('private');
     expect(calls[2].mode).toBe('invite');
     expect(store._pendingAdminActionsLengthForTest()).toBe(0);

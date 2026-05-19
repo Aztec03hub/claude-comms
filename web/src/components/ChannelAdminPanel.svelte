@@ -12,25 +12,13 @@
     helper prop-drilled from App.svelte:
       - Archive  -> { severity: 'warning' } (skips typed-name gate)
       - Delete   -> { severity: 'danger'  } (typed-name required)
-      - Transfer -> { severity: 'danger'  } (typed-name required for the
-        new-owner key; ownership transfer is irreversible from the
-        previous owner's side)
-
-    [VERIFY] Store accessor punt — the panel reads `currentChannelRole`
-    as a prop. A Wave B serial-chain step should land
-    `store.getChannelRole(channelId)` so the modal can populate this
-    prop reactively. Until then the modal threads `null` for non-owned
-    rows (member) and 'owner' for owned rows (the only role the
-    existing createdBy-based projection can synthesize).
-
-    [VERIFY] Store methods punt — the action wiring optimistically calls
-    `store.renameChannel`, `store.setVisibility`, `store.setMode`, and
-    `store.transferOwnership`. These do NOT exist in mqtt-store yet
-    (verified against HEAD 260334b); the panel guards each call with a
-    typeof === 'function' check so the buttons are wired but no-op
-    cleanly until Wave B lands the methods. The Archive + Delete paths
-    DO have backing methods (`archiveChannel`, `deleteChannel`) and
-    are fully reachable today.
+      - Transfer -> { severity: 'danger'  } (typed-name required) +
+        new-owner picker (v0.4.2 Wave C, [VERIFY-3.6b-4]): click Transfer
+        opens a dropdown listing the channel's other members; user picks
+        the new owner; confirmDestructive runs with the channel name as
+        the typed-name gate; on confirm, `store.transferOwnership(id,
+        pickedKey)` fires the 2-arg path (the 1-arg fallback documented
+        on the store accessor is now unreachable from the panel UI).
 
   @prop {Object} channel - Channel row object from store.channelsById[id].
     Carries id, name, topic, mode, visibility, createdBy, archived, etc.
@@ -175,15 +163,67 @@
   }
 
   // ── Transfer ownership ───────────────────────────────────────────────
-  // Owner-only. The TypeNameConfirmDialog with severity:'danger' makes
-  // the user type the channel name to confirm; a follow-up step (Wave B)
-  // will collect the new-owner key via a separate selector. For 3.1 we
-  // surface the gated confirm flow + call signature; the actual key
-  // selector is documented as the [VERIFY] follow-up.
+  // Owner-only. Two-step UX (v0.4.2 Wave C, [VERIFY-3.6b-4]):
+  //   1. Click "Transfer ownership" → opens a dropdown of channel
+  //      members excluding the caller (computed from the store's
+  //      `channelMembers[channel.id]` + `participants` map). If the
+  //      picker is empty (channel has no other members), the dropdown
+  //      shows an inline "No eligible members" hint and the Confirm
+  //      button stays disabled.
+  //   2. Pick a member → confirmDestructive opens with severity:'danger'
+  //      and the channel name as the typed-name gate.
+  //   3. On confirm, fires `store.transferOwnership(channel.id,
+  //      pickedKey)` — the 2-arg path the store accessor has been
+  //      waiting on. On cancel / dismiss, the picker collapses without
+  //      firing the wire call.
+  //
+  // The picker uses a native `<select>` rather than a custom typeahead
+  // for two reasons: (a) participant counts are typically small (< 50)
+  // so a search field doesn't add value, and (b) `<select>` carries
+  // full a11y semantics (keyboard navigation, ARIA listbox role,
+  // screen-reader pronunciation of options) without bespoke wiring.
   let transferPending = $state(false);
+  let pickerOpen = $state(false);
+  let pickedKey = $state('');
 
-  async function startTransfer() {
+  // Eligible new-owner candidates: channel members minus the caller.
+  // Sorted alphabetically by display name for stable picker ordering.
+  // Falls back to participant key when name is missing (legacy rows).
+  let transferCandidates = $derived.by(() => {
+    const channelId = channel?.id;
+    if (!channelId) return [];
+    const memberMap = store?.channelMembers?.[channelId];
+    if (!memberMap) return [];
+    const participants = store?.participants ?? {};
+    const selfKey = store?.userProfile?.key;
+    const memberKeys = Object.keys(memberMap);
+    const out = [];
+    for (const key of memberKeys) {
+      if (key === selfKey) continue;
+      const p = participants[key];
+      out.push({
+        key,
+        name: (p && typeof p.name === 'string' && p.name) ? p.name : key,
+      });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  });
+
+  function openTransferPicker() {
     if (!canTransfer || transferPending) return;
+    pickerOpen = true;
+    pickedKey = '';
+  }
+
+  function cancelTransferPicker() {
+    pickerOpen = false;
+    pickedKey = '';
+  }
+
+  async function confirmTransferPicker() {
+    if (!canTransfer || transferPending) return;
+    if (!pickedKey) return;
     if (typeof onConfirmDestructive !== 'function') return;
     transferPending = true;
     try {
@@ -195,14 +235,21 @@
         confirmLabel: 'Transfer ownership',
         severity: 'danger',
       });
-      if (!ok) return;
-      if (typeof store?.transferOwnership === 'function') {
-        await store.transferOwnership(channel.id);
+      if (!ok) {
+        // User declined the confirm dialog. Leave the picker open so
+        // they can either pick a different member or click Cancel to
+        // back out entirely.
+        return;
       }
-      // [VERIFY] no-op until Wave B lands transferOwnership + the
-      // new-owner key picker. onClose intentionally NOT called here:
-      // transfer is silent (no modal close) until the new-owner flow
-      // is finalized in Wave B.
+      if (typeof store?.transferOwnership === 'function') {
+        await store.transferOwnership(channel.id, pickedKey);
+      }
+      // Collapse the picker on a successful (or store-stub-no-op)
+      // transfer. onClose intentionally NOT called: a successful
+      // transfer demotes the caller; the modal stays open so they
+      // can review the post-transfer state.
+      pickerOpen = false;
+      pickedKey = '';
     } finally {
       transferPending = false;
     }
@@ -387,12 +434,12 @@
         <button
           type="button"
           class="admin-btn"
-          onclick={startTransfer}
+          onclick={pickerOpen ? cancelTransferPicker : openTransferPicker}
           disabled={transferPending}
           data-testid="channel-admin-action-transfer"
         >
           <UserPlus size={14} strokeWidth={2} aria-hidden="true" />
-          Transfer ownership
+          {pickerOpen ? 'Cancel transfer' : 'Transfer ownership'}
         </button>
       {/if}
 
@@ -422,6 +469,54 @@
         </button>
       {/if}
     </div>
+
+    {#if canTransfer && pickerOpen}
+      <div class="admin-transfer-picker" data-testid="channel-admin-transfer-picker">
+        <label class="admin-transfer-label" for="channel-admin-transfer-select">
+          New owner
+        </label>
+        {#if transferCandidates.length === 0}
+          <p class="admin-transfer-empty" data-testid="channel-admin-transfer-picker-empty">
+            No eligible members in this channel. Invite someone first, then
+            transfer ownership.
+          </p>
+        {:else}
+          <select
+            id="channel-admin-transfer-select"
+            class="admin-transfer-select"
+            bind:value={pickedKey}
+            data-testid="channel-admin-transfer-select"
+          >
+            <option value="" disabled>Select a new owner...</option>
+            {#each transferCandidates as candidate (candidate.key)}
+              <option value={candidate.key} data-testid="channel-admin-transfer-option-{candidate.key}">
+                {candidate.name}
+              </option>
+            {/each}
+          </select>
+        {/if}
+        <div class="admin-transfer-actions">
+          <button
+            type="button"
+            class="admin-btn"
+            onclick={cancelTransferPicker}
+            data-testid="channel-admin-transfer-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="admin-btn danger"
+            onclick={confirmTransferPicker}
+            disabled={transferPending || !pickedKey}
+            data-testid="channel-admin-transfer-confirm"
+          >
+            <UserPlus size={14} strokeWidth={2} aria-hidden="true" />
+            Confirm transfer
+          </button>
+        </div>
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -552,6 +647,52 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+
+  .admin-transfer-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--bg-surface);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: var(--radius-sm);
+  }
+
+  .admin-transfer-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .admin-transfer-select {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .admin-transfer-select:focus {
+    border-color: var(--ember-500, #f97316);
+  }
+
+  .admin-transfer-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .admin-transfer-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
   }
 
   .admin-btn {

@@ -90,23 +90,91 @@
     }
   }
 
-  // ── "Seen" tracking ──
-  // Uses IntersectionObserver to mark messages as read when they scroll into view.
-  // This feeds the ReadReceipt component with meaningful read_by counts.
+  // ── "Seen" + viewport-confirmed-read tracking (Step 3.8, UX G-18) ──
+  //
+  // Two concerns share one IntersectionObserver:
+  //
+  //   1. ``store.markSeen(messageId)`` — bumps the per-message read_by
+  //      counter that drives the ReadReceipt component. Fires on the
+  //      first intersection without any dwell window (existing behavior;
+  //      kept at the 1-arg signature so existing tests with
+  //      ``markSeen = vi.fn()`` stubs stay green).
+  //
+  //   2. ``store.markMessageViewed(activeChannelId, messageId)`` —
+  //      viewport-confirmed read tracker that clears the channel's
+  //      unread badge once every other-user message in the channel has
+  //      been viewed. Per UX G-18 spec, requires a >= 1 second dwell to
+  //      count as "actually viewed" (a rapid scroll past should NOT
+  //      mark messages read). The dwell timer is per-message; if the
+  //      bubble exits the viewport before the timer fires, the pending
+  //      mark is cancelled.
+  //
+  // Note: the store accessor receives the channel id snapshotted at
+  // observation time, NOT at intersection time. This keeps the marking
+  // pinned to the channel the message actually belongs to, so a quick
+  // channel switch mid-dwell can't mismark a message for the wrong
+  // channel. The observer is rebuilt on channel switch (the $effect
+  // depends on ``activeChannelId``) so the snapshot stays correct.
   let seenObserver = $state(null);
   let observedIds = new Set();
+  let dwellTimers = new Map(); // messageId -> setTimeout handle
+
+  // Pinned dwell threshold per Step 3.8 spec (UX G-18): a bubble must
+  // be visible for >= 1 second to count as "actually viewed". Exposed
+  // as a module constant so tests can monkey-patch if needed without
+  // racing real clocks.
+  const DWELL_MS = 1000;
+
+  // Snapshot the active channel at observer-creation time. If the user
+  // switches channels mid-dwell, the in-flight timers fire against the
+  // OLD channel id, which is the correct behavior: the user viewed
+  // those messages in that channel's viewport, not the new one.
+  let activeChannelAtObserve = $derived(store?.activeChannel ?? null);
 
   $effect(() => {
     if (!messagesEl || !store) return;
 
+    // Capture the channel id at effect-setup time. The $effect re-runs
+    // when activeChannelAtObserve changes (channel switch), so each
+    // observer instance is bound to exactly one channel.
+    const channelId = activeChannelAtObserve;
+
     observedIds = new Set();
+    dwellTimers = new Map();
 
     seenObserver = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
+          const msgId = entry.target.dataset.messageId;
+          if (!msgId) continue;
+
           if (entry.isIntersecting) {
-            const msgId = entry.target.dataset.messageId;
-            if (msgId) store.markSeen(msgId);
+            // Existing semantics: fire markSeen immediately for the
+            // per-message ReadReceipt counter (no dwell required).
+            store.markSeen(msgId);
+
+            // Step 3.8 semantics: schedule the viewport-confirmed
+            // read mark after the dwell window. Cancel any existing
+            // pending timer for this id so a flicker doesn't double-
+            // schedule.
+            if (dwellTimers.has(msgId)) {
+              clearTimeout(dwellTimers.get(msgId));
+            }
+            if (channelId) {
+              const handle = setTimeout(() => {
+                dwellTimers.delete(msgId);
+                store.markMessageViewed(channelId, msgId);
+              }, DWELL_MS);
+              dwellTimers.set(msgId, handle);
+            }
+          } else {
+            // Bubble left the viewport before the dwell elapsed:
+            // cancel its pending mark so a rapid scroll past doesn't
+            // count as a read.
+            if (dwellTimers.has(msgId)) {
+              clearTimeout(dwellTimers.get(msgId));
+              dwellTimers.delete(msgId);
+            }
           }
         }
       },
@@ -115,6 +183,10 @@
 
     return () => {
       seenObserver?.disconnect();
+      for (const handle of dwellTimers.values()) {
+        clearTimeout(handle);
+      }
+      dwellTimers.clear();
       observedIds = new Set();
     };
   });
@@ -163,7 +235,7 @@
       <div class="empty-hint">{EMPTY_STATES.chatNoMessagesHint}</div>
     </div>
   {:else}
-    {#each groupedMessages as group, i}
+    {#each groupedMessages as group, i (group.type + ':' + (group.messages?.[0]?.id ?? group.ts ?? i))}
       {#if group.type === 'date'}
         <DateSeparator ts={group.ts} />
       {:else if group.type === 'system'}

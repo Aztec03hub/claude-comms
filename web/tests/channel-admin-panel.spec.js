@@ -183,17 +183,23 @@ describe('ChannelAdminPanel: severity routing', () => {
     expect(opts.confirmLabel).toBe('Delete channel');
   });
 
-  it('Transfer ownership click invokes onConfirmDestructive with severity danger', async () => {
+  it('Transfer ownership click opens the new-owner picker (no immediate confirm)', async () => {
+    // v0.4.2 Wave C [VERIFY-3.6b-4]: Transfer is now a two-step UX.
+    // The initial click opens the picker; confirmDestructive only
+    // fires after the user selects a member and clicks Confirm.
+    // The picker + Confirm path is covered in
+    // tests/channel-admin-panel-transfer.spec.js. Here we just pin
+    // the new "click opens picker, no immediate wire call" contract.
     const onConfirmDestructive = vi.fn().mockResolvedValue(false);
     const props = makeProps({ currentChannelRole: 'owner', onConfirmDestructive });
-    const { getByTestId } = render(ChannelAdminPanel, { props });
+    const { getByTestId, queryByTestId } = render(ChannelAdminPanel, { props });
+    expect(queryByTestId('channel-admin-transfer-picker')).toBeNull();
     await fireEvent.click(getByTestId('channel-admin-action-transfer'));
     await flush();
-    expect(onConfirmDestructive).toHaveBeenCalledTimes(1);
-    const opts = onConfirmDestructive.mock.calls[0][0];
-    expect(opts.severity).toBe('danger');
-    expect(opts.requireTypedName).toBe('general');
-    expect(opts.confirmLabel).toBe('Transfer ownership');
+    // confirmDestructive NOT called yet — picker is the gating step.
+    expect(onConfirmDestructive).not.toHaveBeenCalled();
+    // Picker is now visible.
+    expect(getByTestId('channel-admin-transfer-picker')).not.toBeNull();
   });
 });
 

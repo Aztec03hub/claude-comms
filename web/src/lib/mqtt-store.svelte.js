@@ -97,7 +97,10 @@ export class MqttChatStore {
    *   - ``memberCount`` (int): total members
    *   - ``lastActivity`` (ISO string | null)
    *   - ``mode``: ``"public" | "private"``
-   *   - ``visibility``: ``"listed" | "unlisted"``
+   *   - ``visibility``: ``"public" | "private"`` (v0.4.2 Step 3.6b pinned
+   *     these as the wire-side values; the legacy ``"listed"``/
+   *     ``"unlisted"`` strings were retired in Wave C's frontend
+   *     reconciliation step alongside the renameChannel display_name shift)
    *   - ``starred``, ``muted``, ``unread``, ``unreadHasMention``: caller's
    *     per-row personalization
    *   - ``unreadFrom`` (legacy v0.3.x marker, kept for back-compat)
@@ -331,6 +334,23 @@ export class MqttChatStore {
   #typingTimers = {};
   #myTypingTimer = null;
   #seenMessageIds = new Set();
+  /**
+   * v0.4.2 Step 3.8 (UX G-18): per-channel set of message ids the local
+   * user has actually viewed (dwell-confirmed via IntersectionObserver in
+   * ChatView). Distinct from ``#seenMessageIds`` which feeds the
+   * ReadReceipt counter without any unread-clearing semantics.
+   *
+   * Shape: ``{ [channelId: string]: Set<string> }``. Idempotent: adding
+   * a message id twice is a no-op. Drives the new "all unread messages
+   * have been viewed → zero the channel's unread count" behavior that
+   * replaces the previous "switching channels auto-clears unread"
+   * shortcut (which violated UX G-18: unread should mean "stuff you
+   * haven't actually viewed", matching Slack/Discord/Teams semantics).
+   *
+   * Not persisted across reloads — viewing is a session-local concept.
+   * On reload, unread comes from ``comms_check`` (server-authoritative).
+   */
+  #viewedMessageIdsByChannel = {};
   #failureCount = 0;
   #backoffActive = false;
   #backoffTimer = null;
@@ -573,7 +593,12 @@ export class MqttChatStore {
       memberCount: typeof r.memberCount === 'number' ? r.memberCount : 0,
       lastActivity: r.lastActivity ?? null,
       mode: typeof r.mode === 'string' ? r.mode : 'public',
-      visibility: typeof r.visibility === 'string' ? r.visibility : 'listed',
+      // v0.4.2 Wave C frontend reconciliation [VERIFY-3.6b-2]: default to
+      // the pinned ``'public'`` value (Step 3.6b backend contract), not the
+      // legacy ``'listed'`` string. The old default was kept while the wire
+      // shape was in flux; 3.6b's tightening makes ``'public'``/``'private'``
+      // the only accepted values.
+      visibility: typeof r.visibility === 'string' ? r.visibility : 'public',
       createdAt: r.createdAt ?? null,
       createdBy: r.createdBy ?? null,
       // my-prefix → unprefixed rename (architecture spec §III.4 preamble)
@@ -862,8 +887,9 @@ export class MqttChatStore {
    * Sections (per architecture spec §III.4 step 2.6):
    *   - ``starredChannels``   : ``member && starred``
    *   - ``activeChannels``    : ``member && !starred && !archived``
-   *   - ``availableChannels`` : ``!member && visibility === 'listed' &&
-   *                              !archived``
+   *   - ``availableChannels`` : ``!member && visibility === 'public' &&
+   *                              !archived`` (v0.4.2 Step 3.6b pinned
+   *                              ``'public'`` over the legacy ``'listed'``)
    *   - ``archivedChannels``  : ``archived === true`` (drives the
    *                             directory modal's Archived sub-tab in
    *                             Step 2.13)
@@ -888,7 +914,12 @@ export class MqttChatStore {
 
   availableChannels = $derived(
     Object.values(this.channelsById)
-      .filter((c) => !c.member && c.visibility === 'listed' && !c.archived)
+      // v0.4.2 Step 3.6b backend pinned ``'public'`` / ``'private'`` as
+      // the canonical wire values; ``'listed'`` is the legacy synonym
+      // accepted here for back-compat (older daemons + fixtures may
+      // still emit the v0.3 string). Newly-created rows + outgoing
+      // ``setVisibility`` calls only ever use the canonical pair.
+      .filter((c) => !c.member && (c.visibility === 'public' || c.visibility === 'listed') && !c.archived)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || '')),
   );
 
@@ -1622,20 +1653,24 @@ export class MqttChatStore {
   }
 
   /**
-   * Switch the active channel and clear its unread count.
+   * Switch the active channel.
+   *
+   * v0.4.2 Step 3.8 (UX G-18): switching no longer auto-clears unread.
+   * Previously the act of clicking into a channel zeroed its ``unread``
+   * counter even if the user immediately switched back out without
+   * actually reading anything. The new semantics — matching Slack /
+   * Discord / Teams — require viewport-confirmed reads: each message
+   * bubble in ChatView is observed via IntersectionObserver, and
+   * ``markMessageViewed(channelId, messageId)`` is called after a
+   * dwell window. Unread zeroes out only when every previously-unread
+   * message has been viewed (or the user explicitly clicks "Mark all
+   * as read" via Step 3.7's path through ``markAllRead``).
+   *
    * No-op if already viewing the target channel.
    * @param {string} channelId - The channel to switch to.
    */
   switchChannel(channelId) {
     if (channelId === this.activeChannel) return;
-
-    // Clear unread for old active
-    const ch = this.channelsById[channelId];
-    if (ch) {
-      ch.unread = 0;
-      ch.unreadFrom = null;
-      this.#saveUnreadMarkers();
-    }
 
     this.activeChannel = channelId;
 
@@ -1661,8 +1696,9 @@ export class MqttChatStore {
 
     // v0.4.0 Step 2.6 — populate the full ChannelRow shape on local
     // create. ``member`` defaults true because the creator implicitly
-    // joins. ``visibility`` defaults ``listed`` so the new channel
-    // surfaces in the directory's Browse tab for other users.
+    // joins. ``visibility`` defaults ``'public'`` so the new channel
+    // surfaces in the directory's Browse tab for other users (v0.4.2
+    // Step 3.6b pinned ``'public'`` over the legacy ``'listed'``).
     this.channelsById[id] = this.#channelRowFromPayload({
       id,
       name: id,
@@ -1671,7 +1707,7 @@ export class MqttChatStore {
       memberCount: 1,
       lastActivity: new Date().toISOString(),
       mode: 'public',
-      visibility: 'listed',
+      visibility: 'public',
       createdAt: new Date().toISOString(),
       createdBy: this.userProfile.key,
       myUnread: 0,
@@ -1783,6 +1819,92 @@ export class MqttChatStore {
 
     // Increment the read_by count (used by ReadReceipt component)
     msg.read_by = (msg.read_by || 0) + 1;
+  }
+
+  /**
+   * v0.4.2 Step 3.8 (UX G-18) — viewport-confirmed read tracker.
+   *
+   * Called by ChatView's IntersectionObserver after a message bubble has
+   * been visible in the viewport for the spec-pinned dwell window
+   * (≥ 1 second). Records the (channelId, messageId) pair in the per-
+   * channel viewed-id set. Idempotent: re-observing an already-viewed
+   * message is a no-op.
+   *
+   * Unread-clearing semantics:
+   *   - Each call recomputes whether the channel's currently-loaded
+   *     messages from other users are all in the viewed set.
+   *   - If they are, the channel's ``unread`` count zeroes and
+   *     ``unreadHasMention`` clears, AND ``lastReadAt`` advances to
+   *     the current ISO timestamp (mirroring ``markAllRead``).
+   *   - The legacy ``unreadFrom`` cursor clears alongside so v0.4.2
+   *     Step 3.7's UnreadDivider rebaselines to the new read line.
+   *   - Self-authored messages are skipped (they're never unread to
+   *     begin with).
+   *
+   * Distinct from ``markSeen`` (which only bumps a local read_by
+   * counter for ReadReceipt UI). Both can fire from the same observer
+   * callback without stepping on each other; ``markSeen`` was deliberately
+   * left at its 1-arg signature so existing test fakes that mock it as
+   * ``vi.fn()`` keep passing untouched.
+   *
+   * No-op when:
+   *   - ``channelId`` is missing or unknown
+   *   - ``messageId`` is missing
+   *   - the (channel, message) pair has already been recorded as viewed
+   *
+   * @param {string} channelId - Channel id the message belongs to.
+   * @param {string} messageId - Message id observed in the viewport.
+   */
+  markMessageViewed(channelId, messageId) {
+    if (typeof channelId !== 'string' || !channelId) return;
+    if (typeof messageId !== 'string' || !messageId) return;
+
+    let viewed = this.#viewedMessageIdsByChannel[channelId];
+    if (!viewed) {
+      viewed = new Set();
+      this.#viewedMessageIdsByChannel[channelId] = viewed;
+    }
+    if (viewed.has(messageId)) return;
+    viewed.add(messageId);
+
+    const ch = this.channelsById[channelId];
+    if (!ch) return;
+
+    // Recompute unread: a channel is fully read iff every other-user
+    // message currently loaded for that channel is in the viewed set.
+    // Self-authored messages are excluded because they're never unread.
+    const selfKey = this.userProfile?.key;
+    let unreadRemaining = 0;
+    for (const m of this.messages) {
+      const mChannel = m.channel || m.conv;
+      if (mChannel !== channelId) continue;
+      if (m.sender?.key === selfKey) continue;
+      if (m.sender?.type === 'system') continue;
+      if (!viewed.has(m.id)) unreadRemaining++;
+    }
+
+    // Bound the optimistic clear by the server-authoritative unread
+    // count: never make ``ch.unread`` larger than it already was, and
+    // never set it negative.
+    if (unreadRemaining === 0) {
+      ch.unread = 0;
+      ch.unreadHasMention = false;
+      ch.unreadFrom = null;
+      ch.lastReadAt = new Date().toISOString();
+      this.#saveUnreadMarkers();
+    }
+  }
+
+  /**
+   * Test-only seam: introspect the per-channel viewed-id set. Lets
+   * specs assert that viewport observations were recorded idempotently
+   * without exposing the private field.
+   * @param {string} channelId
+   * @returns {string[]}
+   */
+  _viewedMessageIdsForTest(channelId) {
+    const s = this.#viewedMessageIdsByChannel[channelId];
+    return s ? Array.from(s) : [];
   }
 
   /**
@@ -2320,26 +2442,33 @@ export class MqttChatStore {
    * calls queue on ``#pendingAdminActions`` for drain on the next
    * ``'connect'`` event.
    *
-   * Wire shape: ``comms_conversation_update`` with payload
-   * ``{ key, conversation, name }``; see the [VERIFY] block above the
-   * admin-action group for the backend field-acceptance status.
+   * Wire shape (v0.4.2 Step 3.6b pinned [VERIFY-3.6b-3]):
+   * ``comms_conversation_update`` with payload
+   * ``{ key, conversation, display_name }``. The slug (``conversation``)
+   * is immutable; only the human-readable display name is mutable. The
+   * legacy ``name`` field was rejected by 3.6b's tightened
+   * ``tool_comms_conversation_update`` validator, so Wave C swapped to
+   * ``display_name``. External method signature is unchanged so consumers
+   * (ChannelAdminPanel.commitRename, sidebar context menus) carry no
+   * patch. Frontend display reads ``displayName ?? name`` with
+   * display_name precedence + slug fallback.
    *
    * @param {string} channelId - Channel id to rename.
-   * @param {string} newName - The desired channel name.
+   * @param {string} newDisplayName - The desired human-readable display name.
    * @returns {Promise<{ success: boolean, error?: string, queued?: boolean }>}
    */
-  async renameChannel(channelId, newName) {
+  async renameChannel(channelId, newDisplayName) {
     if (typeof channelId !== 'string' || !channelId) {
       return { success: false, error: 'Missing channel id.' };
     }
-    if (typeof newName !== 'string' || !newName.trim()) {
+    if (typeof newDisplayName !== 'string' || !newDisplayName.trim()) {
       return { success: false, error: 'Missing channel name.' };
     }
     const ch = this.channelsById[channelId];
     if (!ch) return { success: false, error: 'Unknown channel.' };
 
     const prevName = ch.name;
-    ch.name = newName;
+    ch.name = newDisplayName;
 
     // Disconnected: queue the wire call + the rollback closure so the
     // local update stays visible while we wait for reconnect.
@@ -2351,7 +2480,7 @@ export class MqttChatStore {
           mcpCall('comms_conversation_update', {
             key: this.userProfile.key,
             conversation: channelId,
-            name: newName,
+            display_name: newDisplayName,
           }),
         rollback: () => {
           const live = this.channelsById[channelId];
@@ -2364,7 +2493,7 @@ export class MqttChatStore {
     const result = await mcpCall('comms_conversation_update', {
       key: this.userProfile.key,
       conversation: channelId,
-      name: newName,
+      display_name: newDisplayName,
     });
     if (!result.success) {
       ch.name = prevName;
@@ -3300,7 +3429,7 @@ export class MqttChatStore {
             memberCount: 0,
             lastActivity: this.#extractEventTimestamp(msg),
             mode: 'public',
-            visibility: 'listed',
+            visibility: 'public',
             createdAt: this.#extractEventTimestamp(msg),
             createdBy: typeof msg.creator_key === 'string' ? msg.creator_key : null,
             myUnread: 0,
@@ -3757,7 +3886,7 @@ export class MqttChatStore {
         member: false,
         memberCount: 0,
         mode: 'public',
-        visibility: 'listed',
+        visibility: 'public',
         createdAt: msg.created_at || null,
         createdBy: msg.created_by || null,
         myUnread: 0,

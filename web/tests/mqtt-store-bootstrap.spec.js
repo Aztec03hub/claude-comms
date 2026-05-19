@@ -255,7 +255,9 @@ describe('MqttChatStore — v0.4.0 Step 2.5 bootstrap from /api/conversations', 
     expect(sparse.member).toBe(false);
     expect(sparse.memberCount).toBe(0);
     expect(sparse.mode).toBe('public');
-    expect(sparse.visibility).toBe('listed');
+    // v0.4.2 Wave C [VERIFY-3.6b-2]: default visibility tightened from
+    // legacy 'listed' to the 3.6b-pinned 'public' wire value.
+    expect(sparse.visibility).toBe('public');
     expect(sparse.unread).toBe(0);
     expect(sparse.starred).toBe(false);
     expect(sparse.muted).toBe(false);
