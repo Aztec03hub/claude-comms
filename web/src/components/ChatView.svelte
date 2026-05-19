@@ -1,6 +1,15 @@
 <!--
   @component ChatView
   @description Main chat message viewport that groups consecutive messages by sender, inserts date separators, auto-scrolls to new messages, tracks read receipts via IntersectionObserver, and shows a scroll-to-bottom button when the user scrolls up.
+
+  v0.4.2 Step 3.2 + 3.7: mounts a ChatHeader at top (with inline role-gated
+  topic edit) and inserts an UnreadDivider between the last-read message
+  and the first-unread message (cursor = `activeChannelMeta.unreadFrom`,
+  count = `activeChannelMeta.unread`). The existing IntersectionObserver
+  "seen tracking" wiring is preserved verbatim — UnreadDivider is just a
+  separator row in the message list and does not carry a `data-message-id`,
+  so the observer ignores it.
+
   @prop {Array} messages - Fallback array of message objects (used when store is not provided).
   @prop {object} currentUser - The current user's profile object.
   @prop {object} participants - Map of participant keys to participant objects.
@@ -10,17 +19,35 @@
   @prop {Function} onReact - Callback invoked when a reaction is added to a message.
   @prop {Function} [onRetryMessage] - Optional callback invoked with a message id when the user clicks Retry on a failed bubble. Forwarded to MessageGroup → MessageBubble. Wire to `store.retryMessage(id)` from App.svelte (UX G-62 follow-up, Step 1.5b).
   @prop {object|null} store - Optional ChatStore instance for reactive message syncing and seen tracking.
+  @prop {boolean} [showChatHeader=false] - Mount the inline ChatHeader at top. Off by default to preserve back-compat with the App.svelte-owned header during the v0.4.2 transition.
+  @prop {'owner'|'admin'|'member'|null} [currentUserRole=null] - Caller's role in the active channel. Forwarded to ChatHeader for edit-affordance gating.
+  @prop {Function} [onTopicEditError] - Optional callback for ChatHeader's setTopic failure path.
 -->
 <script>
   import MessageBubble from './MessageBubble.svelte';
   import MessageGroup from './MessageGroup.svelte';
   import DateSeparator from './DateSeparator.svelte';
   import ScrollToBottom from './ScrollToBottom.svelte';
+  import ChatHeader from './ChatHeader.svelte';
+  import UnreadDivider from './UnreadDivider.svelte';
   import { MessageSquare, Info } from 'lucide-svelte';
   import { isSameDay } from '../lib/utils.js';
   import { EMPTY_STATES } from '../lib/copy/emptyStates.js';
 
-  let { messages: messagesProp = [], currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onRetryMessage, store = null } = $props();
+  let {
+    messages: messagesProp = [],
+    currentUser,
+    participants,
+    onOpenThread,
+    onContextMenu,
+    onShowProfile,
+    onReact,
+    onRetryMessage,
+    store = null,
+    showChatHeader = false,
+    currentUserRole = null,
+    onTopicEditError,
+  } = $props();
 
   // Class-based $state fields on the store are fully reactive across
   // component boundaries when consumed via $derived. Prefer the store's
@@ -28,12 +55,40 @@
   // back to the messagesProp contract used by tests and harnesses.
   let messages = $derived(store ? store.activeMessages : (messagesProp ?? []));
 
+  // v0.4.2 Step 3.7: UnreadDivider positioning.
+  //
+  // The divider renders just BEFORE the message whose id matches the
+  // active channel's `unreadFrom` cursor (legacy v0.3.x persisted marker
+  // — see `mqtt-store.svelte.js#saveUnreadMarkers`). If the cursor is
+  // null, missing, or points to a message that is not in the current
+  // viewport's message array (e.g. older history not yet paged in), the
+  // divider does not render at all.
+  //
+  // The unread count comes from `activeChannelMeta.unread` and feeds the
+  // "{N} new" label. When that is 0, UnreadDivider self-hides regardless
+  // of cursor state.
+  let unreadCursorId = $derived(store?.activeChannelMeta?.unreadFrom ?? null);
+  let unreadCount = $derived(
+    typeof store?.activeChannelMeta?.unread === 'number'
+      ? store.activeChannelMeta.unread
+      : 0,
+  );
+
+  // ChatHeader inputs (Step 3.2). When showChatHeader is false (default),
+  // the header is not mounted and these derivations stay inert.
+  let activeChannel = $derived(store?.activeChannelMeta ?? null);
+
   let messagesEl = $state(null);
   let showScrollBtn = $state(false);
   let unreadBelow = $state(0);
   let isAtBottom = $state(true);
 
-  // Group consecutive messages from the same sender
+  // Group consecutive messages from the same sender. v0.4.2 Step 3.7:
+  // when a non-null `unreadCursorId` points at a message in this array,
+  // splice an `{ type: 'unread-divider' }` row in just before the FIRST
+  // group that contains that message id. The divider is intentionally
+  // NOT a "data-message-id" element so the IntersectionObserver below
+  // (Wave C seen-tracking) ignores it.
   let groupedMessages = $derived.by(() => {
     const groups = [];
     let currentGroup = null;
@@ -61,6 +116,22 @@
       } else {
         currentGroup = { type: 'messages', sender: msg.sender.key, messages: [msg] };
         groups.push(currentGroup);
+      }
+    }
+
+    // Splice the unread divider in front of the FIRST group that owns the
+    // unread cursor message. Skip entirely when there's no cursor, when
+    // the unread count is 0, or when the cursor isn't found in the
+    // current message window.
+    if (unreadCursorId && unreadCount > 0) {
+      for (let i = 0; i < groups.length; i++) {
+        const g = groups[i];
+        if (g.type !== 'messages' && g.type !== 'system') continue;
+        const hit = g.messages.some((m) => m.id === unreadCursorId);
+        if (hit) {
+          groups.splice(i, 0, { type: 'unread-divider', count: unreadCount });
+          break;
+        }
       }
     }
     return groups;
@@ -214,6 +285,15 @@
   }
 </script>
 
+{#if showChatHeader && activeChannel}
+  <ChatHeader
+    channel={activeChannel}
+    {currentUserRole}
+    {store}
+    onEditTopicError={onTopicEditError}
+  />
+{/if}
+
 <div
   class="messages"
   bind:this={messagesEl}
@@ -238,6 +318,8 @@
     {#each groupedMessages as group, i (group.type + ':' + (group.messages?.[0]?.id ?? group.ts ?? i))}
       {#if group.type === 'date'}
         <DateSeparator ts={group.ts} />
+      {:else if group.type === 'unread-divider'}
+        <UnreadDivider unreadCount={group.count} />
       {:else if group.type === 'system'}
         {#each group.messages as msg (msg.id)}
           <div class="system-message" data-message-id={msg.id} data-testid="system-message-{msg.id}">
