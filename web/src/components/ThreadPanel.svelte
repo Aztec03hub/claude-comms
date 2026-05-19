@@ -226,6 +226,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-shrink: 0;
   }
 
   .thread-title {
@@ -249,22 +250,34 @@
     height: 28px;
     border-radius: 7px;
     border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--text-secondary);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: var(--transition-fast);
     flex-shrink: 0;
+    opacity: 0.92;
   }
 
-  .thread-close:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--ember-700); }
+  .thread-close:hover {
+    background: var(--bg-surface);
+    color: var(--ember-400);
+    border-color: var(--ember-700);
+    opacity: 1;
+  }
+
+  .thread-close:focus-visible {
+    outline: 2px solid var(--ember-400);
+    outline-offset: 2px;
+  }
 
   .thread-parent {
     padding: 14px 18px;
     border-bottom: 1px solid var(--border-subtle);
     background: rgba(255, 255, 255, 0.01);
+    flex-shrink: 0;
   }
 
   .thread-parent-header {
@@ -291,13 +304,24 @@
   .thread-parent-text { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
 
   .thread-replies {
-    flex: 1;
+    flex: 1 1 0;
+    min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 12px 14px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    scrollbar-gutter: stable;
   }
+
+  .thread-replies::-webkit-scrollbar { width: 8px; }
+  .thread-replies::-webkit-scrollbar-track { background: transparent; }
+  .thread-replies::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+  .thread-replies::-webkit-scrollbar-thumb:hover { background: var(--ember-700); }
 
   .thread-reply {
     display: flex;
@@ -335,7 +359,13 @@
   /* 3.12 path — MessageInput owns its own border-top + padding; override
      the top padding so it sits flush against the replies list without
      doubling the gap that already exists in MessageInput's own
-     `.input-area` (12px 22px 18px). */
+     `.input-area` (12px 22px 18px). `flex-shrink: 0` keeps the composer
+     anchored to the bottom while `.thread-replies` absorbs all extra
+     space and scrolls when overflowing. */
+  .thread-composer {
+    flex-shrink: 0;
+  }
+
   .thread-composer :global(.input-area) {
     padding: 10px 14px 12px;
   }
@@ -346,6 +376,7 @@
     padding: 12px 14px;
     border-top: 1px solid var(--border);
     background: linear-gradient(180deg, transparent, rgba(0,0,0,0.1));
+    flex-shrink: 0;
   }
 
   .thread-input-wrap {

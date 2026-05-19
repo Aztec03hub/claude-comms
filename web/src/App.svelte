@@ -778,10 +778,11 @@
       <ThreadPanel
         parentMessage={threadParent}
         messages={store.activeChannelReplies.filter(m => m.reply_to === threadParent.id)}
-        participants={store.participants}
-        currentUser={store.userProfile}
         onClose={() => { showThreadPanel = false; threadParent = null; }}
-        onSendReply={(body) => store.sendMessage(body, threadParent.id)}
+        {store}
+        channelName={store.activeChannel}
+        typingUsers={store.activeTypingUsers}
+        onOpenEmoji={() => showEmojiPicker = !showEmojiPicker}
       />
     {/if}
 

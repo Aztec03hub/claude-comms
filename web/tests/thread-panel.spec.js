@@ -34,8 +34,15 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
 import ThreadPanel from '../src/components/ThreadPanel.svelte';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const APP_SVELTE_PATH = resolve(__dirname, '../src/App.svelte');
+const THREAD_PANEL_PATH = resolve(__dirname, '../src/components/ThreadPanel.svelte');
 
 // ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -367,5 +374,170 @@ describe('ThreadPanel — shell unchanged across composer modes', () => {
 
     await fireEvent.click(closeBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. v0.4.2 follow-up: scrollbar overflow on the replies list
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Issue 2 of the follow-up: the thread replies container previously
+// didn't scroll when reply content overflowed the visible area. The fix
+// adds `min-height: 0` alongside `flex: 1 1 0; overflow-y: auto` on
+// `.thread-replies` (the classic flex-child scrollbar fix), and anchors
+// the header/parent/composer with `flex-shrink: 0` so the replies
+// container is the only flex item that absorbs free space.
+//
+// These tests pin both the structural marker (the class with
+// overflow-y: auto is mounted) and the computed style after layout, so
+// a future refactor that drops the overflow rule fails loudly.
+
+describe('ThreadPanel — replies list scrolls on overflow (v0.4.2 follow-up)', () => {
+  test('.thread-replies mounts when overflowing AND its CSS rule declares overflow-y: auto + min-height: 0', async () => {
+    const store = makeStore();
+    const manyReplies = Array.from({ length: 25 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-0000000reply${i.toString().padStart(2, '0')}`,
+      ts: '2026-05-19T01:01:00Z',
+      sender: { key: 'ember-key', name: 'ember', type: 'agent' },
+      body: `overflow reply number ${i} — long enough to need a scrollbar when 25 of them stack`,
+      reply_to: PARENT_ID,
+    }));
+
+    const { container } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: manyReplies,
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    // Structural marker: the scrollable container is in the DOM and
+    // actually contains the 25 reply nodes.
+    const repliesEl = container.querySelector('.thread-replies');
+    expect(repliesEl).toBeTruthy();
+    const renderedReplies = repliesEl.querySelectorAll('.thread-reply');
+    expect(renderedReplies.length).toBe(25);
+
+    // CSS contract: jsdom doesn't apply Svelte's scoped <style> via
+    // getComputedStyle reliably, so we assert the contract from the
+    // component source. A regression that drops either declaration
+    // (`overflow-y: auto` or the load-bearing `min-height: 0`) fails
+    // this test immediately, before the build can ship a non-scrolling
+    // panel to users.
+    const src = readFileSync(THREAD_PANEL_PATH, 'utf-8');
+    const styleStart = src.lastIndexOf('<style>');
+    const styleEnd = src.lastIndexOf('</style>');
+    expect(styleStart).toBeGreaterThan(-1);
+    expect(styleEnd).toBeGreaterThan(styleStart);
+    const styleBlock = src.slice(styleStart, styleEnd);
+
+    // Slice the .thread-replies rule (from selector to closing brace).
+    const rulePattern = /\.thread-replies\s*\{[^}]*\}/;
+    const ruleMatch = styleBlock.match(rulePattern);
+    expect(ruleMatch).not.toBeNull();
+    const ruleBody = ruleMatch[0];
+
+    expect(ruleBody).toMatch(/overflow-y:\s*auto/);
+    // `min-height: 0` is the load-bearing flex fix; without it the
+    // flex child can't shrink below its content height and the
+    // scrollbar never engages even with overflow-y: auto set.
+    expect(ruleBody).toMatch(/min-height:\s*0/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 7. v0.4.2 follow-up: visible close button affordance
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Issue 3 of the follow-up: users reported no visible close affordance
+// on the panel. The button exists at thread-panel-close (Step 3.12
+// already shipped it) and is unaffected by composer mode. These tests
+// pin two aspects that make the affordance discoverable:
+//
+//   - It is actually mounted in the legacy path too (regression guard
+//     so a future cleanup doesn't accidentally bury it behind the
+//     useSharedComposer gate).
+//   - Click fires the onClose callback in BOTH composer modes.
+
+describe('ThreadPanel — visible close button (v0.4.2 follow-up)', () => {
+  test('close button is present and click fires onClose in the legacy path', async () => {
+    const onClose = vi.fn();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: makeReplies(),
+        onClose,
+        onSendReply: () => {},
+      },
+    });
+
+    const closeBtn = getByTestId('thread-panel-close');
+    expect(closeBtn).toBeTruthy();
+    // The button MUST carry an accessible name so keyboard / screen-reader
+    // users can discover it.
+    expect(closeBtn.getAttribute('aria-label')).toBe('Close thread panel');
+
+    await fireEvent.click(closeBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('close button is present and click fires onClose in the MessageInput path', async () => {
+    const store = makeStore();
+    const onClose = vi.fn();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: makeReplies(),
+        onClose,
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const closeBtn = getByTestId('thread-panel-close');
+    expect(closeBtn).toBeTruthy();
+    expect(closeBtn.getAttribute('aria-label')).toBe('Close thread panel');
+
+    await fireEvent.click(closeBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 8. v0.4.2 follow-up: App.svelte mount uses the shared composer path
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Issue 1 of the follow-up: App.svelte previously mounted ThreadPanel
+// with the legacy `onSendReply={...}` callback (Step 3.12 left this
+// for a follow-up). This static smoke test parses App.svelte's source
+// and asserts the ThreadPanel mount carries `{store}` and the
+// MessageInput-compatible props (channelName, typingUsers, onOpenEmoji)
+// and NO longer carries `onSendReply`. Regression guard: if a future
+// refactor reverts to the legacy callback the suite fails immediately.
+
+describe('App.svelte — ThreadPanel mount uses the shared composer (v0.4.2 follow-up)', () => {
+  test('App.svelte passes store + channelName + typingUsers + onOpenEmoji to ThreadPanel and not onSendReply', () => {
+    const src = readFileSync(APP_SVELTE_PATH, 'utf-8');
+
+    // Slice the ThreadPanel mount block from `<ThreadPanel` to the
+    // first `/>` after it so the assertions only look at the relevant
+    // call site (avoids false positives from `onSendReply` appearing
+    // anywhere else in the file).
+    const openIdx = src.indexOf('<ThreadPanel');
+    expect(openIdx).toBeGreaterThan(-1);
+    const closeIdx = src.indexOf('/>', openIdx);
+    expect(closeIdx).toBeGreaterThan(openIdx);
+    const mountBlock = src.slice(openIdx, closeIdx + 2);
+
+    // The shared-composer wire is present.
+    expect(mountBlock).toMatch(/\{store\}/);
+    expect(mountBlock).toMatch(/channelName=\{store\.activeChannel\}/);
+    expect(mountBlock).toMatch(/typingUsers=\{store\.activeTypingUsers\}/);
+    expect(mountBlock).toMatch(/onOpenEmoji=/);
+
+    // The legacy callback is gone from this mount.
+    expect(mountBlock).not.toMatch(/onSendReply/);
   });
 });
