@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] -- 2026-05-19
+
+**Admin actions + notifications + status presence + IntersectionObserver unread.** The originally-planned v0.4.1 admin-actions phase that the hotfix bumped here, expanded by Phil's Q6/Q7/Q8 + Archive UX lock-ins at decision gate G1. Largest functional release since v0.4.0: 28 commits, 5 new MCP tools, 2 new schema versions on participants, a new REST endpoint, end-to-end persistence for every admin button surfaced in v0.4.0's UI, and a Slack/Discord-style IntersectionObserver-based unread model that replaces the v0.4.0 "switch-clears-unread" semantics. Also includes a real bug fix for a live-MQTT mention-derivation gap that affected mention-dot rendering in v0.4.0/v0.4.1.
+
+### Q-decisions locked at G1 (2026-05-13)
+
+- **Q6 admin role model**: explicit `role` field per channel (`owner|admin|member`); creators of pre-existing channels grandfathered as `owner` via idempotent backfill. Replaces v0.4.0's implicit "is this the createdBy" heuristic.
+- **Q7 notification policy granularity**: ship `All`/`Mentions`/`Off` PLUS per-channel `highlight-words` array. Substring match on incoming message body raises `unreadHasMention=true` even without formal @-mention.
+- **Q8 mute UI placement**: keep inline mute icon + add kebab quickview row that shows current policy + 1-click cycles to next.
+- **Archive UX**: extend `TypeNameConfirmDialog` with `severity: 'danger' | 'warning'` prop; warning short-circuits the typed-name gate. Archive uses warning (reversible); Delete keeps danger (typed name required).
+
+### Added (admin actions, fully persisting end-to-end)
+
+- **`ChannelAdminPanel.svelte`** mounted in `ChannelDirectoryModal`'s Admin tab. Role-gated visibility: `owner` sees Rename / Transfer Ownership / Set Visibility / Set Mode / Archive / Delete; `admin` sees Rename / Visibility / Mode / Archive (no Transfer, no Delete); `member` sees an empty-state. All destructive actions route through the shared `confirmDestructive` helper with appropriate severity.
+- **`MemberContextMenu.svelte`** opens on right-click of any member row in `MemberList`. Actions: **Kick** (gated owner/admin via `store.getChannelRole`); **Mute globally** / **Unmute globally** (localStorage per the v0.4.0 Q4 pattern); **Start DM** (excluded for self). Destructive paths route through `confirmDestructive(severity='danger')`.
+- **`InviteParticipantDialog.svelte`** opened via the new "Invite participant..." item in `ChannelContextMenu`. Search-as-you-type participant picker, optional note (200-char limit), wires to existing `comms_invite` MCP tool via the new POST `/api/invite` REST endpoint.
+- **`StatusEditor.svelte`** opened from a new inline status row in `Sidebar` under the identity row. Emoji strip + free-text emoji input + 60-char text input with live counter + 4 expiry presets (Never / 1h / 4h / Until tomorrow). Status persists via new `comms_profile_status_set`/`_clear` MCP tools; broadcasts on the existing `claude-comms/presence/{key}/{connKey}` retained topic augmented with `profile_status_emoji/text/expires_at` keys. Auto-expire coroutine sweeps periodically.
+- **`ChatHeader.svelte`** new component mounted at the top of `ChatView`, replacing the legacy inline header in `App.svelte`. Inline role-gated topic edit (click topic to enter input mode; Enter saves via `store.setTopic`; Esc cancels). Six button affordances restored from the legacy header: Search, Pinned, Artifacts, Settings, Theme toggle, Mobile menu.
+- **`SystemMessageGroup.svelte`** collapses runs of 3+ consecutive system messages into a single expandable summary ("Alice joined, Bob left, Carol archived #general"). 1-2 consecutive system messages render inline as before.
+- **`UnreadDivider.svelte`** inserts a "{N} new" separator between the last-read message and the first-unread message in `ChatView`. Position computed via the channel's `unreadFrom` cursor; self-hides when count is 0 or cursor not in viewport.
+- **`ThreadPanel.svelte` refactored to use `MessageInput`** via a thread-scoped store proxy. Composer parity with the main channel: slash commands work in thread, emoji picker available, draft state preserved. Plus visible close button + proper scrollbar overflow on the reply list (UX requested mid-session).
+- **`NotificationPolicyMenu.svelte`** opened from the kebab "Configure notifications..." item. All/Mentions/Off radio + comma-separated highlight-words text input. Q8 kebab quickview row above shows current policy + 1-click cycle. SidebarChannelRow renders bell variants (Bell for All, BellDot for Mentions, BellOff for Off) once bootstrap pre-warms the policy cache.
+
+### Added (backend + protocol)
+
+- **`tool_comms_kick(registry, *, key, conversation, target_key, ...)`** kicks a member from a channel. Caller must be `owner` or `admin` per `RegistryStore.get_channel_role`. Removes target's membership row; publishes a `[system]` message on the channel's MQTT topic.
+- **`tool_comms_dm_open(registry, *, key, target_key, ...)`** synthesizes a deterministic DM slug `dm-{min(key,target_key)}-{max(key,target_key)}`. Idempotent: returns `{status: "existed"}` if the slug already exists, otherwise creates the channel with `visibility="private"` + `mode="invite"`, auto-joins both parties, and sets symmetric `owner` role for both.
+- **`tool_comms_get_channel_role(registry, *, key, conversation, target_participant_key=None)`** thin MCP wrapper exposing the per-channel role API to the frontend. Returns `{role, participant_key, conversation}`. Caller must be a member of the conversation.
+- **`tool_comms_profile_status_set(emoji, text, expires_at=None)`** + **`tool_comms_profile_status_clear()`** persist user-visible status on the participants table (`profile_status_emoji` / `_text` / `_expires_at`); broadcast augmented presence payload; auto-expire coroutine clears expired statuses. Renamed from the original `comms_status_set` after a pre-dispatch audit caught a collision with v0.4.0's existing ephemeral activity API at `mcp_tools.py:1198`.
+- **POST `/api/invite`** REST endpoint bridges existing `comms_invite` MCP tool. Body `{conversation_id, invitee_key, note?}`; response `{invited, invitee_key, conversation_id}`. Returns 403 (caller not member), 404 (conv not found), 400 (malformed body / unknown invitee), 409 (invitee already member). CORS-coverage confirmed via the v0.4.1 `CORSMiddleware` wrap.
+- **Extended `tool_comms_conversation_update`** now accepts optional `display_name` / `visibility` / `mode` / `created_by` kwargs alongside the existing `topic`. Multi-field updates apply atomically + send one combined system message. `name` (storage slug) is REJECTED with `_error` — rename is via `display_name`; slug stays immutable for MQTT topic stability. Validates `visibility in {"public","private"}` + `mode in {"open","invite"}`.
+- **`ConversationMeta` schema extensions**: nullable `display_name` + `visibility` (default `"public"`) + `mode` (default `"open"`) fields. Backwards-compatible: existing meta JSON files load cleanly via Pydantic defaults.
+- **`participants` table schema bumps**: v1 -> v2 adds `conversation_roles` association table (Q6 lock-in, with idempotent backfill that grandfathers creators as `owner`); v2 -> v3 adds nullable `profile_status_emoji` / `_text` / `_expires_at` columns (idempotent ALTER TABLE via `PRAGMA table_info` introspection).
+- **`comms_check` on connect + visibility-regain** in the store. Batched per-channel unread fetch hydrates `channels[id].unread` / `unreadHasMention` / `lastActivity`. 30-second throttle on rapid `visibilitychange` events.
+
+### Changed (UX semantics)
+
+- **Unread is now viewport-confirmed, not channel-switch-cleared** (UX G-18). Switching to a channel no longer auto-zeros its unread count. Each message bubble is observed by a shared `IntersectionObserver`; after 1 second of dwell in the viewport, the message is marked seen. When all unread messages have been seen, the channel's unread zeros out. "Mark all as read" still forces immediate zero. Matches Slack/Discord behavior most users expect.
+- **App-level browser Notification gate honors per-channel policy**. Browser `Notification` API no longer over-notifies on muted channels. Decision tree: `policy='Off'` never notifies; `policy='Mentions'` notifies only when `unreadHasMention` is true (formal mentions OR highlight-word matches); `policy='All'` notifies always except when channel is muted AND message is not a mention (mentions bypass mute for cross-channel awareness).
+- **`unreadHasMention` derivation now fires on live MQTT messages, not just bootstrap**. v0.4.0 set this flag during `checkChannels` (bootstrap) but missed the live `#handleChatMessage` path; muted-channel mention dots were silent until the next bootstrap. Surgical fix in the live-MQTT handler.
+- **Admin-action store accessors land with disconnected-state queuing**. `store.renameChannel` / `setVisibility` / `setMode` / `transferOwnership` mirror v0.3.3's `pendingSends` pattern from Polish P6's `forwardMessage`. On reconnect, queued operations flush in order.
+
+### Fixed
+
+- **App.svelte toast handler suppressed in-app toasts on muted channels regardless of mention**. Pre-fix: any message on a muted channel suppressed the toast, even @-mentions of the current user. Post-fix: policy-aware decision tree mirrors the browser-Notification gate above.
+- **Mention dot on muted channels via live MQTT** (Design Spec §8.2 invariant). Same root cause as the toast handler — derivation only fired in bootstrap. Fixed in `#handleChatMessage`.
+
+### Framework codifications (orchestration discipline)
+
+Mid-flight process improvements codified into `.worklogs/architecture-and-orchestration-plan.md` §I.18 and the orchestrator memory `feedback_pre_dispatch_edge_map.md`:
+
+- **§I.18 cross-codefile edge map** (Phil-requested 2026-05-13). For any wave of N>=2 parallel coding subagents, orchestrator produces a pre-dispatch artifact pinning the EXACT name + signature of every cross-file symbol (REST shapes, JSON-RPC method names, MQTT topics, DB columns, event-name strings, localStorage keys, CSS classes, function signatures). The pinned block is copy-pasted verbatim into every brief. Agents instructed to STOP and surface to orchestrator rather than improvise pinned names. Generalization of §I.17 stub-agent pattern (which only covered Svelte import-time edges) to ALL runtime-coupled edges.
+- **§I.18 step 1.5: spec-vs-code freshness audit**. Before drafting any brief, run `git grep <each pinned name>` AND read the actual function/class/schema definition for every spec claim about existing code. Caught and resolved 3 stale-spec gotchas in v0.4.2: (a) `comms_status_set` name collision with v0.4.0's ephemeral activity API, renamed to `comms_profile_status_*`; (b) `comms_conversation_update` only accepted `topic` not the 5 fields the spec assumed, leading to a new Step 3.6b backend extension; (c) `ConversationMeta` lacked `visibility`/`mode` fields, also resolved in 3.6b.
+- **§I.18 step 2b: old-value-set grep**. When extending a model field's value-set (e.g. visibility `'listed'/'unlisted'` placeholder to pinned `'public'/'private'`), also grep for existing hardcoded values from the OLD value-set across all consumer trees. Caught by a follow-up agent when the original audit missed the `_serialize_conversation_full` placeholder values.
+
+### Verified
+
+- Pytest **1268 -> 1347** (+79, zero regressions).
+- vitest **745 -> 1061** (+316, +42% growth).
+- ruff clean across `src/` + `tests/`.
+- pnpm build green; svelte-autofixer clean on every component touched.
+- Manual two-layer smoke (per §I.10): Layer A install + Layer B real-browser exercise of admin actions / member kebab / StatusEditor / ChatHeader buttons / Notification policy quickview.
+
+### Notes for upgraders
+
+- Schema migrations are idempotent: legacy v0.4.0/v0.4.1 SQLite registries auto-upgrade on first daemon start (v1 -> v2 -> v3). No data loss; missing columns default to nulls / safe values.
+- The renamed `comms_status_*` to `comms_profile_status_*` distinction: the v0.4.0 ephemeral activity API ("looking at #channel" TTL ~30s) is UNCHANGED — same function names, same MQTT topic, same semantics. v0.4.2's NEW persistent profile-status tools live alongside under `comms_profile_status_*` names. Both APIs coexist; clients of the legacy activity API need no changes.
+- Channel "rename" via the new Admin panel sets a `display_name` field; the underlying slug (used in MQTT topics + on-disk paths) stays immutable. Existing clients see the new display name in UI; topic subscriptions unchanged.
+- Browser notifications now respect per-channel policy; if you previously relied on Notification spam, configure per-channel `Off` policy via the kebab.
+
 ## [0.4.1] -- 2026-05-13
 
 **Hotfix.** v0.4.0 shipped with two showstopper bugs that surfaced as soon as Phil exercised channel operations from a fresh install: the web UI banner blinked between "Establishing secure connection" and brief connected flashes at ~10 Hz, generating 1500+ requests per minute, with no console output to suggest a fault. Two independent root causes, both in v0.4.1.
