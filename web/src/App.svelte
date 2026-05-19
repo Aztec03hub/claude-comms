@@ -966,6 +966,13 @@
       {store}
       showChatHeader={true}
       currentUserRole={store.getChannelRole?.(store.activeChannel) ?? null}
+      onToggleSearch={() => { showSearchPanel = !showSearchPanel; if (showSearchPanel) showThreadPanel = false; }}
+      onTogglePinned={() => showPinnedPanel = !showPinnedPanel}
+      onToggleArtifacts={() => showArtifactPanel = !showArtifactPanel}
+      onToggleSettings={() => showSettingsPanel = !showSettingsPanel}
+      onToggleTheme={toggleTheme}
+      onToggleMobileMenu={() => showMobileSidebar = !showMobileSidebar}
+      themeMode={theme}
     />
 
     {#if showThreadPanel && threadParent}

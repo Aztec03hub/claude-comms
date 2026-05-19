@@ -47,6 +47,16 @@
     showChatHeader = false,
     currentUserRole = null,
     onTopicEditError,
+    // v0.4.2 Wave E.2 follow-up [VERIFY-i]: button-row pass-through to
+    // ChatHeader. ChatView is a thin forwarder; it does not interpret
+    // any of these — App.svelte owns the state toggles they wire to.
+    onToggleSearch,
+    onTogglePinned,
+    onToggleArtifacts,
+    onToggleSettings,
+    onToggleTheme,
+    onToggleMobileMenu,
+    themeMode = 'dark',
   } = $props();
 
   // Class-based $state fields on the store are fully reactive across
@@ -291,6 +301,13 @@
     {currentUserRole}
     {store}
     onEditTopicError={onTopicEditError}
+    {onToggleSearch}
+    {onTogglePinned}
+    {onToggleArtifacts}
+    {onToggleSettings}
+    {onToggleTheme}
+    {onToggleMobileMenu}
+    {themeMode}
   />
 {/if}
 

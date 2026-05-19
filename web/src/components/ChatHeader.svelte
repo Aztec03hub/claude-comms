@@ -19,10 +19,25 @@
     - Members see the topic as static text with no pencil button.
     - `currentUserRole === null` (unknown) also hides the affordance.
 
+  Button row (restored v0.4.2 Wave E.2 follow-up — [VERIFY-i]):
+    - The legacy inline header at App.svelte (deleted in `3458b6d`) carried
+      6 button affordances that the new ChatHeader did not yet render. We
+      restore them here as optional callback props: search, pinned,
+      artifacts, settings, theme toggle, and the mobile-menu trigger.
+    - Each button is rendered only when its callback is provided so the
+      base ChatHeader contract (channel/store/role) remains usable in
+      headless test harnesses.
+    - The mobile-menu button is always emitted (when its callback is
+      provided) but is CSS-hidden on viewports wider than 768px, matching
+      the prior `.mobile-menu-btn` responsive behavior.
+
   Test seam:
     - Every interactive element carries a stable `data-testid`. The topic
       block toggles between `chat-header-topic-static` and
-      `chat-header-topic-input`.
+      `chat-header-topic-input`. Button row testids:
+      `chat-header-mobile-menu-btn`, `chat-header-search-btn`,
+      `chat-header-pinned-btn`, `chat-header-artifacts-btn`,
+      `chat-header-theme-toggle-btn`, `chat-header-settings-btn`.
 
   PUBLIC CONTRACT (do not rename):
     @prop {object} channel - Channel object from `store.channelsById`. Must
@@ -32,16 +47,48 @@
     @prop {object} store - MqttChatStore instance. We call `store.setTopic`.
     @prop {Function} [onEditTopicError] - Optional callback invoked with the
       error string when `store.setTopic` returns `{ success: false, error }`.
+    @prop {Function} [onToggleSearch] - Optional callback for the search
+      button click. When omitted the button is not rendered.
+    @prop {Function} [onTogglePinned] - Optional callback for the pinned
+      messages button click.
+    @prop {Function} [onToggleArtifacts] - Optional callback for the
+      artifacts panel button click.
+    @prop {Function} [onToggleSettings] - Optional callback for the
+      settings panel button click.
+    @prop {Function} [onToggleTheme] - Optional callback for the theme
+      toggle button click.
+    @prop {Function} [onToggleMobileMenu] - Optional callback for the
+      mobile-menu (sidebar) button click. Only visible on narrow viewports.
+    @prop {'dark'|'light'} [themeMode='dark'] - Current theme, drives the
+      sun/moon icon swap on the theme toggle button.
 -->
 <script>
   import { tick } from 'svelte';
-  import { Pencil, Users, Hash } from 'lucide-svelte';
+  import {
+    Pencil,
+    Users,
+    Hash,
+    Search,
+    Pin,
+    FileText,
+    Settings,
+    Menu,
+    Sun,
+    Moon,
+  } from 'lucide-svelte';
 
   let {
     channel,
     currentUserRole = null,
     store,
     onEditTopicError,
+    onToggleSearch,
+    onTogglePinned,
+    onToggleArtifacts,
+    onToggleSettings,
+    onToggleTheme,
+    onToggleMobileMenu,
+    themeMode = 'dark',
   } = $props();
 
   // Defensive accessors so a missing channel does not crash the header.
@@ -170,6 +217,85 @@
     <Users size={12} strokeWidth={2} aria-hidden="true" />
     {memberCount}
   </span>
+
+  <div class="header-actions" data-testid="chat-header-actions">
+    {#if typeof onToggleMobileMenu === 'function'}
+      <button
+        type="button"
+        class="header-btn header-btn-mobile"
+        data-testid="chat-header-mobile-menu-btn"
+        aria-label="Toggle navigation menu"
+        title="Toggle navigation"
+        onclick={() => onToggleMobileMenu()}
+      >
+        <Menu size={16} strokeWidth={2} />
+      </button>
+    {/if}
+    {#if typeof onToggleSearch === 'function'}
+      <button
+        type="button"
+        class="header-btn"
+        data-testid="chat-header-search-btn"
+        aria-label="Search messages"
+        title="Search"
+        onclick={() => onToggleSearch()}
+      >
+        <Search size={16} strokeWidth={2} />
+      </button>
+    {/if}
+    {#if typeof onTogglePinned === 'function'}
+      <button
+        type="button"
+        class="header-btn"
+        data-testid="chat-header-pinned-btn"
+        aria-label="Pinned messages"
+        title="Pinned messages"
+        onclick={() => onTogglePinned()}
+      >
+        <Pin size={16} strokeWidth={2} />
+      </button>
+    {/if}
+    {#if typeof onToggleArtifacts === 'function'}
+      <button
+        type="button"
+        class="header-btn"
+        data-testid="chat-header-artifacts-btn"
+        aria-label="Artifacts"
+        title="Artifacts"
+        onclick={() => onToggleArtifacts()}
+      >
+        <FileText size={16} strokeWidth={2} />
+      </button>
+    {/if}
+    {#if typeof onToggleTheme === 'function'}
+      <button
+        type="button"
+        class="header-btn"
+        data-testid="chat-header-theme-toggle-btn"
+        aria-label="Toggle theme, currently {themeMode}"
+        title="Toggle theme"
+        onclick={() => onToggleTheme()}
+      >
+        {#if themeMode === 'dark'}
+          <Sun size={16} strokeWidth={2} />
+        {:else}
+          <Moon size={16} strokeWidth={2} />
+        {/if}
+      </button>
+    {/if}
+    {#if typeof onToggleSettings === 'function'}
+      <button
+        type="button"
+        class="header-btn"
+        data-testid="chat-header-settings-btn"
+        aria-label="Settings"
+        title="Settings"
+        onclick={() => onToggleSettings()}
+      >
+        <Settings size={16} strokeWidth={2} />
+      </button>
+    {/if}
+  </div>
 </header>
 
 <style>
@@ -282,5 +408,44 @@
     border-radius: 4px;
     background: var(--bg-elevated);
     flex-shrink: 0;
+  }
+
+  .header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .header-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition-fast);
+    padding: 0;
+  }
+
+  .header-btn:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+  }
+
+  .header-btn-mobile {
+    display: none;
+  }
+
+  @media (max-width: 768px) {
+    .header-btn-mobile {
+      display: inline-flex;
+      order: -1;
+    }
   }
 </style>
