@@ -28,12 +28,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from claude_comms.message import now_iso
-from claude_comms.participant import Participant
+from claude_comms.participant import (
+    DEFAULT_ROLE,
+    OWNER_ROLE,
+    ChannelRole,
+    Participant,
+)
 
 logger = logging.getLogger(__name__)
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # Schema DDL is kept verbatim so it can be inspected from tests and audit logs.
@@ -77,6 +82,15 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS conversation_roles (
+    conversation     TEXT NOT NULL,
+    participant_key  TEXT NOT NULL,
+    role             TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
+    granted_at       TEXT NOT NULL,
+    PRIMARY KEY (conversation, participant_key),
+    FOREIGN KEY (participant_key) REFERENCES participants(key) ON DELETE CASCADE
+);
 """
 
 
@@ -108,8 +122,12 @@ class RegistryStore:
     presence or ``_ensure_mcp_connection`` on next interaction.
     """
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, data_dir: Path | None = None) -> None:
         self._db_path = db_path
+        # Conversation metadata lives next to registry.db in the data dir.
+        # The 1->2 migration needs this to locate meta.json files for the
+        # creator-grandfather backfill (Q6 lock-in, v0.4.2 Step 3.0a).
+        self._data_dir = data_dir if data_dir is not None else db_path.parent
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         # PRAGMAs in spec-prescribed order. WAL keeps reads non-blocking
@@ -134,7 +152,7 @@ class RegistryStore:
             data_dir = Path.home() / ".claude-comms"
         data_dir.mkdir(parents=True, exist_ok=True)
         db_path = data_dir / "registry.db"
-        return cls(db_path)
+        return cls(db_path, data_dir=data_dir)
 
     @property
     def db_path(self) -> Path:
@@ -144,16 +162,153 @@ class RegistryStore:
     # -- Schema ------------------------------------------------------------
 
     def _init_schema(self) -> None:
-        """Create tables if missing and pin the schema version."""
+        """Create tables if missing and run any pending migrations.
+
+        Migration strategy: the DDL itself is idempotent (every CREATE uses
+        IF NOT EXISTS) so re-running it on an old database simply adds the
+        new ``conversation_roles`` table. The schema_version row tells us
+        whether we are looking at fresh data (no row yet) or a populated
+        v0.4.0-era database that needs the creator-grandfather backfill.
+        """
         with self._lock:
+            # Observe prior version BEFORE we touch the schema, so we can
+            # distinguish "fresh install, just pin the version" from
+            # "upgrade from v1, run the backfill". On a brand-new DB the
+            # schema_meta table does not yet exist - that case is fresh.
+            prior_version: int | None
+            try:
+                prior_row = self._conn.execute(
+                    "SELECT value FROM schema_meta WHERE key='schema_version'"
+                ).fetchone()
+                prior_version = (
+                    int(prior_row[0]) if prior_row is not None else None
+                )
+            except sqlite3.OperationalError:
+                # schema_meta table does not exist yet (fresh install).
+                prior_version = None
+
             self._conn.executescript(_SCHEMA_DDL)
             self._conn.execute(
                 "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
             )
             self._conn.commit()
-            # Future migration blocks would go here, gated on
-            # SELECT value FROM schema_meta WHERE key='schema_version'.
+
+        # Run the 1 -> 2 backfill only on an actual upgrade. Fresh installs
+        # have no conversations on disk to grandfather, and post-v2 restarts
+        # already saw the bump and skipped it.
+        if prior_version == 1:
+            self._backfill_creator_roles_v1_to_v2()
+
+        if prior_version is not None and prior_version > SCHEMA_VERSION:
+            logger.warning(
+                "registry.db schema_version=%s is newer than supported %s; "
+                "proceeding read-only-ish, expect missing columns/tables",
+                prior_version,
+                SCHEMA_VERSION,
+            )
+
+        # Pin the version after migrations succeed.
+        with self._lock:
+            self._conn.execute(
+                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
+                (str(SCHEMA_VERSION),),
+            )
+            self._conn.commit()
+
+    def _backfill_creator_roles_v1_to_v2(self) -> None:
+        """One-shot: grandfather each channel's ``created_by`` as owner.
+
+        For every conversation meta found on disk, look up ``created_by``
+        (a display name, not a participant key) against ``participants``
+        via the existing ``LOWER(name)`` index. If exactly one match,
+        insert ``(conv, key, 'owner')`` via ``INSERT OR IGNORE`` so a
+        pre-existing role row from a manual repair is never clobbered.
+
+        Display-name collisions log a WARNING and skip the seed - the
+        channel stays un-owned until an explicit ``set_channel_role``
+        call sorts it out. This is the safer default than guessing.
+
+        Channels whose ``created_by`` is a reserved system label
+        (``"system"``, ``"system-backfill"``, ``"system-implicit"``) are
+        also skipped because no real participant key can map to them.
+        """
+        # Import lazily so the registry_store module does not pull in
+        # conversation.py at import time (avoids any cycle if conversation
+        # ever needs registry types).
+        from claude_comms.conversation import list_all_conversations
+
+        try:
+            metas = list_all_conversations(self._data_dir)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "v1->v2 role backfill: could not list conversations in %s: %s",
+                self._data_dir,
+                exc,
+            )
+            return
+
+        if not metas:
+            return
+
+        now = now_iso()
+        seeded = 0
+        skipped_collision = 0
+        skipped_unknown = 0
+
+        with self._lock:
+            for meta in metas:
+                creator_name = (meta.created_by or "").strip()
+                if not creator_name or creator_name.startswith("system"):
+                    # Reserved system label or empty - nothing to map.
+                    continue
+
+                rows = self._conn.execute(
+                    "SELECT key FROM participants WHERE LOWER(name) = LOWER(?)",
+                    (creator_name,),
+                ).fetchall()
+
+                if len(rows) == 0:
+                    skipped_unknown += 1
+                    logger.info(
+                        "v1->v2 role backfill: no participant matches creator "
+                        "%r of channel %r; leaving un-owned",
+                        creator_name,
+                        meta.name,
+                    )
+                    continue
+
+                if len(rows) > 1:
+                    skipped_collision += 1
+                    logger.warning(
+                        "v1->v2 role backfill: display-name %r matches %d "
+                        "participants for channel %r; skipping seed to avoid "
+                        "ambiguous owner assignment (use set_channel_role)",
+                        creator_name,
+                        len(rows),
+                        meta.name,
+                    )
+                    continue
+
+                self._conn.execute(
+                    """
+                    INSERT OR IGNORE INTO conversation_roles
+                        (conversation, participant_key, role, granted_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (meta.name, rows[0]["key"], OWNER_ROLE, now),
+                )
+                seeded += 1
+
+            self._conn.commit()
+
+        logger.info(
+            "v1->v2 role backfill complete: %d seeded, %d skipped (collision), "
+            "%d skipped (unknown creator)",
+            seeded,
+            skipped_collision,
+            skipped_unknown,
+        )
 
     # -- Bulk load ---------------------------------------------------------
 
@@ -303,6 +458,70 @@ class RegistryStore:
                 (key, conversation, root_id, ts),
             )
             self._conn.commit()
+
+    # -- Channel roles (v0.4.2 Step 3.0a) ---------------------------------
+
+    def get_channel_role(
+        self, conversation: str, participant_key: str
+    ) -> ChannelRole:
+        """Return ``participant_key``'s explicit role in ``conversation``.
+
+        Defaults to ``"member"`` for any (conversation, key) pair with no
+        explicit row, so role-gated frontend actions degrade safely on
+        legacy v0.4.0 data that has never been touched by Step 3.5's admin
+        UI. Callers that need to distinguish "explicit member" from
+        "implicit default" should use ``list_channel_roles`` instead.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT role FROM conversation_roles "
+                "WHERE conversation = ? AND participant_key = ?",
+                (conversation, participant_key),
+            ).fetchone()
+        if row is None:
+            return DEFAULT_ROLE
+        return row["role"]
+
+    def set_channel_role(
+        self, conversation: str, participant_key: str, role: ChannelRole
+    ) -> None:
+        """Upsert a role assignment for ``participant_key`` in ``conversation``.
+
+        Idempotent: re-setting the same role refreshes ``granted_at`` so
+        audit downstreams can tell when the role was last (re)confirmed.
+        Raises ``sqlite3.IntegrityError`` if ``role`` is not one of
+        ``'owner'``, ``'admin'``, ``'member'`` (CHECK constraint).
+        """
+        now = now_iso()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO conversation_roles
+                    (conversation, participant_key, role, granted_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(conversation, participant_key) DO UPDATE SET
+                    role = excluded.role,
+                    granted_at = excluded.granted_at
+                """,
+                (conversation, participant_key, role, now),
+            )
+            self._conn.commit()
+
+    def list_channel_roles(self, conversation: str) -> dict[str, ChannelRole]:
+        """Return all explicit role rows for ``conversation``.
+
+        Keys are participant_keys, values are the literal role strings.
+        Returns an empty dict for channels with no explicit role rows
+        (those participants implicitly read as ``'member'`` via
+        ``get_channel_role``).
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT participant_key, role FROM conversation_roles "
+                "WHERE conversation = ?",
+                (conversation,),
+            )
+            return {row["participant_key"]: row["role"] for row in cur}
 
     # -- Admin -------------------------------------------------------------
 

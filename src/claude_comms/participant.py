@@ -17,6 +17,14 @@ NAME_PATTERN = re.compile(r"^[\w-]{1,64}$")
 
 ParticipantType = Literal["claude", "human"]
 
+# Per-channel authorization role (Q6 lock-in, v0.4.2 Step 3.0a).
+# Stored in ``registry_store.conversation_roles`` and consulted by the
+# admin UI / future MCP admin tools. Channels with no explicit role row
+# default to ``"member"`` so legacy v0.4.0 data behaves as before.
+ChannelRole = Literal["owner", "admin", "member"]
+DEFAULT_ROLE: ChannelRole = "member"
+OWNER_ROLE: ChannelRole = "owner"
+
 # Allowed connection types
 CONNECTION_TYPES = ("web", "tui", "mcp", "cli", "api")
 
