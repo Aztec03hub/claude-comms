@@ -1724,11 +1724,22 @@ export class MqttChatStore {
   /**
    * Forward a message to a different channel.
    * Creates a new message with the same body and a `forwarded_from` reference.
+   *
+   * Polish wave P6 (v0.4.2 Wave 0): extends the v0.3.3 G-62 pending-
+   * sends queue to cover the forward path. Previously, a forward
+   * issued while disconnected would local-echo into the target
+   * channel but silently never publish, leaving the bubble in an
+   * indeterminate state. Now the bubble carries a ``status`` field
+   * (``'sending' | 'sent' | 'failed'`` matching ``sendMessage``) and
+   * disconnected forwards land on ``#pendingSends`` for drain on
+   * reconnect. The drain is topic-agnostic, so no change to
+   * ``#drainPendingSends`` is required — every queue entry already
+   * carries its own ``(messageId, topic, payload)`` snapshot.
+   *
    * @param {object} message - The original message object to forward.
    * @param {string} targetChannelId - The channel to forward the message to.
    */
   forwardMessage(message, targetChannelId) {
-    const prevChannel = this.activeChannel;
     const msg = {
       id: generateUUID(),
       ts: new Date().toISOString(),
@@ -1742,16 +1753,27 @@ export class MqttChatStore {
       body: message.body,
       reply_to: null,
       conv: targetChannelId,
-      forwarded_from: message.id
+      forwarded_from: message.id,
+      // Per-message delivery status (UX G-62, extended for forward path
+      // in Polish P6). Mirrors ``sendMessage`` so MessageBubble can
+      // render the same sending/sent/failed affordances on forwarded
+      // local-echoes that it does on direct sends.
+      status: 'sending',
     };
 
     const topic = TOPIC_PREFIX + '/conv/' + targetChannelId + '/messages';
+    const payload = JSON.stringify(msg);
 
-    // Local echo
+    // Local echo: add the forwarded message immediately so it appears
+    // in the target channel without waiting for the broker round-trip.
     this.#handleChatMessage(targetChannelId, msg);
 
     if (this.#client && this.connected) {
-      this.#client.publish(topic, JSON.stringify(msg), { qos: 1 });
+      this.#publishOutgoing(msg.id, topic, payload);
+    } else {
+      // Disconnected — queue instead of silently dropping. The bubble
+      // stays in 'sending' until the queue drains on reconnect.
+      this.#queuePendingSend(msg.id, topic, payload);
     }
   }
 
@@ -2220,6 +2242,68 @@ export class MqttChatStore {
     ch.starred = !!starred;
     safeStorage.setItem(STAR_STORAGE_PREFIX + id, ch.starred ? 'true' : 'false');
     return { success: true };
+  }
+
+  /**
+   * Mark all unread messages in a channel as read.
+   *
+   * Polish wave P1 (v0.4.2 Wave 0): the v0.4.0 Sidebar context menu's
+   * "Mark all as read" action was wired but the store method was a
+   * no-op stub (Step 2.12 surfaced this as a follow-up). The Sidebar
+   * handler short-circuits with a TODO comment pointing at this
+   * method's absence. This implementation closes the gap.
+   *
+   * Local read-cursor advances first (zero ``unread`` + clear the
+   * mention dot) so the sidebar updates immediately without waiting
+   * for the broker. ``lastReadAt`` is stamped as a fresh ISO timestamp
+   * so any incoming message can compare its ``ts`` against the right
+   * baseline (the v0.4.2 unread-divider work in Phase 3 will read this
+   * field). Then a best-effort ``comms_check`` ack fires through
+   * ``mcpCall`` to inform the server-side authoritative state; the
+   * server's response is NOT awaited — the local update is what the
+   * user sees, and the next ``comms_check`` on reconnect / visibility-
+   * regain (v0.4.1's existing pattern) will reconcile any drift.
+   *
+   * No-op when ``channelId`` is missing or unknown (matches the
+   * defensive style of ``setStar`` / ``setMute``).
+   *
+   * @param {string} channelId - The channel to mark fully read.
+   */
+  markAllRead(channelId) {
+    if (typeof channelId !== 'string' || !channelId) return;
+    const ch = this.channelsById?.[channelId];
+    if (!ch) return;
+    // Local clear — zero the unread counter + mention-dot flag so the
+    // sidebar updates immediately. The server-side authoritative state
+    // catches up on the next comms_check.
+    ch.unread = 0;
+    ch.unreadHasMention = false;
+    // Drop the legacy v0.3.x "first unread message id" cursor too so
+    // the per-channel unread divider lands at the new baseline rather
+    // than re-anchoring to a stale id.
+    ch.unreadFrom = null;
+    // Stamp the read cursor so v0.4.2's unread-divider work has a
+    // baseline for comparing incoming message timestamps.
+    ch.lastReadAt = new Date().toISOString();
+    // Persist the cleared unread state so a page refresh doesn't
+    // resurrect the cleared markers from localStorage.
+    this.#saveUnreadMarkers();
+    // Best-effort comms_check ack via mcpCall; swallow errors (the
+    // local state is already correct; this just keeps the daemon in
+    // sync sooner than the next reconnect would).
+    if (typeof mcpCall === 'function' && this.userProfile?.key) {
+      try {
+        const result = mcpCall('comms_check', {
+          key: this.userProfile.key,
+          conversation: channelId,
+        });
+        if (result && typeof result.catch === 'function') {
+          result.catch(() => { /* best-effort; local state already correct */ });
+        }
+      } catch {
+        /* best-effort; local state already correct */
+      }
+    }
   }
 
   /**
