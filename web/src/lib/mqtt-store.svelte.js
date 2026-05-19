@@ -287,6 +287,37 @@ export class MqttChatStore {
    */
   latestChannelLifecycleToast = $state(null);
 
+  /**
+   * v0.4.2 Step 3.6 (expanded): reactive cache of per-channel role
+   * lookups consumed by ``ChannelAdminPanel`` (and Wave E's future
+   * ``MemberContextMenu``). Keys are channel ids; values are
+   * ``'owner' | 'admin' | 'member' | null`` per the Q6 role lattice
+   * locked in by v0.4.2 Step 3.0a (architecture spec §III.4).
+   *
+   * Hydration path (Wave B [VERIFY], see worklog):
+   *   - There is NO backend MCP wrapper that exposes
+   *     ``RegistryStore.get_channel_role`` yet. Until a Wave C / Wave B.5
+   *     step lands ``comms_get_channel_role``, ``getChannelRole`` uses
+   *     CLIENT-SIDE INFERENCE only:
+   *       * ``channel.createdBy === userProfile.key`` (or legacy
+   *         display-name match per 3.0a's grandfather backfill)
+   *         → ``'owner'``
+   *       * any other caller → ``'member'``
+   *       * ``'admin'`` is never synthesized client-side
+   *   - When the MCP wrapper lands, ``getChannelRole`` will hydrate this
+   *     cache async on bootstrap + channel-join; consumers already
+   *     subscribed via ``$state`` reactivity will re-render without
+   *     prop changes.
+   *
+   * Plain ``$state`` object (NOT ``$state.raw``) so per-channel writes
+   * via ``cache[id] = role`` trigger reactivity on consumers reading
+   * ``cache[id]``, same model the bootstrap uses for
+   * ``channelsById``.
+   *
+   * @type {Record<string, 'owner' | 'admin' | 'member' | null>}
+   */
+  channelRoles = $state({});
+
   /** @type {mqtt.MqttClient | null} */
   #client = null;
 
@@ -342,6 +373,51 @@ export class MqttChatStore {
   #pendingSends = [];
   /** Hard cap on `#pendingSends` queue length. See field doc above. */
   static #PENDING_SENDS_CAP = 100;
+
+  /**
+   * v0.4.2 Step 3.6 (expanded): pending admin-action queue used by
+   * ``renameChannel`` / ``setVisibility`` / ``setMode`` /
+   * ``transferOwnership`` when the broker is unreachable. Each entry is
+   * a closure that re-issues the MCP call on reconnect; the optimistic
+   * local update has ALREADY been applied at enqueue time, so a drain
+   * only needs to fire the wire call (and roll the local update back on
+   * rejection). Parallels ``#pendingSends`` (which queues MQTT broker
+   * publishes) but exists as a separate slot because the shape is
+   * different: admin actions are MCP/HTTP RPC, not topic+payload
+   * publishes.
+   *
+   * Cap = 50 entries; drop-oldest semantics mirror ``#pendingSends`` so
+   * a long offline session prefers the user's most-recent admin intent.
+   * Drained on the ``'connect'`` event alongside ``#drainPendingSends``.
+   *
+   * @type {Array<{ kind: string, channelId: string, run: () => Promise<{success: boolean, error?: string}>, rollback: () => void }>}
+   */
+  #pendingAdminActions = [];
+  /** Hard cap on ``#pendingAdminActions`` queue length. */
+  static #PENDING_ADMIN_ACTIONS_CAP = 50;
+
+  /**
+   * v0.4.2 Step 3.6: monotonic-ms timestamp of the most recent
+   * ``checkChannels()`` call. ``#maybeCheckChannels()`` consults this to
+   * enforce the 30s throttle on the ``visibilitychange`` re-fire path
+   * (UX G-11: avoid hammering the daemon when the user thrashes browser
+   * focus). The initial ``connect`` call ignores the throttle by
+   * resetting this slot to 0 so the very first fetch always runs.
+   * @type {number}
+   */
+  #lastCommsCheckAt = 0;
+  /** Throttle window for ``visibilitychange``-triggered ``comms_check`` (ms). */
+  static #COMMS_CHECK_THROTTLE_MS = 30_000;
+
+  /**
+   * v0.4.2 Step 3.6: bound reference to the ``visibilitychange`` event
+   * listener installed on ``document`` so ``disconnect()`` (and the
+   * tests' teardown seam) can detach it without leaking a global handler
+   * across page navigations in dev. ``null`` while no listener is
+   * attached.
+   * @type {((this: Document, ev: Event) => void) | null}
+   */
+  #visibilityHandler = null;
 
   /**
    * Bootstrap the channel list from the daemon's ``/api/conversations``
@@ -1106,6 +1182,30 @@ export class MqttChatStore {
       // the first thing the broker sees on reconnect.
       this.#drainPendingSends();
 
+      // v0.4.2 Step 3.6 (expanded): flush any admin actions queued
+      // while we were offline (renameChannel / setVisibility / setMode
+      // / transferOwnership). Each entry's ``run`` closure re-issues
+      // the MCP call; failed runs fire their ``rollback`` to undo the
+      // optimistic local update. Fire-and-forget so the rest of the
+      // connect handshake doesn't block on the daemon round-trip.
+      this.#drainPendingAdminActions().catch(() => {
+        /* best-effort; rollbacks fire per-entry on failure */
+      });
+
+      // v0.4.2 Step 3.6, UX G-10/G-11: hydrate unread counts from
+      // the server. Reset the throttle slot so the very first call
+      // always fires (the throttle gate only protects the
+      // ``visibilitychange`` re-fire path). Fire-and-forget; the
+      // helper swallows its own errors.
+      this.#lastCommsCheckAt = 0;
+      this.checkChannels().catch(() => {
+        /* best-effort */
+      });
+      // Install the visibilitychange listener so subsequent tab-
+      // visibility regains re-fire ``comms_check`` (subject to the
+      // 30s throttle).
+      this.#attachVisibilityListener();
+
       // Self-add: create user entry with our web connection
       const now = new Date().toISOString();
       if (!this.participants[this.userProfile.key]) {
@@ -1267,6 +1367,9 @@ export class MqttChatStore {
     this.#stopParticipantPolling();
     this.#stopHeartbeat();
     this.#stopTtlCleanup();
+    // v0.4.2 Step 3.6: detach the visibilitychange listener so we
+    // don't leak a global handler across page navigations in dev.
+    this.#detachVisibilityListener();
 
     // Clear our own typing timer
     if (this.#myTypingTimer) {
@@ -2184,6 +2287,585 @@ export class MqttChatStore {
       return { success: false, error: result.error };
     }
     return { success: true };
+  }
+
+  // ── v0.4.2 Step 3.6 (expanded): admin-action accessors ──
+  //
+  // Per Q6 lock-in (architecture spec §III.4 + 3.0a role lattice),
+  // ChannelAdminPanel issues four admin actions: rename, toggle
+  // visibility, toggle mode, transfer ownership. Each is wired through
+  // a typeof-guard on main today (`da2fb9a`) so the panel ships
+  // visually-functional but persistence-no-op; Wave B Step 3.6 lands
+  // the store side so the typeof guards engage.
+  //
+  // [VERIFY surfaced 2026-05-18 by Wave B implementer]: the backend
+  // ``comms_conversation_update`` MCP tool currently accepts ONLY
+  // ``topic`` (verified at mcp_tools.py:2210-2273). The four new
+  // accessors below issue the wire call with the spec-pinned field
+  // names anyway (``name`` / ``visibility`` / ``mode`` / ``created_by``)
+  // so the wiring is correct when a future step extends the backend
+  // accept-list. Until then the backend will reject the unknown fields
+  // and the optimistic local update rolls back (matching ``setTopic``'s
+  // rollback shape). The local optimistic update STILL makes the panel
+  // visually functional today; the round-trip just doesn't persist
+  // until the backend lands the extra fields. A follow-up Wave B.5 /
+  // Wave C step should expand ``tool_comms_conversation_update`` to
+  // accept these four fields (and add the corresponding system-message
+  // shapes for each).
+
+  /**
+   * Rename a channel. Optimistic local update of ``channel.name``
+   * happens BEFORE the MCP call so the sidebar + header refresh
+   * instantly; on error the previous name is restored. Disconnected
+   * calls queue on ``#pendingAdminActions`` for drain on the next
+   * ``'connect'`` event.
+   *
+   * Wire shape: ``comms_conversation_update`` with payload
+   * ``{ key, conversation, name }``; see the [VERIFY] block above the
+   * admin-action group for the backend field-acceptance status.
+   *
+   * @param {string} channelId - Channel id to rename.
+   * @param {string} newName - The desired channel name.
+   * @returns {Promise<{ success: boolean, error?: string, queued?: boolean }>}
+   */
+  async renameChannel(channelId, newName) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof newName !== 'string' || !newName.trim()) {
+      return { success: false, error: 'Missing channel name.' };
+    }
+    const ch = this.channelsById[channelId];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    const prevName = ch.name;
+    ch.name = newName;
+
+    // Disconnected: queue the wire call + the rollback closure so the
+    // local update stays visible while we wait for reconnect.
+    if (!this.connected) {
+      this.#queueAdminAction({
+        kind: 'rename',
+        channelId,
+        run: () =>
+          mcpCall('comms_conversation_update', {
+            key: this.userProfile.key,
+            conversation: channelId,
+            name: newName,
+          }),
+        rollback: () => {
+          const live = this.channelsById[channelId];
+          if (live) live.name = prevName;
+        },
+      });
+      return { success: true, queued: true };
+    }
+
+    const result = await mcpCall('comms_conversation_update', {
+      key: this.userProfile.key,
+      conversation: channelId,
+      name: newName,
+    });
+    if (!result.success) {
+      ch.name = prevName;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Set a channel's visibility (Listed / Unlisted per Design Spec
+   * §13.4; the panel today passes the lowercase ``'public'`` /
+   * ``'private'`` legacy strings; see [VERIFY] in the worklog about
+   * value-casing reconciliation). Optimistic local update + rollback
+   * on error; queues on disconnect.
+   *
+   * @param {string} channelId
+   * @param {string} level - Visibility level (panel-driven; passed
+   *   through to the backend verbatim so future expansions of the
+   *   accepted set don't need a client patch).
+   * @returns {Promise<{ success: boolean, error?: string, queued?: boolean }>}
+   */
+  async setVisibility(channelId, level) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof level !== 'string' || !level) {
+      return { success: false, error: 'Missing visibility level.' };
+    }
+    const ch = this.channelsById[channelId];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    const prevVisibility = ch.visibility;
+    ch.visibility = level;
+
+    if (!this.connected) {
+      this.#queueAdminAction({
+        kind: 'setVisibility',
+        channelId,
+        run: () =>
+          mcpCall('comms_conversation_update', {
+            key: this.userProfile.key,
+            conversation: channelId,
+            visibility: level,
+          }),
+        rollback: () => {
+          const live = this.channelsById[channelId];
+          if (live) live.visibility = prevVisibility;
+        },
+      });
+      return { success: true, queued: true };
+    }
+
+    const result = await mcpCall('comms_conversation_update', {
+      key: this.userProfile.key,
+      conversation: channelId,
+      visibility: level,
+    });
+    if (!result.success) {
+      ch.visibility = prevVisibility;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Set a channel's mode (open vs invite per Design Spec §13.4; the
+   * panel today passes ``'open'`` / ``'invite'``). Optimistic local
+   * update + rollback on error; queues on disconnect. Wire shape
+   * mirrors ``setVisibility``; see the admin-action [VERIFY] block.
+   *
+   * @param {string} channelId
+   * @param {string} mode - Mode value (panel-driven; passed through
+   *   verbatim to the backend).
+   * @returns {Promise<{ success: boolean, error?: string, queued?: boolean }>}
+   */
+  async setMode(channelId, mode) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof mode !== 'string' || !mode) {
+      return { success: false, error: 'Missing mode.' };
+    }
+    const ch = this.channelsById[channelId];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    const prevMode = ch.mode;
+    ch.mode = mode;
+
+    if (!this.connected) {
+      this.#queueAdminAction({
+        kind: 'setMode',
+        channelId,
+        run: () =>
+          mcpCall('comms_conversation_update', {
+            key: this.userProfile.key,
+            conversation: channelId,
+            mode,
+          }),
+        rollback: () => {
+          const live = this.channelsById[channelId];
+          if (live) live.mode = prevMode;
+        },
+      });
+      return { success: true, queued: true };
+    }
+
+    const result = await mcpCall('comms_conversation_update', {
+      key: this.userProfile.key,
+      conversation: channelId,
+      mode,
+    });
+    if (!result.success) {
+      ch.mode = prevMode;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Transfer ownership of a channel to a different participant.
+   *
+   * The spec-pinned signature is ``(channelId, newOwnerKey)``;
+   * ChannelAdminPanel on main (``da2fb9a``) currently invokes the
+   * 1-arg form ``store.transferOwnership(channel.id)`` because the
+   * new-owner picker hasn't shipped (verified at
+   * ChannelAdminPanel.svelte:200). When ``newOwnerKey`` is missing we
+   * return a structured error so the panel's typeof-guard call
+   * resolves cleanly without firing a wire call that would always
+   * fail; once the picker lands and supplies the key, the same
+   * accessor handles the 2-arg path.
+   *
+   * Optimistic local update of ``channel.createdBy`` happens BEFORE
+   * the MCP call; on error the previous creator is restored. Also
+   * patches ``channelRoles[channelId]`` so the panel's role gating
+   * reflects the demotion (owner → member from this side) immediately.
+   *
+   * @param {string} channelId
+   * @param {string} [newOwnerKey] - New owner's participant key. When
+   *   omitted, returns a ``{ success: false, error: 'New-owner key
+   *   required.' }`` envelope without touching local state.
+   * @returns {Promise<{ success: boolean, error?: string, queued?: boolean }>}
+   */
+  async transferOwnership(channelId, newOwnerKey) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (typeof newOwnerKey !== 'string' || !newOwnerKey) {
+      // Panel's 1-arg call path: surface the picker gap without
+      // firing a doomed wire call. The brief explicitly defers the
+      // new-owner picker to a follow-up step.
+      return { success: false, error: 'New-owner key required.' };
+    }
+    const ch = this.channelsById[channelId];
+    if (!ch) return { success: false, error: 'Unknown channel.' };
+
+    const prevCreatedBy = ch.createdBy;
+    const prevRole = this.channelRoles[channelId] ?? null;
+    ch.createdBy = newOwnerKey;
+    // Demote from owner to member on this side so the role-gated UI
+    // immediately reflects the post-transfer state. The next
+    // bootstrap (or a future ``comms_get_channel_role`` MCP wrapper)
+    // will reconcile the authoritative role.
+    this.channelRoles[channelId] = 'member';
+
+    if (!this.connected) {
+      this.#queueAdminAction({
+        kind: 'transferOwnership',
+        channelId,
+        run: () =>
+          mcpCall('comms_conversation_update', {
+            key: this.userProfile.key,
+            conversation: channelId,
+            created_by: newOwnerKey,
+          }),
+        rollback: () => {
+          const live = this.channelsById[channelId];
+          if (live) live.createdBy = prevCreatedBy;
+          this.channelRoles[channelId] = prevRole;
+        },
+      });
+      return { success: true, queued: true };
+    }
+
+    const result = await mcpCall('comms_conversation_update', {
+      key: this.userProfile.key,
+      conversation: channelId,
+      created_by: newOwnerKey,
+    });
+    if (!result.success) {
+      ch.createdBy = prevCreatedBy;
+      this.channelRoles[channelId] = prevRole;
+      return { success: false, error: result.error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Resolve the caller's role on a channel.
+   *
+   * [VERIFY surfaced 2026-05-18 by Wave B implementer]: there is NO
+   * MCP wrapper that exposes 3.0a's ``RegistryStore.get_channel_role``
+   * (verified by grep against ``src/claude_comms/mcp_tools.py`` +
+   * ``mcp_server.py``). A follow-up Wave B.5 / Wave C step should add
+   * ``comms_get_channel_role`` so this accessor can hydrate the
+   * ``channelRoles`` cache async on bootstrap + channel-join.
+   *
+   * Until then, this returns a role via CLIENT-SIDE INFERENCE:
+   *   - If the caller's key matches ``channel.createdBy`` (or, for
+   *     pre-3.0a grandfather rows, their display name matches the
+   *     legacy ``createdBy`` text per 3.0a's backfill semantics)
+   *     → ``'owner'``
+   *   - Otherwise → ``'member'``
+   *   - ``'admin'`` is never synthesized client-side; that role
+   *     requires the future ``comms_get_channel_role`` wrapper.
+   *
+   * The resolved role is also written to ``this.channelRoles`` so
+   * consumers can subscribe to the reactive cache (Svelte $state)
+   * instead of polling this method. Future async hydration via the
+   * MCP wrapper will write the same cache.
+   *
+   * @param {string} channelId
+   * @returns {'owner' | 'admin' | 'member' | null}
+   */
+  getChannelRole(channelId) {
+    if (typeof channelId !== 'string' || !channelId) return null;
+    const ch = this.channelsById[channelId];
+    if (!ch) return null;
+
+    const selfKey = this.userProfile?.key ?? '';
+    const selfName = this.userProfile?.name ?? '';
+    const creator = ch.createdBy ?? '';
+
+    let role;
+    if (selfKey && creator && creator === selfKey) {
+      role = 'owner';
+    } else if (selfName && creator && creator === selfName) {
+      // 3.0a grandfather backfill: legacy rows persist createdBy as
+      // the display name instead of the key. Match defensively so
+      // owners aren't silently demoted to member when their channel
+      // pre-dates the schema migration.
+      role = 'owner';
+    } else {
+      role = 'member';
+    }
+
+    this.channelRoles[channelId] = role;
+    return role;
+  }
+
+  /**
+   * v0.4.2 Step 3.6: ``comms_check`` hydration for all joined channels
+   * (UX G-10/G-11).
+   *
+   * Issues a single ``comms_check`` MCP call (no ``conversation`` arg
+   * → server scans every conversation the caller is a member of,
+   * verified at mcp_tools.py:1030-1034). For each entry in the
+   * response's ``unread_summary``:
+   *
+   *   - ``channels[id].unread`` ← ``unread_count``
+   *   - ``channels[id].lastActivity`` ← ``latest.ts`` (when present)
+   *   - ``channels[id].unreadHasMention`` ← true iff ``latest.mentions``
+   *     includes the caller's key (best-effort; the v0.4.0 wire
+   *     ``latest`` may not include the full mention list, in which
+   *     case the field is left untouched so a previous bootstrap value
+   *     survives).
+   *
+   * Channels NOT present in the response are zeroed (server confirms
+   * they have no unread). This matches the design-spec invariant: the
+   * server is authoritative for unread counts after ``comms_check``.
+   *
+   * Best-effort: any error (network down, daemon refused,
+   * malformed response) is swallowed so the connect path doesn't
+   * fail on a transient daemon hiccup. The local state stays
+   * unchanged until the next successful call.
+   *
+   * @returns {Promise<{ success: boolean, error?: string }>}
+   */
+  async checkChannels() {
+    // Record the attempt timestamp UP FRONT so the throttle gate
+    // engages even if the call itself rejects; we don't want a
+    // hammering loop on a flaky daemon.
+    this.#lastCommsCheckAt = Date.now();
+
+    if (!this.userProfile?.key) {
+      return { success: false, error: 'No participant key.' };
+    }
+    if (typeof mcpCall !== 'function') {
+      return { success: false, error: 'mcpCall unavailable.' };
+    }
+
+    let result;
+    try {
+      result = await mcpCall('comms_check', {
+        key: this.userProfile.key,
+      });
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+    if (!result || !result.success) {
+      return { success: false, error: result?.error || 'comms_check failed.' };
+    }
+
+    const payload = result.payload || {};
+    const summary = Array.isArray(payload.unread_summary)
+      ? payload.unread_summary
+      : [];
+    // Build a set of channels the server confirmed have unread so we
+    // can zero everything else after the loop (server-authoritative).
+    const hydrated = new Set();
+    for (const entry of summary) {
+      if (!entry || typeof entry.conversation !== 'string') continue;
+      const ch = this.channelsById[entry.conversation];
+      if (!ch) continue;
+      hydrated.add(entry.conversation);
+      if (typeof entry.unread_count === 'number') {
+        ch.unread = entry.unread_count;
+      }
+      const latest = entry.latest;
+      if (latest && typeof latest === 'object') {
+        if (typeof latest.ts === 'string' && latest.ts) {
+          ch.lastActivity = latest.ts;
+        }
+        // Best-effort mention detection: only set true when the wire
+        // ``latest`` carries an explicit mentions list including the
+        // caller. Otherwise leave the field untouched so a prior
+        // value (e.g. from a previous comms_check) survives.
+        if (Array.isArray(latest.mentions) && this.userProfile?.key) {
+          if (latest.mentions.includes(this.userProfile.key)) {
+            ch.unreadHasMention = true;
+          }
+        }
+      }
+    }
+    // Zero unread on every joined channel the server didn't surface.
+    // Skips non-member rows (those don't carry unread anyway) so the
+    // directory's Browse tab doesn't get its unread badges blown away.
+    for (const ch of Object.values(this.channelsById)) {
+      if (!ch.member) continue;
+      if (hydrated.has(ch.id)) continue;
+      ch.unread = 0;
+      ch.unreadHasMention = false;
+    }
+    return { success: true };
+  }
+
+  /**
+   * Throttle-aware wrapper around ``checkChannels``. Used by the
+   * ``visibilitychange`` re-fire path so a user thrashing browser
+   * focus doesn't issue a flood of ``comms_check`` calls. The
+   * ``'connect'`` callback skips this wrapper and calls
+   * ``checkChannels`` directly so the very first fetch always runs.
+   *
+   * Throttle window: ``MqttChatStore.#COMMS_CHECK_THROTTLE_MS`` (30s).
+   *
+   * @returns {Promise<{ success: boolean, error?: string, throttled?: boolean }>}
+   */
+  async #maybeCheckChannels() {
+    const elapsed = Date.now() - this.#lastCommsCheckAt;
+    if (elapsed < MqttChatStore.#COMMS_CHECK_THROTTLE_MS) {
+      return { success: true, throttled: true };
+    }
+    return this.checkChannels();
+  }
+
+  /**
+   * Enqueue a disconnected admin action for drain-on-reconnect.
+   * Mirrors ``#queuePendingSend`` but for MCP RPC calls. When the cap
+   * is hit, drops the OLDEST entry and fires its rollback closure so
+   * the optimistic local update doesn't linger forever on a stale
+   * intent.
+   *
+   * @param {{ kind: string, channelId: string, run: () => Promise<{success: boolean, error?: string}>, rollback: () => void }} action
+   */
+  #queueAdminAction(action) {
+    if (this.#pendingAdminActions.length >= MqttChatStore.#PENDING_ADMIN_ACTIONS_CAP) {
+      const dropped = this.#pendingAdminActions.shift();
+      if (dropped && typeof dropped.rollback === 'function') {
+        try {
+          dropped.rollback();
+        } catch {
+          // Rollback errors are best-effort; the queue overflow is
+          // already a degraded path.
+        }
+      }
+    }
+    this.#pendingAdminActions.push(action);
+  }
+
+  /**
+   * Drain the pending admin-action queue in FIFO order. Called from
+   * the ``'connect'`` callback alongside ``#drainPendingSends``. Each
+   * entry's ``run`` is awaited so a rejection (or non-success
+   * envelope) fires the matching ``rollback`` synchronously, keeping
+   * the local state honest with the wire state. Failures don't abort
+   * the drain; remaining actions still get their shot.
+   */
+  async #drainPendingAdminActions() {
+    if (this.#pendingAdminActions.length === 0) return;
+    const queue = this.#pendingAdminActions;
+    this.#pendingAdminActions = [];
+    for (const action of queue) {
+      let result;
+      try {
+        result = await action.run();
+      } catch (err) {
+        result = {
+          success: false,
+          error: err && err.message ? err.message : String(err),
+        };
+      }
+      if (!result || !result.success) {
+        try {
+          action.rollback();
+        } catch {
+          // Best-effort.
+        }
+      }
+    }
+  }
+
+  /**
+   * Attach the ``document.visibilitychange`` listener so the store
+   * re-fires ``comms_check`` (subject to the 30s throttle) whenever
+   * the tab regains visibility. Idempotent: calling twice replaces
+   * the previous listener so a reconnect doesn't accumulate handlers.
+   *
+   * No-op in non-DOM environments (e.g. SSR / vitest without jsdom's
+   * document); the test harness exercises the path through the
+   * ``_simulateVisibilityChangeForTest`` seam.
+   */
+  #attachVisibilityListener() {
+    if (typeof document === 'undefined') return;
+    this.#detachVisibilityListener();
+    const handler = () => {
+      // ``visibilityState`` is the spec-blessed source of truth
+      // (``hidden`` getter is deprecated). Skip ``hidden`` transitions
+      // entirely. Only re-fire when the user comes BACK to the tab.
+      if (document.visibilityState !== 'visible') return;
+      // Throttle internally; swallow rejections so a listener never
+      // surfaces an unhandled-rejection warning.
+      this.#maybeCheckChannels().catch(() => {
+        /* best-effort */
+      });
+    };
+    this.#visibilityHandler = handler;
+    document.addEventListener('visibilitychange', handler);
+  }
+
+  /**
+   * Detach the ``visibilitychange`` listener installed by
+   * ``#attachVisibilityListener``. Safe to call when no listener is
+   * attached.
+   */
+  #detachVisibilityListener() {
+    if (typeof document === 'undefined') return;
+    if (!this.#visibilityHandler) return;
+    document.removeEventListener('visibilitychange', this.#visibilityHandler);
+    this.#visibilityHandler = null;
+  }
+
+  // ── v0.4.2 Step 3.6: test seams ──
+
+  /**
+   * Test-only seam: run the throttle-aware wrapper directly so specs
+   * can assert the 30s gate without standing up a real document
+   * listener.
+   */
+  async _maybeCheckChannelsForTest() {
+    return this.#maybeCheckChannels();
+  }
+
+  /** Test-only seam: read the throttle timestamp. */
+  _lastCommsCheckAtForTest() {
+    return this.#lastCommsCheckAt;
+  }
+
+  /** Test-only seam: force the throttle timestamp (e.g. to reset to 0). */
+  _setLastCommsCheckAtForTest(value) {
+    this.#lastCommsCheckAt = value;
+  }
+
+  /** Test-only seam: queue size for the admin-action queue. */
+  _pendingAdminActionsLengthForTest() {
+    return this.#pendingAdminActions.length;
+  }
+
+  /** Test-only seam: drain the admin-action queue without standing up a broker. */
+  async _drainPendingAdminActionsForTest() {
+    await this.#drainPendingAdminActions();
+  }
+
+  /**
+   * Test-only seam: simulate a ``visibilitychange`` transition to
+   * ``visible``. Drives the same code path the production listener
+   * does so the throttle + ``checkChannels`` wiring is exercised
+   * without a jsdom dispatch. Returns the result envelope so specs
+   * can assert on the ``throttled`` flag.
+   */
+  async _simulateVisibilityRegainForTest() {
+    return this.#maybeCheckChannels();
   }
 
   /**
