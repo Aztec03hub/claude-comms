@@ -26,6 +26,17 @@
   @prop {Function} [onChannelContextMenu] - Forwarded as
     ``(event, id) => void``.
   @prop {Function} [onStarToggle] - Forwarded as ``(id) => void``.
+  @prop {(channelId: string) => {policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}} [getNotificationPolicy] -
+    v0.4.2 Wave G follow-up [VERIFY-WAVE-G-3]: optional resolver injected
+    by Sidebar.svelte that returns the per-channel notification policy for
+    each row. Forwarded into SidebarChannelRow as the ``notificationPolicy``
+    prop, evaluated per-row at render time so reactive map writes in
+    ``store.notificationPolicies`` propagate (see Sidebar.svelte's
+    ``getChannelNotificationPolicy`` helper, which touches the $state
+    map to register a dependency). When omitted, rows fall back to the
+    Wave G default (``{policy: 'All', highlightWords: []}``) so the
+    bell-icon variant stays off and pre-G consumers (tests, legacy
+    mounts) keep their current render exactly.
   @prop {'fly'|'crossfade'|'instant'} [transitionFlavor='fly'] - Selects
     which animation primitives wrap each row's mount/unmount. ``'fly'``
     plays the 4-phase channelFly{In,Out} + channelSlide composition
@@ -56,6 +67,7 @@
     onChannelContextMenu,
     onStarToggle,
     transitionFlavor = 'fly',
+    getNotificationPolicy = null,
   } = $props();
 
   // Pick the in/out transition pair based on the section's flavor. The
@@ -228,6 +240,9 @@
               onClick={onChannelClick}
               onContextMenu={onChannelContextMenu}
               {onStarToggle}
+              notificationPolicy={typeof getNotificationPolicy === 'function'
+                ? getNotificationPolicy(channel.id)
+                : { policy: 'All', highlightWords: [] }}
             />
           </div>
         {/each}

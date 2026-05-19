@@ -582,7 +582,46 @@ export class MqttChatStore {
     // (Q4 lock — mute is local-only in v0.4.0; star personalization lands
     // server-side in v0.4.1).
     this.#restoreLocalChannelState();
+    // v0.4.2 Wave G follow-up [VERIFY-WAVE-G-5]: pre-warm the
+    // ``notificationPolicies`` reactive cache for every freshly
+    // bootstrapped channel so SidebarChannelRow's bell variant renders
+    // on the FIRST sidebar paint instead of waiting for the user to
+    // open the context menu (which was the only call path that
+    // previously read the policy and populated the cache). The
+    // ``getNotificationPolicy`` accessor is idempotent: a localStorage
+    // entry returns its stored value; a missing entry returns + caches
+    // the default ``{policy: 'All', highlightWords: []}``. Net effect
+    // is a single map-replace per row, after which every consumer
+    // (sidebar, toast handler, browser-notification gate) reads from
+    // the reactive map without re-decoding localStorage.
+    this.#prewarmNotificationPolicies();
     this.#resetActiveChannelIfStale();
+  }
+
+  /**
+   * Pre-warm the ``notificationPolicies`` reactive cache for every
+   * channel currently in ``channelsById``. Called from
+   * ``#bootstrapChannels`` after the local-state overlay so the cache
+   * mirrors the freshly bootstrapped channel set on the very first
+   * sidebar render. Each ``getNotificationPolicy`` call is O(1) for
+   * an already-cached id and O(localStorage-read) for an unseen one.
+   *
+   * v0.4.2 Wave G follow-up [VERIFY-WAVE-G-5]. Approach chosen over a
+   * Sidebar.svelte ``$effect`` because the cache is store-owned state
+   * and the bootstrap is the natural one-shot population point; an
+   * $effect would have to re-run on every channels-list mutation
+   * (joins / leaves) and re-iterate the full list. The bootstrap
+   * approach pre-warms once + the lazy-on-read path in
+   * ``getNotificationPolicy`` covers any later additions
+   * (#channelRowFromPayload-emitted rows from join events).
+   */
+  #prewarmNotificationPolicies() {
+    for (const ch of Object.values(this.channelsById)) {
+      if (ch && typeof ch.id === 'string' && ch.id.length > 0) {
+        // Side-effect: populates this.notificationPolicies[ch.id].
+        this.getNotificationPolicy(ch.id);
+      }
+    }
   }
 
   /**

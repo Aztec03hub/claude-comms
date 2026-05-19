@@ -12,6 +12,7 @@
   import ChannelContextMenu from './ChannelContextMenu.svelte';
   import LeaveChannelDialog from './LeaveChannelDialog.svelte';
   import StatusEditor from './StatusEditor.svelte';
+  import * as notifications from '../lib/notifications.svelte.js';
   import pkg from '../../package.json';
 
   const APP_VERSION = pkg?.version || '';
@@ -125,6 +126,23 @@
     if (typeof actionId === 'string' && actionId.startsWith('mute:')) {
       return void store.setMute(c.id, actionId.split(':')[1]);
     }
+    // v0.4.2 Wave G follow-up [VERIFY-WAVE-G-3]: the Q8 quickview row in
+    // ChannelContextMenu emits ``actionId='notif:cycle'`` and expects the
+    // parent to advance the per-channel notification policy through the
+    // ``All → Mentions → Off → All`` cycle. The companion
+    // ``actionId='notif:configure'`` action is handled by
+    // ChannelContextMenu itself: it dispatches a
+    // ``claude-comms:configure-notifications`` window CustomEvent which
+    // App.svelte listens for to mount the full NotificationPolicyMenu
+    // popover. Both surfaces use the SAME store accessors so the
+    // bell-icon variant on SidebarChannelRow + the toast / browser
+    // Notification gate re-render off a single source of truth.
+    if (actionId === 'notif:cycle') {
+      if (typeof store.cycleNotificationPolicy === 'function') {
+        store.cycleNotificationPolicy(c.id);
+      }
+      return;
+    }
     if (actionId === 'mark-read') return void store.markAllRead(c.id);
     if (actionId === 'copy-link') {
       try {
@@ -212,6 +230,59 @@
     && store.userProfile?.key != null
     && contextMenuChannel.createdBy === store.userProfile.key
   );
+  // v0.4.2 Wave G follow-up [VERIFY-WAVE-G-3]: resolve the current
+  // notification policy for the currently-anchored context-menu channel
+  // so the Q8 quickview row label re-renders when the user cycles. The
+  // store's ``notificationPolicies`` $state map is the reactive source;
+  // ``getNotificationPolicy`` reads through it (lazy-populated from
+  // localStorage on first call per channel). We also reference the map
+  // explicitly so this $derived re-fires on writes. Svelte's reactivity
+  // tracks the GET, but a method call hides the map access from the
+  // tracker unless we touch ``store.notificationPolicies`` here.
+  let contextMenuPolicy = $derived.by(() => {
+    // Touch the reactive map so $derived re-fires on writes from
+    // cycleNotificationPolicy / setNotificationPolicy.
+    /* eslint-disable-next-line no-unused-expressions */
+    store.notificationPolicies;
+    if (!contextMenuChannel || typeof store.getNotificationPolicy !== 'function') {
+      return { policy: 'All', highlightWords: [] };
+    }
+    return store.getNotificationPolicy(contextMenuChannel.id);
+  });
+  // Stable reference passed down into SidebarChannelSection → SidebarChannelRow.
+  // Each row calls this with its own channel id to read the policy. Touching
+  // ``store.notificationPolicies`` inside is how the row-level $derived
+  // re-fires when a cycle/save writes a new entry to the reactive map.
+  function getChannelNotificationPolicy(channelId) {
+    if (!channelId || typeof store.getNotificationPolicy !== 'function') {
+      return { policy: 'All', highlightWords: [] };
+    }
+    return store.getNotificationPolicy(channelId);
+  }
+
+  // v0.4.2 Wave G follow-up [VERIFY-WAVE-G-4]: register the per-channel
+  // notification policy resolver with the browser-Notification wrapper
+  // so its gate (``shouldNotifyForPolicy``) reads the live store state.
+  // Sidebar mounts once per app, alongside the store, so this is the
+  // natural injection point. We unregister on teardown so test
+  // ``cleanup()`` doesn't leak resolver state between renders.
+  $effect(() => {
+    // Guarded against incomplete vi.mock fixtures in legacy test files
+    // (the parallel ChatHeader agent owns App.svelte so we can't update
+    // their mocks this wave). Vitest's auto-mock proxy throws on access
+    // for unmocked exports, so the property read itself is wrapped in
+    // try/catch. A missing export silently no-ops the registration.
+    let setResolver = null;
+    try {
+      const candidate = notifications.setNotificationPolicyResolver;
+      if (typeof candidate === 'function') setResolver = candidate;
+    } catch {
+      // Auto-mock surfaced an unmocked property; treat as a no-op.
+    }
+    if (!setResolver) return;
+    setResolver((channelId) => getChannelNotificationPolicy(channelId));
+    return () => setResolver(null);
+  });
   function showSelfProfile() {
     const { key, name, type } = store.userProfile;
     onShowProfile({ key, name, type, status: 'online' });
@@ -242,6 +313,7 @@
       onChannelClick={handleSwitchChannel}
       onChannelContextMenu={openContextMenu}
       onStarToggle={handleStarToggle}
+      getNotificationPolicy={getChannelNotificationPolicy}
     />
     <SidebarChannelSection
       label="Active"
@@ -254,6 +326,7 @@
       onChannelClick={handleSwitchChannel}
       onChannelContextMenu={openContextMenu}
       onStarToggle={handleStarToggle}
+      getNotificationPolicy={getChannelNotificationPolicy}
     />
     <SidebarChannelSection
       label="Available"
@@ -266,6 +339,7 @@
       onChannelClick={handleJoinChannel}
       onChannelContextMenu={openContextMenu}
       onStarToggle={handleStarToggle}
+      getNotificationPolicy={getChannelNotificationPolicy}
     />
   </div>
 
@@ -343,6 +417,7 @@
       isCreator={contextMenuIsCreator}
       onAction={handleContextAction}
       onClose={closeContextMenu}
+      currentNotificationPolicy={contextMenuPolicy}
     />
   {/if}
 
