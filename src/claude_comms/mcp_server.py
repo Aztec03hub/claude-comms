@@ -47,10 +47,12 @@ from claude_comms.mcp_tools import (
     tool_comms_conversation_unarchive,
     tool_comms_conversation_update,
     tool_comms_conversations,
+    tool_comms_dm_open,
     tool_comms_get_channel_role,
     tool_comms_history,
     tool_comms_invite,
     tool_comms_join,
+    tool_comms_kick,
     tool_comms_leave,
     tool_comms_members,
     tool_comms_react,
@@ -1920,6 +1922,59 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             conversation=conversation,
             target_name=target_name,
             message=message,
+            conv_data_dir=_get_conv_data_dir(),
+        )
+
+    @mcp.tool()
+    async def comms_kick(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[str, Field(description="Conversation to kick from")],
+        target_key: Annotated[
+            str, Field(description="Participant key (8 hex chars) to eject")
+        ],
+    ) -> dict[str, Any]:
+        """Eject a participant from a conversation. Owner / admin only.
+
+        Authorization gates on the caller's per-channel role from the
+        ``conversation_roles`` table (Step 3.0a): only ``'owner'`` and
+        ``'admin'`` may kick. Publishes a ``[system]`` message on the
+        conversation's MQTT topic naming both caller and target.
+        """
+        _touch(key)
+        assert _publish_fn is not None
+        return await tool_comms_kick(
+            _get_registry(),
+            _publish_fn,
+            _get_registry_store(),
+            key=key,
+            conversation=conversation,
+            target_key=target_key,
+            conv_data_dir=_get_conv_data_dir(),
+        )
+
+    @mcp.tool()
+    async def comms_dm_open(
+        key: Annotated[str, Field(description="Your participant key")],
+        target_key: Annotated[
+            str, Field(description="Participant key (8 hex chars) to DM")
+        ],
+    ) -> dict[str, Any]:
+        """Open (or look up) the deterministic two-party DM channel.
+
+        DM slug is ``dm-{lo}-{hi}`` where the two participant keys are
+        sorted alphanumerically — symmetric on which party opens first.
+        Idempotent: a second call returns ``status="existed"``. New
+        DMs are private + invite-mode, with both parties auto-joined
+        and granted symmetric ``'owner'`` role.
+        """
+        _touch(key)
+        assert _publish_fn is not None
+        return await tool_comms_dm_open(
+            _get_registry(),
+            _publish_fn,
+            _get_registry_store(),
+            key=key,
+            target_key=target_key,
             conv_data_dir=_get_conv_data_dir(),
         )
 

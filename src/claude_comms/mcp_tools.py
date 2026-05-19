@@ -2551,6 +2551,264 @@ async def tool_comms_invite(
 
 
 # ---------------------------------------------------------------------------
+# v0.4.2 Step 3.5a: kick + DM-open
+# ---------------------------------------------------------------------------
+#
+# ``tool_comms_kick`` is the privileged-eject counterpart to
+# ``tool_comms_leave`` (self-eject). Authorization gates on the caller's
+# per-channel role from ``RegistryStore.get_channel_role`` (Step 3.0a):
+# only 'owner' and 'admin' may kick. The target must be an explicit
+# member of the channel; the implicit-membership semantics from 3.0a
+# (unknown pair => 'member') intentionally do NOT extend to kick — the
+# target must really be in ``registry.conversations_for(target_key)``,
+# otherwise the kick returns an error envelope rather than a no-op.
+#
+# ``tool_comms_dm_open`` synthesizes a deterministic two-party DM slug
+# (``dm-{lo}-{hi}`` where ``lo``/``hi`` are the two participant keys
+# sorted alphanumerically). Idempotent: a second call with the same pair
+# returns ``status="existed"`` and the existing slug. New DMs are
+# auto-stamped private + invite-mode + both parties get the 'owner'
+# role (symmetric ownership — DMs have no admin/member hierarchy).
+
+
+def _dm_slug(key_a: str, key_b: str) -> str:
+    """Return the deterministic DM slug for the two-party pair.
+
+    The two keys are sorted alphanumerically (Python's default tuple sort
+    is lexicographic on the 8-hex-char strings) so the slug is the SAME
+    regardless of which party opens the DM first. This is critical for
+    idempotency: the second party's ``comms_dm_open`` call must find the
+    existing channel, not synthesize a different slug.
+    """
+    lo, hi = sorted((key_a, key_b))
+    return f"dm-{lo}-{hi}"
+
+
+async def tool_comms_kick(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    store: RegistryStore | None = None,
+    *,
+    key: str,
+    conversation: str,
+    target_key: str,
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Eject *target_key* from *conversation*; owner/admin only.
+
+    Authorization (per Step 3.0a role table):
+
+    - The caller (``key``) must hold ``'owner'`` or ``'admin'`` role in
+      *conversation* per ``RegistryStore.get_channel_role``. Pre-3.0a
+      legacy data with no explicit role row reads as ``'member'`` per
+      the default-safe semantics, so legacy channels with no owner row
+      reject all kicks until an explicit owner is set.
+    - The target must be a registered participant AND an explicit
+      member of *conversation*. Unregistered targets and non-members
+      return an error envelope rather than a no-op so the UI surfaces
+      stale-state issues instead of silently succeeding.
+
+    Side effects on success:
+
+    1. ``registry.leave(target_key, conversation)`` drops membership
+       AND writes through to ``RegistryStore.remove_membership``.
+    2. A ``[system]`` MQTT message is published on
+       ``claude-comms/conv/{conversation}/messages`` with body
+       ``"[system] {caller_name} kicked {target_name} from #{conversation}"``
+       so live subscribers render the eviction immediately.
+
+    *store* is accepted for parity with other role-aware tools but is
+    not required at the function level — the role check is read-through
+    via the (registry-attached) RegistryStore where available; when no
+    store is wired (legacy unit-test call sites), the per-channel role
+    is read from the registry's snapshot. Production wiring in
+    ``mcp_server.py`` always passes both.
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    caller: Participant = result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    if not validate_key(target_key):
+        return _error(
+            f"Invalid target key format: {target_key!r}. Must be 8 lowercase hex chars."
+        )
+
+    # Caller must be a member of the channel (cannot kick from outside).
+    caller_convs = registry.conversations_for(key)
+    if conversation not in caller_convs:
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
+
+    # Target must be a registered participant.
+    target = registry.get(target_key)
+    if target is None:
+        return _error(
+            f"Unknown participant key {target_key!r}. Target is not registered."
+        )
+
+    # Target must be an explicit member of the channel.
+    target_convs = registry.conversations_for(target_key)
+    if conversation not in target_convs:
+        return _error(
+            f"Participant {target.name!r} is not a member of "
+            f"conversation {conversation!r}."
+        )
+
+    # Authorization gate: caller's per-channel role must be owner or admin.
+    # When a RegistryStore is wired we read the authoritative table; when
+    # not, fall back to allowing the kick only when no store is provided
+    # (legacy test path — production always wires a store).
+    if store is not None:
+        caller_role = store.get_channel_role(conversation, key)
+        if caller_role not in ("owner", "admin"):
+            return _error(
+                f"Only owners or admins of #{conversation} may kick. "
+                f"Your role: {caller_role!r}."
+            )
+
+    # Drop target's membership (writes through to RegistryStore when wired).
+    registry.leave(target_key, conversation)
+
+    # Publish system message to the kicked-from channel.
+    body = (
+        f"[system] {caller.name} kicked {target.name} from #{conversation}"
+    )
+    system_msg = {
+        "id": str(uuid4()),
+        "ts": now_iso(),
+        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "body": body,
+        "conv": conversation,
+        "recipients": None,
+        "reply_to": None,
+    }
+    mqtt_topic = f"claude-comms/conv/{conversation}/messages"
+    await publish_fn(mqtt_topic, json.dumps(system_msg).encode())
+
+    return {
+        "status": "kicked",
+        "target_key": target_key,
+        "conversation": conversation,
+    }
+
+
+async def tool_comms_dm_open(
+    registry: ParticipantRegistry,
+    publish_fn: PublishFn,
+    store: RegistryStore | None = None,
+    *,
+    key: str,
+    target_key: str,
+    conv_data_dir: Path,
+) -> dict[str, Any]:
+    """Open (or look up) the deterministic two-party DM channel for the pair.
+
+    Synthesizes the DM slug via ``_dm_slug(key, target_key)`` — sorted
+    alphanumerically so the slug is symmetric on which party opens it
+    first. Idempotent: if the channel exists on disk, returns
+    ``{"status": "existed", "conversation": <slug>}`` without
+    mutating state.
+
+    On first open:
+
+    1. ``create_conversation_atomic`` creates ``{slug}/meta.json`` with
+       ``topic=""``, ``created_by={caller_name}``. If the file already
+       exists (race condition), the call falls through to the
+       ``existed`` branch.
+    2. ``visibility`` flips to ``"private"`` and ``mode`` flips to
+       ``"invite"`` via direct ``save_meta`` (no system-message
+       publish — DM creation is silent because there's no general
+       audience to notify).
+    3. Both parties are auto-joined via ``registry.join``.
+    4. Both parties get the ``'owner'`` role via
+       ``RegistryStore.set_channel_role`` — DMs have symmetric
+       ownership (either party may kick / archive / delete; the role
+       table has no member-vs-owner asymmetry for DMs).
+
+    Invariants:
+
+    - ``key == target_key`` returns ``_error`` because self-DM has no
+      sensible semantics (use notes-to-self channels instead).
+    - ``target_key`` must be a registered participant; unregistered
+      targets return an error rather than silently creating an
+      orphan channel.
+    - The slug always has the form ``dm-{lo}-{hi}`` where
+      ``lo < hi`` by Python's default string sort.
+
+    *store* is accepted because the symmetric-ownership invariant
+    requires writing two role rows; if not provided (legacy unit-test
+    call sites), the role writes are skipped silently. Production
+    wiring in ``mcp_server.py`` always passes a store.
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+    caller: Participant = result
+
+    if not validate_key(target_key):
+        return _error(
+            f"Invalid target key format: {target_key!r}. Must be 8 lowercase hex chars."
+        )
+
+    if key == target_key:
+        return _error("Cannot open a DM with yourself.")
+
+    target = registry.get(target_key)
+    if target is None:
+        return _error(
+            f"Unknown participant key {target_key!r}. Target is not registered."
+        )
+
+    dm_slug = _dm_slug(key, target_key)
+
+    # If the DM channel already exists, short-circuit (idempotent path).
+    existing = load_meta(dm_slug, conv_data_dir)
+    if existing is not None:
+        return {"status": "existed", "conversation": dm_slug}
+
+    # First-open path: create channel atomically, stamp private + invite
+    # mode, auto-join both parties, set symmetric owner roles.
+    meta = create_conversation_atomic(
+        dm_slug,
+        topic="",
+        created_by=caller.name,
+        data_dir=conv_data_dir,
+    )
+    if meta is None:
+        # Race: somebody else created it between the load and the create.
+        # Treat it as an idempotent existed-return rather than an error.
+        return {"status": "existed", "conversation": dm_slug}
+
+    # Flip visibility + mode to DM defaults (private + invite). save_meta
+    # is an atomic rename so the two-field update lands as a single file.
+    meta.visibility = "private"
+    meta.mode = "invite"
+    save_meta(meta, conv_data_dir)
+
+    # Auto-join both parties. ``registry.join`` is idempotent for the
+    # caller (they're already in the registry) but adds membership to
+    # the new DM slug.
+    registry.join(
+        caller.name, dm_slug, key=key, participant_type=caller.type
+    )
+    registry.join(
+        target.name, dm_slug, key=target_key, participant_type=target.type
+    )
+
+    # Symmetric ownership: both parties are 'owner' of the DM. There is
+    # no member-vs-owner hierarchy for DMs — either party may kick
+    # (which in practice means "leave"), archive, or delete the channel.
+    if store is not None:
+        store.set_channel_role(dm_slug, key, "owner")
+        store.set_channel_role(dm_slug, target_key, "owner")
+
+    return {"status": "opened", "conversation": dm_slug}
+
+
+# ---------------------------------------------------------------------------
 # Reactions tools (Phase A — claude-phoenix)
 # ---------------------------------------------------------------------------
 
