@@ -179,15 +179,17 @@ class TestSerializeConversationFull:
         general_meta: ConversationMeta,
         two_member_registry: ParticipantRegistry,
     ) -> None:
-        """``mode``/``visibility`` default to ``"public"``/``"listed"`` when
-        the underlying ``ConversationMeta`` doesn't carry them (v0.4.0)."""
+        """``mode``/``visibility`` default to ``"open"``/``"public"`` per
+        v0.4.2 Step 3.6b's Pydantic field defaults (which match
+        ChannelAdminPanel's emissions). Pre-3.6b placeholders
+        ('public'/'listed') were stripped when the real fields landed."""
         row = _serialize_conversation_full(
             general_meta,
             caller_key="aabbccdd",
             registry=two_member_registry,
         )
-        assert row["mode"] == "public"
-        assert row["visibility"] == "listed"
+        assert row["mode"] == "open"
+        assert row["visibility"] == "public"
 
     def test_last_activity_prefers_tracker_over_meta(
         self,
@@ -382,8 +384,8 @@ def module_state(
     - ``_activity_tracker`` fresh LastActivityTracker
 
     Patches ``list_all_conversations`` so the ``secret`` conversation
-    surfaces with ``visibility="unlisted"`` (since ``ConversationMeta``
-    has no such field on disk yet — v0.4.x follow-up).
+    surfaces with ``visibility="private"`` (v0.4.2 Step 3.6b value-set
+    lock-in; pre-3.6b placeholder was ``"unlisted"``).
     """
     reg = ParticipantRegistry()
     reg.join("alice", "general", participant_type="human", key="aabbccdd")
@@ -403,10 +405,10 @@ def module_state(
         metas = original_list(data_dir)
         for m in metas:
             if m.name == "secret":
-                # Cast through model_dump+revalidate isn't possible without
-                # adding a field — but the serializer uses getattr, so a
-                # plain attribute assignment is enough for the test.
-                object.__setattr__(m, "visibility", "unlisted")
+                # Override the default 'public' to 'private' for the
+                # secret channel so the visibility-filter test paths
+                # exercise the non-member exclusion.
+                m.visibility = "private"
         return metas
 
     monkeypatch.setattr(mcp_mod, "list_all_conversations", _list_with_visibility)
@@ -421,12 +423,12 @@ class TestGetAllConversationsFull:
         module_state: ParticipantRegistry,
     ) -> None:
         """The S-FIX: caller who is a member of ``general`` still receives
-        rows for every other listed-public channel (so the sidebar's
+        rows for every other public channel (so the sidebar's
         Available section can populate from server truth)."""
         rows = get_all_conversations_full(caller_key="11223344")  # bob
         names = sorted(r["name"] for r in rows)
-        # bob is only in general but sees BOTH listed channels.
-        # ``secret`` is unlisted and bob isn't a member → filtered out.
+        # bob is only in general but sees BOTH public channels.
+        # ``secret`` is private and bob isn't a member -> filtered out.
         assert names == ["general", "ops"]
         # And bob's member flag distinguishes joined vs available:
         by_name = {r["name"]: r for r in rows}
@@ -437,7 +439,7 @@ class TestGetAllConversationsFull:
         self,
         module_state: ParticipantRegistry,
     ) -> None:
-        """Unlisted channels do NOT appear for callers who aren't members."""
+        """Private channels do NOT appear for callers who aren't members."""
         rows = get_all_conversations_full(caller_key="11223344")  # bob
         assert all(r["name"] != "secret" for r in rows)
 
@@ -445,22 +447,22 @@ class TestGetAllConversationsFull:
         self,
         module_state: ParticipantRegistry,
     ) -> None:
-        """Unlisted channels appear for callers who ARE members."""
+        """Private channels appear for callers who ARE members."""
         rows = get_all_conversations_full(caller_key="aabbccdd")  # alice
         names = sorted(r["name"] for r in rows)
         assert names == ["general", "ops", "secret"]
         by_name = {r["name"]: r for r in rows}
         assert by_name["secret"]["member"] is True
-        assert by_name["secret"]["visibility"] == "unlisted"
+        assert by_name["secret"]["visibility"] == "private"
 
     def test_listed_channels_visible_with_empty_caller(
         self,
         module_state: ParticipantRegistry,
     ) -> None:
-        """Empty caller key still gets listed channels (read-only client)."""
+        """Empty caller key still gets public channels (read-only client)."""
         rows = get_all_conversations_full(caller_key="")
         names = sorted(r["name"] for r in rows)
-        # Empty caller: listed channels yes, unlisted no, member always false
+        # Empty caller: public channels yes, private no, member always false
         assert names == ["general", "ops"]
         for row in rows:
             assert row["member"] is False

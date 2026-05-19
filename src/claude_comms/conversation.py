@@ -72,6 +72,36 @@ class ConversationMeta(BaseModel):
     )
 
     # ------------------------------------------------------------------
+    # v0.4.2 Step 3.6b: per-channel admin metadata (visibility / mode /
+    # display_name). All three are additive with defaults so pre-3.6b
+    # ``meta.json`` files round-trip cleanly via Pydantic's missing-field
+    # fallback (see ``tests/test_conversation_update_extended.py`` for the
+    # backwards-compat smoke test).
+    # ------------------------------------------------------------------
+    visibility: str = Field(
+        default="public",
+        description=(
+            "Channel visibility: 'public' = listed in directory; "
+            "'private' = unlisted but joinable by key."
+        ),
+    )
+    mode: str = Field(
+        default="open",
+        description=(
+            "Join mode: 'open' = anyone can join; "
+            "'invite' = invite-only."
+        ),
+    )
+    display_name: str | None = Field(
+        default=None,
+        description=(
+            "User-facing display name. Storage slug (name field) stays "
+            "immutable for MQTT topic stability; display_name overrides "
+            "UI rendering."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # v0.4.0: soft-delete (step 2.2)
     # ------------------------------------------------------------------
 

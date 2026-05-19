@@ -47,6 +47,7 @@ from claude_comms.mcp_tools import (
     tool_comms_conversation_unarchive,
     tool_comms_conversation_update,
     tool_comms_conversations,
+    tool_comms_get_channel_role,
     tool_comms_history,
     tool_comms_invite,
     tool_comms_join,
@@ -113,6 +114,21 @@ def _get_store() -> MessageStore:
             "MCP server not initialised. Call create_server() before using tools."
         )
     return _store
+
+
+def _get_registry_store() -> RegistryStore:
+    """Return the shared RegistryStore, raising if uninitialised.
+
+    v0.4.2 Step 3.6b: needed by ``comms_get_channel_role`` and by the
+    extended ``comms_conversation_update`` transferOwnership path (which
+    updates the conversation_roles table atomically with the meta.json
+    write).
+    """
+    if _registry_store is None:
+        raise RuntimeError(
+            "MCP server not initialised. Call create_server() before using tools."
+        )
+    return _registry_store
 
 
 def _get_data_dir() -> Path:
@@ -530,11 +546,15 @@ def _serialize_conversation_full(
     if not last_activity:
         last_activity = meta.created_at
 
-    # --- mode / visibility: ConversationMeta doesn't track these yet (v0.4.0
-    # follow-up). Read defensively via getattr so a future field add
-    # transparently surfaces. Defaults per Design Spec §13.4. ---
-    mode = getattr(meta, "mode", None) or "public"
-    visibility = getattr(meta, "visibility", None) or "listed"
+    # --- mode / visibility: ConversationMeta tracks these as of v0.4.2 Step
+    # 3.6b (additive Pydantic fields with defaults). Read defensively via
+    # getattr so any future ``meta`` shape that omits them still falls
+    # back to the canonical defaults from the 3.6b spec
+    # (visibility='public', mode='open'). These match ChannelAdminPanel's
+    # actual emissions; the pre-3.6b placeholder values ('listed'/'public')
+    # were stripped when the real fields landed. ---
+    mode = getattr(meta, "mode", None) or "open"
+    visibility = getattr(meta, "visibility", None) or "public"
 
     # --- per-conv message count for back-compat ---
     message_count = 0
@@ -577,12 +597,13 @@ def get_all_conversations_full(caller_key: str = "") -> list[dict]:
     memberships, which is why the sidebar fell back to a hardcoded seed
     list).
 
-    Visibility rules:
-      - Listed channels (``visibility == "listed"``) appear for everyone.
-      - Unlisted channels appear only for callers who are members.
+    Visibility rules (v0.4.2 Step 3.6b values):
+      - Public channels (``visibility == "public"``) appear for everyone.
+      - Private channels (``visibility == "private"``) appear only for
+        callers who are members.
 
     *caller_key* is the calling identity's 8-hex key. When empty, all
-    unlisted channels are filtered out and every row's ``member`` is
+    private channels are filtered out and every row's ``member`` is
     ``False``.
     """
     if _conv_data_dir is None:
@@ -596,10 +617,15 @@ def get_all_conversations_full(caller_key: str = "") -> list[dict]:
 
     result: list[dict] = []
     for meta in metas:
-        visibility = getattr(meta, "visibility", None) or "listed"
+        # v0.4.2 Step 3.6b: ConversationMeta now carries an explicit
+        # visibility field defaulting to 'public'. Pre-3.6b meta files
+        # without the field still round-trip through Pydantic with the
+        # default applied. The 'private' literal mirrors the lock-in
+        # pinned by Wave B (admin panel emits 'public'/'private').
+        visibility = getattr(meta, "visibility", None) or "public"
         is_member = meta.name in caller_memberships
-        # Unlisted: only members see them. Listed: everyone sees them.
-        if visibility != "listed" and not is_member:
+        # Private: only members see them. Public: everyone sees them.
+        if visibility == "private" and not is_member:
             continue
         row = _serialize_conversation_full(meta, caller_key)
         result.append(row)
@@ -1647,9 +1673,67 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     async def comms_conversation_update(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to update")],
-        topic: Annotated[str, Field(description="New topic/description")],
+        topic: Annotated[
+            str | None,
+            Field(description="New topic/description (optional)"),
+        ] = None,
+        name: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "REJECTED: the storage slug is immutable (it doubles as "
+                    "the MQTT topic key). Use display_name to change the "
+                    "user-facing label."
+                )
+            ),
+        ] = None,
+        display_name: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional user-facing display name. Frontend renders "
+                    "display_name when present, else falls back to the "
+                    "storage slug."
+                )
+            ),
+        ] = None,
+        visibility: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Channel visibility: 'public' = listed in directory; "
+                    "'private' = unlisted but joinable by key."
+                )
+            ),
+        ] = None,
+        mode: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Join mode: 'open' = anyone can join; "
+                    "'invite' = invite-only."
+                )
+            ),
+        ] = None,
+        created_by: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Transfer ownership to this participant key (8 hex chars). "
+                    "Caller must be the current owner. Side-effects: updates "
+                    "the conversation_roles table (new_owner = 'owner', "
+                    "old_owner = 'member')."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
-        """Update a conversation's topic. System message rate-limited to 1/min."""
+        """Update one or more of a conversation's mutable fields.
+
+        All update fields are optional; pass at least one. The 'name' field
+        is rejected with an error envelope because the storage slug is
+        immutable. System messages are rate-limited to 1/min per channel
+        (multi-field updates produce ONE combined system message).
+        """
         _touch(key)
         assert _publish_fn is not None
         result = await tool_comms_conversation_update(
@@ -1658,12 +1742,23 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             key=key,
             conversation=conversation,
             topic=topic,
+            name=name,
+            display_name=display_name,
+            visibility=visibility,
+            mode=mode,
+            created_by=created_by,
             conv_data_dir=_get_conv_data_dir(),
             rate_limit_state=_topic_rate_limit,
+            store=_get_registry_store(),
         )
         # Broadcast topic-changed so connected browsers refresh the channel's
         # topic line without waiting for the rate-limited system message.
-        if result.get("status") == "updated" and _publish_fn is not None:
+        # Only fired when topic was one of the updated fields.
+        if (
+            result.get("status") == "updated"
+            and topic is not None
+            and _publish_fn is not None
+        ):
             await publish_conversation_event(
                 _publish_fn,
                 event_type="conversation_topic_changed",
@@ -1671,6 +1766,37 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 topic=topic,
             )
         return result
+
+    @mcp.tool()
+    def comms_get_channel_role(
+        key: Annotated[str, Field(description="Your participant key")],
+        conversation: Annotated[
+            str, Field(description="Conversation to query the role in")
+        ],
+        target_participant_key: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional target participant key. When omitted, returns "
+                    "the caller's own role in the conversation."
+                )
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return the per-channel role for the caller or a target participant.
+
+        Caller must be a member of the conversation. Unknown (conversation,
+        key) pairs read as the default 'member' role per Step 3.0a's
+        default-safe semantics.
+        """
+        _touch(key)
+        return tool_comms_get_channel_role(
+            _get_registry(),
+            _get_registry_store(),
+            key=key,
+            conversation=conversation,
+            target_participant_key=target_participant_key,
+        )
 
     @mcp.tool()
     async def comms_conversation_delete(

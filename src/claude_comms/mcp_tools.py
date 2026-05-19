@@ -2207,17 +2207,70 @@ async def tool_comms_conversation_create(
     return {"status": "created", "conversation": conversation, "topic": topic}
 
 
-async def tool_comms_conversation_update(
+# ---------------------------------------------------------------------------
+# v0.4.2 Step 3.6b: extended conversation-update + role-introspection
+# ---------------------------------------------------------------------------
+#
+# Wave B (Step 3.6 expanded) shipped four frontend admin-action accessors
+# (``renameChannel`` / ``setVisibility`` / ``setMode`` / ``transferOwnership``)
+# that all wire through ``comms_conversation_update`` with field names that
+# the pre-3.6b backend simply ignored (the tool only accepted ``topic``).
+# Step 3.6b extends the tool's accept-list to four NEW optional kwargs
+# (``display_name`` / ``visibility`` / ``mode`` / ``created_by``) plus a
+# REJECTED-with-error ``name`` kwarg so the slug stays immutable.
+#
+# It also adds ``tool_comms_get_channel_role`` as a thin wrapper over
+# ``RegistryStore.get_channel_role`` so the frontend can reconcile its
+# optimistic role cache against the authoritative store after a
+# transferOwnership round-trip.
+
+_VALID_VISIBILITY = frozenset({"public", "private"})
+_VALID_MODE = frozenset({"open", "invite"})
+
+
+async def tool_comms_conversation_update(  # noqa: PLR0912, PLR0913, PLR0915
     registry: ParticipantRegistry,
     publish_fn: PublishFn,
     *,
     key: str,
     conversation: str,
-    topic: str,
     conv_data_dir: Path,
+    topic: str | None = None,
+    name: str | None = None,
+    display_name: str | None = None,
+    visibility: str | None = None,
+    mode: str | None = None,
+    created_by: str | None = None,
     rate_limit_state: dict[str, float] | None = None,
+    store: RegistryStore | None = None,
 ) -> dict[str, Any]:
-    """Update a conversation's topic."""
+    """Update one or more of a conversation's mutable metadata fields.
+
+    All update fields are optional. Pass at least one of ``topic``,
+    ``display_name``, ``visibility``, ``mode``, or ``created_by``; passing
+    zero update fields returns an error envelope. The legacy single-field
+    ``topic`` call shape is preserved for backwards compatibility with
+    existing callers.
+
+    Pinned semantics (v0.4.2 Step 3.6b):
+
+    - ``name``: REJECTED with an error envelope if non-None. The slug is
+      immutable because it doubles as the on-disk directory + MQTT topic
+      key; "rename" is performed via ``display_name``.
+    - ``display_name``: free-form display label; the storage slug stays
+      put. The frontend renders ``display_name ?? name``.
+    - ``visibility``: validated against {"public", "private"}.
+    - ``mode``: validated against {"open", "invite"}.
+    - ``created_by``: transferOwnership path. Validates that the target
+      participant key is registered AND that the caller is the current
+      owner (per the on-disk meta). When ``store`` is provided, the role
+      table is updated atomically: new_owner = 'owner' AND old_owner =
+      'member' (see worklog §5 for the 3.0a [VERIFY] #2 reinterpretation).
+
+    Multi-field updates apply ATOMICALLY (single ``save_meta`` write) and
+    emit ONE combined system message naming all changes. Rate limiting is
+    keyed by conversation, not by field.
+    """
     result = _validate_key_registered(registry, key)
     if isinstance(result, dict):
         return result
@@ -2226,7 +2279,45 @@ async def tool_comms_conversation_update(
     if not validate_conv_id(conversation):
         return _error(f"Invalid conversation ID {conversation!r}.")
 
-    # Check caller is a member
+    # Slug-rename guard: the ``name`` field exists in the wire shape so the
+    # frontend's ``renameChannel`` accessor (which currently sends
+    # ``name``) gets a structured error instead of silently no-op'ing.
+    # Future frontend revision: switch renameChannel to send
+    # ``display_name`` and this guard becomes inert.
+    if name is not None:
+        return _error(
+            "Renaming the channel slug is not supported. The 'name' field is "
+            "immutable (it doubles as the MQTT topic key and on-disk "
+            "directory). Use 'display_name' to change the user-facing label."
+        )
+
+    # Validation: visibility / mode value sets.
+    if visibility is not None and visibility not in _VALID_VISIBILITY:
+        return _error(
+            f"Invalid visibility {visibility!r}. Must be one of "
+            f"{sorted(_VALID_VISIBILITY)}."
+        )
+    if mode is not None and mode not in _VALID_MODE:
+        return _error(
+            f"Invalid mode {mode!r}. Must be one of {sorted(_VALID_MODE)}."
+        )
+
+    # Require at least one update field.
+    update_fields = {
+        "topic": topic,
+        "display_name": display_name,
+        "visibility": visibility,
+        "mode": mode,
+        "created_by": created_by,
+    }
+    provided = {k: v for k, v in update_fields.items() if v is not None}
+    if not provided:
+        return _error(
+            "No update fields provided. Supply at least one of: topic, "
+            "display_name, visibility, mode, created_by."
+        )
+
+    # Check caller is a member.
     convs = registry.conversations_for(key)
     if conversation not in convs:
         return _error(f"Not a member of conversation {conversation!r}. Join first.")
@@ -2235,11 +2326,55 @@ async def tool_comms_conversation_update(
     if meta is None:
         return _error(f"Conversation {conversation!r} not found.")
 
-    # Update topic and save
-    meta.topic = topic
+    # transferOwnership pre-flight: caller must be the current owner, and
+    # the target must be a registered participant. We check both BEFORE
+    # mutating any state so a bad transfer leaves the meta untouched.
+    if created_by is not None:
+        if meta.created_by != participant.name:
+            return _error(
+                "Only the current owner can transfer ownership of "
+                f"#{conversation}. Current owner: {meta.created_by!r}."
+            )
+        target_participant = registry.get(created_by)
+        if target_participant is None:
+            return _error(
+                f"Cannot transfer ownership: target key {created_by!r} is "
+                "not a registered participant."
+            )
+        new_owner_name = target_participant.name
+    else:
+        new_owner_name = None
+
+    # Apply mutations to the in-memory model.
+    old_owner_key: str | None = None
+    if topic is not None:
+        meta.topic = topic
+    if display_name is not None:
+        meta.display_name = display_name
+    if visibility is not None:
+        meta.visibility = visibility
+    if mode is not None:
+        meta.mode = mode
+    if created_by is not None and new_owner_name is not None:
+        old_owner_key = registry.resolve_name(meta.created_by)
+        meta.created_by = new_owner_name
+
     save_meta(meta, conv_data_dir)
 
-    # Rate limiting for system messages
+    # Role-table side effect for transferOwnership. The 3.0a [VERIFY] #2
+    # note cautioned against ``set_channel_role(..., 'member')`` as a
+    # downgrade primitive because it defeats the FK cascade on participant
+    # deletion. That caution applies to participant-DELETE downgrades; for
+    # transferOwnership the demotion is the correct authorization
+    # semantic (the prior owner remains a participant, just not the
+    # channel owner). See worklog §5 for the full reinterpretation.
+    if created_by is not None and store is not None and new_owner_name is not None:
+        store.set_channel_role(conversation, created_by, "owner")
+        if old_owner_key is not None and old_owner_key != created_by:
+            store.set_channel_role(conversation, old_owner_key, "member")
+
+    # Rate limiting for system messages (keyed by conversation, not by
+    # field — one combined message per channel per 60s window).
     system_message_status = "sent"
     now = time.monotonic()
     rate_limited = False
@@ -2250,7 +2385,29 @@ async def tool_comms_conversation_update(
             system_message_status = "suppressed (rate limited)"
 
     if not rate_limited:
-        body = f"[system] {participant.name} updated #{conversation} topic: '{topic}'"
+        # Build a single combined body that names every change. Topic
+        # gets the legacy single-field phrasing when it's the only
+        # change (backwards compat with system-message consumers that
+        # might be parsing the string); multi-field updates get a
+        # generic "updated #X: <field list>" phrasing.
+        if list(provided.keys()) == ["topic"]:
+            body = f"[system] {participant.name} updated #{conversation} topic: '{topic}'"
+        else:
+            change_descriptions: list[str] = []
+            for field_name in ("topic", "display_name", "visibility", "mode", "created_by"):
+                value = provided.get(field_name)
+                if value is None:
+                    continue
+                if field_name == "created_by" and new_owner_name is not None:
+                    change_descriptions.append(
+                        f"ownership transferred to {new_owner_name}"
+                    )
+                else:
+                    change_descriptions.append(f"{field_name}='{value}'")
+            body = (
+                f"[system] {participant.name} updated #{conversation}: "
+                + "; ".join(change_descriptions)
+            )
         system_msg = {
             "id": str(uuid4()),
             "ts": now_iso(),
@@ -2265,11 +2422,76 @@ async def tool_comms_conversation_update(
         if rate_limit_state is not None:
             rate_limit_state[conversation] = now
 
-    return {
+    response: dict[str, Any] = {
         "status": "updated",
         "conversation": conversation,
-        "topic": topic,
         "system_message": system_message_status,
+        "updated_fields": list(provided.keys()),
+    }
+    # Echo back the new values for the fields that changed so the
+    # frontend can reconcile its optimistic state without a re-read.
+    if topic is not None:
+        response["topic"] = topic
+    if display_name is not None:
+        response["display_name"] = display_name
+    if visibility is not None:
+        response["visibility"] = visibility
+    if mode is not None:
+        response["mode"] = mode
+    if created_by is not None:
+        response["created_by"] = new_owner_name
+        response["created_by_key"] = created_by
+    return response
+
+
+def tool_comms_get_channel_role(
+    registry: ParticipantRegistry,
+    store: RegistryStore,
+    *,
+    key: str,
+    conversation: str,
+    target_participant_key: str | None = None,
+) -> dict[str, Any]:
+    """Return the per-channel role for the caller or a target participant.
+
+    Thin wrapper over ``RegistryStore.get_channel_role`` (added by Step
+    3.0a). The caller (``key``) must be a member of ``conversation`` to
+    query any role. When ``target_participant_key`` is ``None``, the role
+    returned is the caller's own; otherwise it is the role of the named
+    target.
+
+    Returns ``{"role": ..., "participant_key": ..., "conversation": ...}``
+    on success. Unknown (conversation, key) pairs read as the
+    ``DEFAULT_ROLE`` ("member") per 3.0a's default-safe semantics; this
+    wrapper preserves that — it never errors on an unseen pair, only on
+    caller-authorization failure or invalid input.
+    """
+    result = _validate_key_registered(registry, key)
+    if isinstance(result, dict):
+        return result
+
+    if not validate_conv_id(conversation):
+        return _error(f"Invalid conversation ID {conversation!r}.")
+
+    # Caller must be a member to query channel roles.
+    convs = registry.conversations_for(key)
+    if conversation not in convs:
+        return _error(
+            f"Not a member of conversation {conversation!r}. Join first."
+        )
+
+    target_key = target_participant_key if target_participant_key is not None else key
+    if not validate_key(target_key):
+        return _error(
+            f"Invalid participant key format: {target_key!r}. Must be 8 "
+            "lowercase hex chars."
+        )
+
+    role = store.get_channel_role(conversation, target_key)
+    return {
+        "role": role,
+        "participant_key": target_key,
+        "conversation": conversation,
     }
 
 
