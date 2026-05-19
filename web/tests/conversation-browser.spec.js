@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 
 import ConversationBrowser from '../src/components/ConversationBrowser.svelte';
+import { EMPTY_STATES } from '../src/lib/copy/emptyStates.js';
 
 // ── Fixture helpers ────────────────────────────────────────────────────
 
@@ -327,7 +328,12 @@ describe('ConversationBrowser — empty state', () => {
       embedded: true,
       filterValue: 'nonexistent-needle',
     });
-    expect(getByText('No channels match "nonexistent-needle"')).toBeTruthy();
+    // v0.4.2 Polish P5: ConversationBrowser now sources empty-state copy
+    // from EMPTY_STATES, so the assertion matches the canonical template
+    // string (which includes a trailing period via filterEmpty()).
+    expect(
+      getByText(EMPTY_STATES.filterEmpty('nonexistent-needle')),
+    ).toBeTruthy();
   });
 
   it('renders default empty-state copy when no channels exist at all', () => {
@@ -335,6 +341,7 @@ describe('ConversationBrowser — empty state', () => {
     const { getByText } = render(ConversationBrowser, {
       props: { store, onClose: vi.fn(), onJoinChannel: vi.fn() },
     });
-    expect(getByText('No channels yet')).toBeTruthy();
+    expect(getByText(EMPTY_STATES.directoryNoChannelsTitle)).toBeTruthy();
+    expect(getByText(EMPTY_STATES.directoryNoChannelsHint)).toBeTruthy();
   });
 });

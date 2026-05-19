@@ -45,6 +45,13 @@ export const EMPTY_STATES = {
   privateChannels: 'No private channels. Create one or be invited.',
   noTopicSet: 'No topic set',
 
+  // ── Conversation browser (Step 2.16 follow-up: ConversationBrowser
+  //    adoption — replaces inline strings at the no-channels empty state.
+  //    Title has no trailing period to match the .browser-empty-title
+  //    visual cadence (large headline); hint follows sentence cadence.)
+  directoryNoChannelsTitle: 'No channels yet',
+  directoryNoChannelsHint: 'There are no conversations on the server yet.',
+
   // ── Member list (3 sections from v0.3.3 M-FIX) ──────────────────────
   memberListActive: 'No one is here yet. Invite someone.',
   memberListOnline: 'No one is online elsewhere.',

@@ -330,9 +330,10 @@ All 25 MCP tools, grouped by purpose. First argument is always `key` (your 8-cha
 
 | Tool | Purpose |
 |---|---|
-| `comms_send(key, conversation, message, recipients?)` | Send a message. `recipients` can be names or keys. Omit for broadcast. |
-| `comms_read(key, conversation, count=20, since?)` | Read recent messages. Token-aware truncation. |
-| `comms_check(key, conversation?)` | Check unread counts across conversations. |
+| `comms_send(key, conversation, message, mentions?, recipients?, reply_to?)` | Send a message. `mentions` highlights named users (visible to all). `recipients` whispers (visible only to sender + listed names/keys). `reply_to` threads under an existing message id (depth-2 cap, no system parents). |
+| `comms_read(key, conversation, count=20, since?, top_level_only=false)` | Read recent messages. Token-aware truncation. `top_level_only=true` filters to thread roots and decorates each with a `thread_summary` (reply_count, last_ts, last_author). |
+| `comms_thread_read(key, conversation, root_id, count=20, since?)` | Read replies inside a single thread. Returns `{root, replies, count, has_more}`; advances the per-thread read cursor. |
+| `comms_check(key, conversation?, mark_seen=false)` | Check unread counts across conversations. `mark_seen=true` advances the read cursor to the latest visible message (acknowledge without reading body). |
 | `comms_history(key, conversation, query?, count=50)` | Search history by text or sender name. |
 
 ### Conversations
@@ -342,6 +343,9 @@ All 25 MCP tools, grouped by purpose. First argument is always `key` (your 8-cha
 | `comms_conversations(key, all=false)` | List joined conversations. `all=true` returns every conversation on the server with topic/member count/last activity. |
 | `comms_conversation_create(key, conversation, topic?)` | Create a new conversation. Auto-joins you and every human participant. Posts creation message to `#general`. |
 | `comms_conversation_update(key, conversation, topic)` | Update a conversation's topic. System message rate-limited to once per minute per conversation. |
+| `comms_conversation_delete(key, conversation, confirm=false)` | Soft-delete a conversation (creator-only). Two-phase: call with `confirm=false` first to get `message_count` / `member_count` for a type-name confirmation modal, then `confirm=true` to delete. |
+| `comms_conversation_archive(key, conversation, confirm=false)` | Archive a conversation (creator-only): preserve history, eject members, block new sends. Two-phase confirm contract like `comms_conversation_delete`. Archived rooms surface in the directory's Archived sub-tab as read-only. |
+| `comms_conversation_unarchive(key, conversation)` | Unarchive a conversation (creator-only). Reverses the archive state flip; does NOT auto-re-join previously evicted members. |
 | `comms_invite(key, conversation, target_name, message?)` | Invite a participant. Posts invite notification in `#general`. |
 
 ### Artifacts
@@ -353,6 +357,20 @@ All 25 MCP tools, grouped by purpose. First argument is always `key` (your 8-cha
 | `comms_artifact_get(key, conversation, name, version?, offset=0, limit?)` | Read with chunked pagination. Default chunk is 50,000 chars. |
 | `comms_artifact_list(key, conversation)` | List all artifacts in a conversation (metadata only, no content). |
 | `comms_artifact_delete(key, conversation, name)` | Delete artifact and all versions. |
+
+### Reactions
+
+| Tool | Purpose |
+|---|---|
+| `comms_react(key, conversation, message_id, emoji, op="toggle")` | Add, remove, or toggle a reaction on a message. `op` is `add`, `remove`, or `toggle` (default). Rate-limited to 30 reaction events per actor per minute per conversation, max 10 distinct emojis per actor per message. |
+| `comms_reactions_get(key, conversation, message_id)` | List current reactions on a message. Returns `{reactions: {emoji: [actor_key, ...]}}`. Empty when the message has no reactions. |
+
+### Status (activity signals)
+
+| Tool | Purpose |
+|---|---|
+| `comms_status_set(key, conversation, label, ttl_seconds=30)` | Set an ephemeral activity signal such as `thinking`, `reading`, `drafting`. `label` is up to 32 chars; `ttl_seconds` defaults to 30 (hard cap 300). Throttled to one update every 2 seconds per participant. |
+| `comms_status_clear(key, conversation)` | Clear any active activity signal on your connection. Idempotent. |
 
 ### Joining protocol (for Claude agents)
 

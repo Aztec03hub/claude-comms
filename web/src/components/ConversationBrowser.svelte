@@ -74,6 +74,7 @@
    */
   import { Compass, X, Users, Clock, Hash, Lock, Search, LogIn } from 'lucide-svelte';
   import { formatTime } from '../lib/utils.js';
+  import { EMPTY_STATES } from '../lib/copy/emptyStates.js';
 
   let {
     store,
@@ -326,10 +327,12 @@
           <Compass size={24} strokeWidth={1.5} />
         </div>
         <div class="browser-empty-title">
-          {effectiveFilter ? `No channels match "${effectiveFilter}"` : 'No channels yet'}
+          {effectiveFilter
+            ? EMPTY_STATES.filterEmpty(effectiveFilter)
+            : EMPTY_STATES.directoryNoChannelsTitle}
         </div>
         {#if !effectiveFilter}
-          <div class="browser-empty-hint">There are no conversations on the server yet.</div>
+          <div class="browser-empty-hint">{EMPTY_STATES.directoryNoChannelsHint}</div>
         {/if}
       </div>
     {:else}
