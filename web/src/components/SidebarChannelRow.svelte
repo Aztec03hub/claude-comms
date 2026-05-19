@@ -67,10 +67,24 @@
     in Design Spec §10). This prop is purely an inspection breadcrumb
     so other components (e.g. the future omnibar in Step 2.19) can
     suppress duplicate animations when they're already in flight.
+  @prop {{policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}} [notificationPolicy] -
+    v0.4.2 Step 3.9 (Wave G): the channel's per-channel notification
+    policy. Drives the new bell-icon variant rendered next to the row
+    name. Variants per Phil's Q8 G1 lock-in:
+      'All'     → no icon (default — silent renderer-side branch)
+      'Mentions'→ <BellDot> (lucide-svelte) — bell with a small dot
+      'Off'     → <BellOff>                  — bell with a slash
+    Defaults to ``{policy: 'All', highlightWords: []}`` if omitted so
+    legacy callers (test fixtures, parent components that haven't
+    plumbed the prop yet) keep rendering with no bell icon. The icon
+    is a sibling of the existing legacy ``.row-mute`` VolumeX badge;
+    both can render together if a channel is both ``muted=true`` and
+    has a non-default notification policy (current data model allows
+    this — they're independent state).
 -->
 
 <script>
-  import { Hash, Lock, Star, VolumeX } from 'lucide-svelte';
+  import { Hash, Lock, Star, VolumeX, BellDot, BellOff } from 'lucide-svelte';
 
   let {
     channel,
@@ -80,6 +94,7 @@
     onClick,
     onContextMenu,
     onStarToggle,
+    notificationPolicy = { policy: 'All', highlightWords: [] },
   } = $props();
 
   // The store's #channelRowFromPayload guarantees these fields exist, but
@@ -120,6 +135,21 @@
   // channel name so screen-reader users hear an unambiguous action.
   // `aria-pressed` flips to track current starred state.
   let starAriaLabel = $derived(starred ? `Unstar ${displayName}` : `Star ${displayName}`);
+
+  // v0.4.2 Step 3.9 (Wave G) — bell-icon variant per per-channel
+  // notification policy. The branch is computed once via $derived so
+  // both the template guard and the aria-label can read the same
+  // value without re-deriving from the raw policy string at each
+  // mention site.
+  let notifPolicyKind = $derived(notificationPolicy?.policy ?? 'All');
+  let showNotifBell = $derived(
+    notifPolicyKind === 'Mentions' || notifPolicyKind === 'Off',
+  );
+  let notifBellAriaLabel = $derived(
+    notifPolicyKind === 'Mentions'
+      ? 'Notifications: only mentions'
+      : 'Notifications: off',
+  );
 
   function handleClick() {
     if (typeof onClick === 'function') {
@@ -215,6 +245,23 @@
         {unread}
       </span>
     {/if}
+  {/if}
+
+  {#if showNotifBell}
+    <span
+      class="row-notif-bell"
+      class:variant-mentions={notifPolicyKind === 'Mentions'}
+      class:variant-off={notifPolicyKind === 'Off'}
+      aria-label={notifBellAriaLabel}
+      data-testid="row-notif-bell-{channel?.id ?? ''}"
+      data-policy={notifPolicyKind}
+    >
+      {#if notifPolicyKind === 'Mentions'}
+        <BellDot size={12} strokeWidth={2.25} />
+      {:else}
+        <BellOff size={12} strokeWidth={2.25} />
+      {/if}
+    </span>
   {/if}
 
   {#if muted}
@@ -416,6 +463,22 @@
     align-items: center;
     justify-content: center;
     color: var(--text-faint, #6b6b6b);
+  }
+
+  /* v0.4.2 Step 3.9 (Wave G) — per-channel notification policy bell.
+     Shares the row-mute color baseline; Mentions variant gets a
+     subtle ember tint so it reads as "you'll still hear me on
+     mentions" rather than "fully silenced". */
+  .row-notif-bell {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint, #6b6b6b);
+  }
+
+  .row-notif-bell.variant-mentions {
+    color: var(--ember-400, #fbbf24);
   }
 
   .row-star-wrap {

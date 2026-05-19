@@ -27,6 +27,7 @@
   import UndoToast from './components/UndoToast.svelte';
   import MemberContextMenu from './components/MemberContextMenu.svelte';
   import InviteParticipantDialog from './components/InviteParticipantDialog.svelte';
+  import NotificationPolicyMenu from './components/NotificationPolicyMenu.svelte';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import * as api from './lib/api.js';
 
@@ -63,6 +64,13 @@
   // the Wave F scope and can't be touched to add a new
   // onInviteParticipant callback prop.
   let inviteDialog = $state(/** @type {{channel: any} | null} */ (null));
+
+  // v0.4.2 Step 3.9 (Wave G): NotificationPolicyMenu mount slot.
+  // Populated by the ``claude-comms:configure-notifications`` window
+  // CustomEvent dispatched by ChannelContextMenu. Carries the channel
+  // object so the popover can seed itself from
+  // ``store.getNotificationPolicy`` without re-resolving the row.
+  let notifPolicyDialog = $state(/** @type {{channel: any} | null} */ (null));
   let toasts = $state([]);
   let threadParent = $state(null);
   let emojiPickerTarget = $state(null);
@@ -397,6 +405,42 @@
     inviteDialog = null;
   }
 
+  // ── v0.4.2 Step 3.9 (Wave G) — notification-policy bus listener ────────
+  //
+  // ChannelContextMenu dispatches ``claude-comms:configure-notifications``
+  // on window when its "Configure notifications..." item activates. The
+  // detail carries the channel object so we can mount
+  // NotificationPolicyMenu without re-resolving the row from the store.
+  // Mirrors the Step 3.3 invite-participant pattern exactly so the bus
+  // shape stays consistent across menu actions.
+  $effect(() => {
+    function handler(event) {
+      const detail = event?.detail ?? {};
+      if (detail.channel) {
+        notifPolicyDialog = { channel: detail.channel };
+      }
+    }
+    window.addEventListener('claude-comms:configure-notifications', handler);
+    return () =>
+      window.removeEventListener('claude-comms:configure-notifications', handler);
+  });
+
+  // Submit handler for NotificationPolicyMenu. Routes through
+  // ``store.setNotificationPolicy`` which writes localStorage + bumps
+  // the reactive ``notificationPolicies`` map so the SidebarChannelRow
+  // bell variant and the toast handler re-render off the new value
+  // without an explicit subscriber tap.
+  function handleNotifPolicySave({ policy, highlightWords }) {
+    const dlg = notifPolicyDialog;
+    if (!dlg || !dlg.channel) return;
+    store.setNotificationPolicy(dlg.channel.id, policy, highlightWords);
+    notifPolicyDialog = null;
+  }
+
+  function handleNotifPolicyCancel() {
+    notifPolicyDialog = null;
+  }
+
   // Global keyboard shortcuts
   function handleGlobalKeydown(e) {
     // Ctrl+K — open search panel
@@ -473,16 +517,69 @@
         tag: last.id
       });
 
-      // In-app toast (skip if toasts disabled or channel is muted)
+      // In-app toast — v0.4.2 Step 3.9 (Wave G) [VERIFY-WAVE-G-1] fix.
+      //
+      // Pre-3.9 behavior (the bug): the toast was unconditionally
+      // suppressed whenever ``ch.muted`` was true — even when the
+      // incoming message ``@mentioned`` the user. Design Spec §8.2
+      // requires that mentions still surface a toast on muted
+      // channels (muting suppresses volume, not the "you were
+      // tagged" semantic).
+      //
+      // Post-3.9 behavior (the fix): the new per-channel notification
+      // policy (``store.getNotificationPolicy``) is now the
+      // authoritative gate. Policy semantics:
+      //   - 'Off'      → never toast for this channel.
+      //   - 'Mentions' → toast only when the message is an @mention
+      //                  OR matches a configured highlight word
+      //                  (case-insensitive substring).
+      //   - 'All'      → toast on every message.
+      // The legacy ``ch.muted`` flag now ONLY suppresses
+      // ordinary-message toasts; @mentions and highlight-word hits
+      // bypass it. This keeps muted-but-mentioned working while
+      // preserving the v0.4.0 mute opacity reducer.
       if (last.channel !== store.activeChannel || document.hidden) {
         const ch = store.channels.find(c => c.id === last.channel);
-        if (store.inAppToasts && !(ch && ch.muted)) {
-          addToast({
-            id: last.id,
-            sender: last.sender,
-            channel: last.channel,
-            text: last.body.slice(0, 120)
-          });
+        if (store.inAppToasts) {
+          const policy = store.getNotificationPolicy(last.channel);
+          const isFormalMention =
+            Array.isArray(last.mentions) &&
+            store.userProfile.key &&
+            last.mentions.includes(store.userProfile.key);
+          const body = typeof last.body === 'string' ? last.body.toLowerCase() : '';
+          const isHighlightHit =
+            !isFormalMention &&
+            Array.isArray(policy.highlightWords) &&
+            policy.highlightWords.length > 0 &&
+            body.length > 0 &&
+            policy.highlightWords.some((w) => body.includes(w));
+          const msgIsMention = isFormalMention || isHighlightHit;
+
+          let shouldToast = false;
+          if (policy.policy === 'Off') {
+            shouldToast = false;
+          } else if (policy.policy === 'Mentions') {
+            shouldToast = msgIsMention;
+          } else {
+            // 'All' (or any legacy unset value via the default-on-read
+            // path of ``getNotificationPolicy``).
+            shouldToast = true;
+          }
+
+          // Legacy ``ch.muted`` flag: suppress ordinary toasts but
+          // never override a mention/highlight hit (the bug fix).
+          if (shouldToast && ch && ch.muted && !msgIsMention) {
+            shouldToast = false;
+          }
+
+          if (shouldToast) {
+            addToast({
+              id: last.id,
+              sender: last.sender,
+              channel: last.channel,
+              text: last.body.slice(0, 120)
+            });
+          }
         }
       }
     }
@@ -1001,6 +1098,26 @@
     currentUserKey={store.userProfile?.key ?? ''}
     onSubmit={handleInviteSubmit}
     onCancel={handleInviteCancel}
+  />
+{/if}
+
+<!--
+  v0.4.2 Step 3.9 (Wave G) — NotificationPolicyMenu slot. Mounted in
+  response to the ``claude-comms:configure-notifications`` window
+  CustomEvent dispatched by ChannelContextMenu. Reads the current
+  policy + highlight-words off the store on each mount so the popover
+  always reflects the latest persisted state (the store's
+  ``notificationPolicies`` $state map is the source of truth for the
+  render-side; localStorage is the persistence layer).
+-->
+{#if notifPolicyDialog && notifPolicyDialog.channel}
+  {@const _np = store.getNotificationPolicy(notifPolicyDialog.channel.id)}
+  <NotificationPolicyMenu
+    channelId={notifPolicyDialog.channel.id}
+    currentPolicy={_np.policy}
+    currentHighlightWords={_np.highlightWords}
+    onSave={handleNotifPolicySave}
+    onCancel={handleNotifPolicyCancel}
   />
 {/if}
 

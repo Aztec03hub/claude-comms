@@ -44,6 +44,31 @@ const STAR_STORAGE_PREFIX = 'claude-comms.star.';
 /** localStorage key prefix for per-channel mute level (Q4 lock — local only). */
 const MUTE_STORAGE_PREFIX = 'claude-comms.mute.';
 
+/**
+ * v0.4.2 Step 3.9 (Wave G) — per-channel notification policy localStorage
+ * key prefix. Stores a JSON-encoded `{policy, highlightWords}` blob keyed
+ * by channel id. Defaults (when no entry exists) are
+ * ``{policy: 'All', highlightWords: []}``. Policy strings are
+ * capitalized (``'All' | 'Mentions' | 'Off'``) to keep this surface
+ * distinct from the legacy ``muteLevel`` strings (lowercase
+ * ``'off' | 'mentions' | 'all'``); the two are independent — legacy
+ * mute drives the row's opacity reducer, the new policy drives the
+ * toast handler's gate (App.svelte) + the SidebarChannelRow bell-icon
+ * variant. Q7 (highlight-words) lives in the same blob so a single
+ * read/write round-trip covers both.
+ */
+const NOTIF_POLICY_STORAGE_PREFIX = 'cc:notif-policy:';
+
+/** Valid policy strings for the v0.4.2 Step 3.9 per-channel notification policy. */
+const NOTIF_POLICIES = ['All', 'Mentions', 'Off'];
+
+/** Cycle order for Q8 kebab quickview 1-click cycle (All → Mentions → Off → All). */
+const NOTIF_POLICY_CYCLE = {
+  All: 'Mentions',
+  Mentions: 'Off',
+  Off: 'All',
+};
+
 /** How long a connection can go without a heartbeat before TTL cleanup removes it (ms). */
 const CONNECTION_TTL_MS = 120_000;
 
@@ -167,6 +192,19 @@ export class MqttChatStore {
   typingUsers = $state({});
   pinnedMessages = $state([]);
   inAppToasts = $state(true);
+  /**
+   * v0.4.2 Step 3.9 (Wave G) — reactive per-channel notification-policy
+   * cache. Keyed by channel id; values shape ``{policy, highlightWords}``
+   * with policy in ``'All' | 'Mentions' | 'Off'`` and highlightWords as a
+   * lowercased string[]. Populated lazily by ``getNotificationPolicy``
+   * from localStorage on first read, then in-memory for the lifetime of
+   * the session. Writes go through ``setNotificationPolicy`` which
+   * re-encodes to localStorage AND replaces the map entry so $derived
+   * consumers (NotificationPolicyMenu, ChannelContextMenu quickview,
+   * SidebarChannelRow bell variant, App.svelte toast gate) re-render.
+   * @type {Record<string, {policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}>}
+   */
+  notificationPolicies = $state({});
   /**
    * Local user identity. `name` defaults to the sentinel `'(unset)'` rather
    * than any real human name so a fresh web client never silently posts
@@ -3402,6 +3440,127 @@ export class MqttChatStore {
     return { success: true };
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // v0.4.2 Step 3.9 (Wave G) — per-channel notification policy +
+  // highlight words. Pinned cross-edge contract:
+  //
+  //   getNotificationPolicy(id)     → {policy, highlightWords}
+  //   setNotificationPolicy(id, p, w?)
+  //   cycleNotificationPolicy(id)   → next policy string
+  //
+  // Storage: localStorage key ``cc:notif-policy:{id}`` carrying a
+  // JSON-encoded ``{policy, highlightWords}`` blob. Default for any id
+  // with no stored value is ``{policy: 'All', highlightWords: []}``.
+  // Reactive cache: ``this.notificationPolicies`` ($state map) is
+  // populated lazily on the first ``getNotificationPolicy`` call so
+  // consumers can read via ``$derived`` and re-render on every write.
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Get the per-channel notification policy + highlight-words pair.
+   *
+   * Lazy localStorage read: if the in-memory cache entry doesn't exist,
+   * decode it from localStorage and populate the cache so consumers
+   * subscribed via ``$derived`` re-render on subsequent ``setNotificationPolicy``
+   * writes without a second round-trip. Missing / malformed entries
+   * fall back to ``{policy: 'All', highlightWords: []}``.
+   *
+   * @param {string} channelId
+   * @returns {{policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}}
+   */
+  getNotificationPolicy(channelId) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { policy: 'All', highlightWords: [] };
+    }
+    const cached = this.notificationPolicies[channelId];
+    if (cached) return cached;
+
+    const raw = safeStorage.getItem(NOTIF_POLICY_STORAGE_PREFIX + channelId);
+    let decoded = null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const policy = NOTIF_POLICIES.includes(parsed.policy) ? parsed.policy : 'All';
+          const words = Array.isArray(parsed.highlightWords)
+            ? parsed.highlightWords
+                .filter((w) => typeof w === 'string' && w.length > 0)
+                .map((w) => w.toLowerCase())
+            : [];
+          decoded = { policy, highlightWords: words };
+        }
+      } catch {
+        // Malformed JSON in localStorage — fall through to defaults.
+      }
+    }
+    const entry = decoded ?? { policy: 'All', highlightWords: [] };
+    // Populate the reactive cache so subsequent reads are O(1) and
+    // writes flow through the $state mutation.
+    this.notificationPolicies = { ...this.notificationPolicies, [channelId]: entry };
+    return entry;
+  }
+
+  /**
+   * Set the per-channel notification policy. If ``highlightWords`` is
+   * omitted (undefined), preserves the existing list — callers that
+   * only want to change the policy radio don't have to re-pass the
+   * full words array. Empty string entries are filtered; words are
+   * lowercased on write so the case-insensitive substring match in
+   * ``#handleChatMessage`` is a plain ``.includes()`` against an
+   * already-normalized input.
+   *
+   * @param {string} channelId
+   * @param {'All' | 'Mentions' | 'Off'} policy
+   * @param {string[]} [highlightWords]
+   * @returns {{success: boolean, error?: string}}
+   */
+  setNotificationPolicy(channelId, policy, highlightWords) {
+    if (typeof channelId !== 'string' || !channelId) {
+      return { success: false, error: 'Missing channel id.' };
+    }
+    if (!NOTIF_POLICIES.includes(policy)) {
+      return { success: false, error: 'Invalid notification policy.' };
+    }
+    const existing = this.getNotificationPolicy(channelId);
+    let nextWords;
+    if (highlightWords === undefined) {
+      nextWords = existing.highlightWords;
+    } else if (Array.isArray(highlightWords)) {
+      nextWords = highlightWords
+        .filter((w) => typeof w === 'string' && w.trim().length > 0)
+        .map((w) => w.trim().toLowerCase());
+    } else {
+      nextWords = [];
+    }
+    const entry = { policy, highlightWords: nextWords };
+    // Immutable map replacement so $derived consumers re-fire.
+    this.notificationPolicies = {
+      ...this.notificationPolicies,
+      [channelId]: entry,
+    };
+    safeStorage.setItem(
+      NOTIF_POLICY_STORAGE_PREFIX + channelId,
+      JSON.stringify(entry),
+    );
+    return { success: true };
+  }
+
+  /**
+   * Q8 kebab quickview 1-click helper. Cycles ``All → Mentions → Off →
+   * All`` and returns the new policy string so the caller (the
+   * ChannelContextMenu quickview row) can show it without a follow-up
+   * read.
+   *
+   * @param {string} channelId
+   * @returns {'All' | 'Mentions' | 'Off'} The new policy after cycling.
+   */
+  cycleNotificationPolicy(channelId) {
+    const current = this.getNotificationPolicy(channelId);
+    const next = NOTIF_POLICY_CYCLE[current.policy] ?? 'All';
+    this.setNotificationPolicy(channelId, next);
+    return next;
+  }
+
   /**
    * Set the starred flag for a channel. v0.4.0 Q4-adjacent local lock —
    * writes to ``localStorage['claude-comms.star.{id}']`` and updates the
@@ -4104,6 +4263,25 @@ export class MqttChatStore {
           msg.mentions.includes(this.userProfile.key)
         ) {
           ch.unreadHasMention = true;
+        }
+        // v0.4.2 Step 3.9 (Wave G) — Q7 highlight-word match. After the
+        // formal @-mention derivation, ALSO raise ``unreadHasMention``
+        // when the message body case-insensitive-substring-matches any
+        // of the channel's configured highlight words. Words are
+        // pre-lowercased at store time (``setNotificationPolicy``), so
+        // the match is a plain ``.includes()`` against a lowercased
+        // body. An empty / unset words list short-circuits without a
+        // localStorage read because the in-memory cache already returns
+        // ``{policy: 'All', highlightWords: []}`` from
+        // ``getNotificationPolicy``.
+        if (!ch.unreadHasMention) {
+          const { highlightWords } = this.getNotificationPolicy(channel);
+          if (highlightWords.length > 0) {
+            const body = typeof msg.body === 'string' ? msg.body.toLowerCase() : '';
+            if (body.length > 0 && highlightWords.some((w) => body.includes(w))) {
+              ch.unreadHasMention = true;
+            }
+          }
         }
       }
     }

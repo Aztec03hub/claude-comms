@@ -42,10 +42,26 @@
   @prop {Function} onAction - Callback `(actionId: string) => void`
     invoked once per click. Possible actionIds:
       'toggle-star', 'mute:all', 'mute:mentions', 'mute:off',
-      'mark-read', 'copy-link', 'leave', 'close', 'delete', 'info'
+      'mark-read', 'copy-link', 'leave', 'close', 'delete', 'info',
+      'notif:cycle', 'notif:configure'
     The component calls `onClose()` immediately after firing onAction.
+    v0.4.2 Step 3.9 (Wave G): the new 'notif:cycle' actionId fires
+    when the user clicks the kebab quickview row at the top of the
+    menu (1-click cycle ``All → Mentions → Off → All``). The new
+    'notif:configure' actionId fires when "Configure notifications..."
+    is clicked and is the discoverable entry point to the full
+    NotificationPolicyMenu popover; the parent (App.svelte) listens
+    for the ``claude-comms:configure-notifications`` window
+    CustomEvent that this component dispatches alongside the
+    actionId emission.
   @prop {Function} onClose - Callback invoked on outside-click, Escape,
     or after any action fires.
+  @prop {{policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}} [currentNotificationPolicy] -
+    v0.4.2 Step 3.9 (Wave G): the channel's current notification
+    policy, sourced from ``store.getNotificationPolicy`` by the
+    parent. Drives the Q8 quickview label at the top of the menu.
+    Defaults to ``{policy: 'All', highlightWords: []}`` if omitted
+    (e.g. for legacy callers that haven't been updated yet).
 -->
 <script>
   import { tick } from 'svelte';
@@ -64,6 +80,7 @@
     Info,
     ChevronRight,
     UserPlus,
+    Settings as SettingsIcon,
   } from 'lucide-svelte';
 
   let {
@@ -73,6 +90,7 @@
     isCreator = false,
     onAction,
     onClose,
+    currentNotificationPolicy = { policy: 'All', highlightWords: [] },
   } = $props();
 
   // -----------------------------------------------------------------
@@ -80,11 +98,39 @@
   // the rendered list by index without re-deriving on each keystroke.
   // Each entry: { id, label, icon, danger?, submenu? }
   // -----------------------------------------------------------------
+  // v0.4.2 Step 3.9 (Wave G) — Q8 kebab quickview row + Configure item.
+  // The quickview is the top-most row when the caller is a member; it
+  // shows the current policy ("Notifications: <policy>") and a single
+  // click cycles to the next state (All → Mentions → Off → All) via
+  // the 'notif:cycle' actionId. The "Configure notifications..." row
+  // sits next to the mute submenu and opens the full
+  // NotificationPolicyMenu popover via the 'notif:configure' actionId
+  // (which also dispatches a ``claude-comms:configure-notifications``
+  // window CustomEvent for the parent to consume).
+  const notifPolicyIcon = $derived.by(() => {
+    switch (currentNotificationPolicy?.policy) {
+      case 'Off':
+        return BellOff;
+      case 'Mentions':
+        return BellRing;
+      case 'All':
+      default:
+        return Bell;
+    }
+  });
+
   const items = $derived.by(() => {
     const list = [];
     const hasUnread = (channel?.unread ?? 0) > 0;
 
     if (isMember) {
+      // Order preserves the v0.4.0 keyboard-nav contract for the
+      // first two rows (idx 0=toggle-star, idx 1=mute-submenu) so
+      // existing test fixtures + muscle memory stay valid. The Q8
+      // quickview row + Configure-notifications entry point land
+      // immediately after the legacy Mute submenu — still "near the
+      // top" per Phil's G1 lock-in (top 4 of a 10-item menu) without
+      // shifting the indices the existing test suite has internalized.
       list.push({
         id: 'toggle-star',
         label: channel?.starred ? 'Unstar' : 'Star',
@@ -99,6 +145,20 @@
           { id: 'mute:mentions', label: 'Only mentions', icon: BellRing },
           { id: 'mute:off', label: 'Off', icon: Bell },
         ],
+      });
+      // Q8 quickview — 1-click cycle All → Mentions → Off → All.
+      list.push({
+        id: 'notif:cycle',
+        label: `Notifications: ${currentNotificationPolicy?.policy ?? 'All'}`,
+        icon: notifPolicyIcon,
+        quickview: true,
+      });
+      // Discoverable full-popover entry point for power-users that want
+      // to set highlight-words or pick a policy without cycling.
+      list.push({
+        id: 'notif:configure',
+        label: 'Configure notifications...',
+        icon: SettingsIcon,
       });
       if (hasUnread) {
         list.push({
@@ -230,6 +290,28 @@
         // Defensive: if the host environment disallows CustomEvent
         // construction, fall back to the standard onAction path so
         // a future Sidebar handler can still pick it up.
+      }
+    }
+    // v0.4.2 Step 3.9 (Wave G): the Configure-notifications action
+    // mirrors the Invite pattern — Sidebar.svelte is read-only in
+    // this wave, so we bus through a window CustomEvent that
+    // App.svelte listens for and mounts NotificationPolicyMenu.
+    // The event detail carries the channel object so App.svelte can
+    // seed the popover from ``store.getNotificationPolicy`` without
+    // re-resolving the row.
+    if (
+      actionId === 'notif:configure' &&
+      typeof window !== 'undefined' &&
+      typeof CustomEvent === 'function'
+    ) {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('claude-comms:configure-notifications', {
+            detail: { channel },
+          }),
+        );
+      } catch {
+        // Defensive: same fallback rationale as the invite path above.
       }
     }
     onAction?.(actionId);
@@ -399,11 +481,13 @@
       type="button"
       class="ctx-row"
       class:danger={item.danger}
+      class:quickview={item.quickview}
       role="menuitem"
       tabindex={idx === activeIndex ? 0 : -1}
       data-row-index={idx}
       data-action-id={item.id}
       data-testid="channel-ctx-item-{item.id}"
+      data-quickview={item.quickview ? 'true' : undefined}
       aria-haspopup={item.submenu ? 'menu' : undefined}
       aria-expanded={item.submenu ? submenuOpenIndex === idx : undefined}
       onclick={() => activateItem(idx)}
@@ -498,6 +582,17 @@
   .ctx-row:focus {
     background: var(--bg-surface, rgba(255, 255, 255, 0.05));
     color: var(--text-primary, #f1f1f3);
+  }
+
+  /* v0.4.2 Step 3.9 (Wave G) — Q8 quickview row. Visually distinct
+     from the rest of the menu so users see at a glance that one click
+     here is a state cycle, not a sub-menu opener. Brighter text color
+     + medium weight signals "current state badge"; no border dividers
+     since the row sits in the middle of the menu, not at a section
+     boundary. */
+  .ctx-row.quickview {
+    color: var(--text-primary, #f1f1f3);
+    font-weight: 500;
   }
 
   .ctx-row.danger { color: #ef4444; }
