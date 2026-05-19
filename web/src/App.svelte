@@ -512,9 +512,22 @@
     if (last.id === lastNotifiedId) return;
     lastNotifiedId = last.id;
     if (last.sender.key !== store.userProfile.key) {
+      // v0.4.2 [VERIFY-WAVE-G-4-FOLLOWUP] — forward channel + mentions +
+      // userKey + muted to sendNotification so the browser Notification
+      // policy gate in notifications.svelte.js (Wave G) sees full
+      // context and can apply Mentions-only suppression and the
+      // mention-bypasses-mute rule, mirroring the in-app toast logic
+      // below. The gate inside sendNotification resolves the active
+      // per-channel policy via the resolver Sidebar registered at
+      // mount time, so the call site only needs to forward raw context.
+      const chForNotify = store.channels.find(c => c.id === last.channel);
       sendNotification(last.sender.name, {
         body: last.body.slice(0, 100),
-        tag: last.id
+        tag: last.id,
+        channel: last.channel,
+        mentions: last.mentions,
+        userKey: store.userProfile.key,
+        muted: !!(chForNotify && chForNotify.muted)
       });
 
       // In-app toast — v0.4.2 Step 3.9 (Wave G) [VERIFY-WAVE-G-1] fix.
