@@ -541,3 +541,326 @@ describe('App.svelte — ThreadPanel mount uses the shared composer (v0.4.2 foll
     expect(mountBlock).not.toMatch(/onSendReply/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// 9. v0.4.3 new feature: drag-resize handle on the left edge
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Mirrors ArtifactPanel's drag-resize pattern. Width is persisted to
+// localStorage under `claude-comms:thread-panel-width`, clamped to
+// [MIN_PANEL_WIDTH=280, MAX_PANEL_WIDTH=720] with a viewport-aware upper
+// bound that reserves 200px for the chat area. The handle is exposed as
+// an ARIA window-splitter with keyboard nudge support.
+//
+// Test-writing patterns (per .worklogs/v043-iteration-log.md §I.19):
+//   - Mutation-testable: each test fails if its protected line is deleted.
+//   - Source-level regex pins for "this shape MUST exist" invariants
+//     (storage key, constants) — robust against future regressions.
+//   - DOM-presence + attribute assertions (not just `toBeDefined()`).
+//   - PointerEvent-based interactions match the production code path.
+
+const THREAD_RESIZE_STORAGE_KEY = 'claude-comms:thread-panel-width';
+
+/**
+ * Fire a PointerEvent on a node with a sensible default `clientX`. jsdom
+ * doesn't ship a full PointerEvent constructor in every version, so we
+ * fall back to constructing a MouseEvent with the same shape and stamping
+ * `pointerId` + `pointerType` on it (the handlers only read these fields).
+ */
+function firePointer(node, type, { clientX = 0, button = 0, pointerType = 'mouse', pointerId = 1 } = {}) {
+  let event;
+  try {
+    event = new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      button,
+      pointerType,
+      pointerId,
+    });
+  } catch {
+    event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button });
+    Object.defineProperty(event, 'pointerType', { value: pointerType });
+    Object.defineProperty(event, 'pointerId', { value: pointerId });
+  }
+  node.dispatchEvent(event);
+  return event;
+}
+
+describe('ThreadPanel — drag-resize handle (v0.4.3 new feature)', () => {
+  beforeEach(() => {
+    try {
+      localStorage.removeItem(THREAD_RESIZE_STORAGE_KEY);
+    } catch {
+      // localStorage may not be available; tests that need it set it directly.
+    }
+    // Force a known viewport so clampWidth's upper bound is predictable.
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600, writable: true });
+  });
+
+  test('drag-handle is rendered with separator role and ew-resize cursor (source-level pin)', () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const handle = getByTestId('thread-panel-resize-handle');
+    expect(handle).toBeTruthy();
+    expect(handle.getAttribute('role')).toBe('separator');
+    expect(handle.getAttribute('aria-orientation')).toBe('vertical');
+    expect(handle.getAttribute('tabindex')).toBe('0');
+    expect(handle.getAttribute('aria-label')).toBe('Resize thread panel');
+
+    // Source-level pin: the .resize-handle CSS rule MUST declare `cursor: ew-resize`.
+    // jsdom doesn't apply Svelte's scoped styles via getComputedStyle, so we
+    // assert the contract from the component source. A regression that drops
+    // the cursor (or the rule entirely) fails this test immediately.
+    const src = readFileSync(THREAD_PANEL_PATH, 'utf-8');
+    const ruleMatch = src.match(/\.resize-handle\s*\{[^}]*\}/);
+    expect(ruleMatch).not.toBeNull();
+    expect(ruleMatch[0]).toMatch(/cursor:\s*ew-resize/);
+    // touch-action: none is load-bearing for touch + pen drags.
+    expect(ruleMatch[0]).toMatch(/touch-action:\s*none/);
+  });
+
+  test('pointerdown + pointermove resizes ThreadPanel (panel width tracks cursor)', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    // Default width is 360 — viewport is 1600 so left edge is at x=1240.
+    // Start the drag at x=1240 (offset 0) then move the cursor leftward to
+    // x=1000 — the panel should widen to (1600 - 1000) = 600px.
+    firePointer(handle, 'pointerdown', { clientX: 1240, button: 0 });
+    await tick();
+    firePointer(handle, 'pointermove', { clientX: 1000 });
+    await tick();
+
+    expect(panel.getAttribute('style')).toMatch(/width:\s*600px/);
+    // is-resizing class is applied during the active drag so transitions
+    // are suppressed and the handle stays highlighted.
+    expect(panel.className).toMatch(/is-resizing/);
+  });
+
+  test('pointerup ends the drag (is-resizing class drops)', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    firePointer(handle, 'pointerdown', { clientX: 1240 });
+    await tick();
+    firePointer(handle, 'pointermove', { clientX: 1100 });
+    await tick();
+    expect(panel.className).toMatch(/is-resizing/);
+
+    firePointer(handle, 'pointerup', { clientX: 1100 });
+    await tick();
+    expect(panel.className).not.toMatch(/is-resizing/);
+  });
+
+  test('size persists to localStorage on pointerup (committed width survives unmount)', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    // Drag from 360 → 500 (start at left edge 1240, move to 1100).
+    firePointer(handle, 'pointerdown', { clientX: 1240 });
+    await tick();
+    firePointer(handle, 'pointermove', { clientX: 1100 });
+    await tick();
+    firePointer(handle, 'pointerup', { clientX: 1100 });
+    await tick();
+
+    const stored = localStorage.getItem(THREAD_RESIZE_STORAGE_KEY);
+    expect(stored).not.toBeNull();
+    expect(Number.parseInt(stored, 10)).toBe(500);
+  });
+
+  test('localStorage value is restored on mount (initialPanelWidth reads STORAGE_KEY)', () => {
+    // Seed a stored width BEFORE mount.
+    localStorage.setItem(THREAD_RESIZE_STORAGE_KEY, '480');
+
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    expect(panel.getAttribute('style')).toMatch(/width:\s*480px/);
+
+    // aria-valuenow on the handle is bound to panelWidth too — covers the
+    // "screen-reader sees the restored width" path.
+    const handle = getByTestId('thread-panel-resize-handle');
+    expect(handle.getAttribute('aria-valuenow')).toBe('480');
+  });
+
+  test('min size is enforced (drag below clamps to MIN_PANEL_WIDTH=280)', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    // Drag the left edge rightward to x=1500 — would compute width=100 (below MIN).
+    firePointer(handle, 'pointerdown', { clientX: 1240 });
+    await tick();
+    firePointer(handle, 'pointermove', { clientX: 1500 });
+    await tick();
+
+    // Clamped to 280, not 100.
+    expect(panel.getAttribute('style')).toMatch(/width:\s*280px/);
+
+    // Source-level pin: the constant MUST be 280. A future refactor that
+    // changes the floor without updating this test fails loudly.
+    const src = readFileSync(THREAD_PANEL_PATH, 'utf-8');
+    expect(src).toMatch(/const\s+MIN_PANEL_WIDTH\s*=\s*280\b/);
+  });
+
+  test('max size is enforced (drag above clamps to MAX_PANEL_WIDTH=720)', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    // Drag the left edge leftward to x=400 — would compute width=1200 (above MAX).
+    firePointer(handle, 'pointerdown', { clientX: 1240 });
+    await tick();
+    firePointer(handle, 'pointermove', { clientX: 400 });
+    await tick();
+
+    // Clamped to 720, not 1200.
+    expect(panel.getAttribute('style')).toMatch(/width:\s*720px/);
+
+    // Source-level pin: the constant MUST be 720.
+    const src = readFileSync(THREAD_PANEL_PATH, 'utf-8');
+    expect(src).toMatch(/const\s+MAX_PANEL_WIDTH\s*=\s*720\b/);
+  });
+
+  test('keyboard ArrowLeft grows the panel (16px nudge) and persists', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    // Default 360 → ArrowLeft grows by 16 → 376.
+    await fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    await tick();
+    expect(panel.getAttribute('style')).toMatch(/width:\s*376px/);
+
+    // ArrowRight shrinks by 16 → 360.
+    await fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    await tick();
+    expect(panel.getAttribute('style')).toMatch(/width:\s*360px/);
+
+    // Each keyboard commit persists immediately (no pointerup required).
+    expect(localStorage.getItem(THREAD_RESIZE_STORAGE_KEY)).toBe('360');
+  });
+
+  test('storage key is "claude-comms:thread-panel-width" (source-level pin guards localStorage namespace)', () => {
+    // This is the user-facing persistence contract: if the key name drifts,
+    // existing users' panel widths silently reset. Pin it at source level.
+    const src = readFileSync(THREAD_PANEL_PATH, 'utf-8');
+    expect(src).toMatch(/const\s+STORAGE_KEY\s*=\s*['"]claude-comms:thread-panel-width['"]/);
+
+    // Mirror invariant: ArtifactPanel uses the same `claude-comms:` namespace
+    // for its width key. This ensures the pattern is consistent across panels.
+    const artifactSrc = readFileSync(
+      resolve(__dirname, '../src/components/ArtifactPanel.svelte'),
+      'utf-8',
+    );
+    expect(artifactSrc).toMatch(/claude-comms:artifact-panel-width/);
+  });
+
+  test('Home key jumps to MAX, End key jumps to MIN (keyboard accessibility extremes)', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(ThreadPanel, {
+      props: {
+        parentMessage: makeParent(),
+        messages: [],
+        onClose: () => {},
+        store,
+        channelName: 'general',
+      },
+    });
+
+    const panel = getByTestId('thread-panel');
+    const handle = getByTestId('thread-panel-resize-handle');
+
+    // Home → MAX_PANEL_WIDTH (720, clamped by viewport).
+    await fireEvent.keyDown(handle, { key: 'Home' });
+    await tick();
+    expect(panel.getAttribute('style')).toMatch(/width:\s*720px/);
+
+    // End → MIN_PANEL_WIDTH (280).
+    await fireEvent.keyDown(handle, { key: 'End' });
+    await tick();
+    expect(panel.getAttribute('style')).toMatch(/width:\s*280px/);
+  });
+});
