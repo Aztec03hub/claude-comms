@@ -80,6 +80,11 @@
   }
 
   async function commitRename() {
+    // Same double-fire shape as commitEditTopic (see BUG-PHASE2A-2):
+    // Enter sets editingName=false → input unmounts → onblur re-fires.
+    // Short-circuit when no longer editing so the blur-after-Enter
+    // path is a no-op.
+    if (!editingName) return;
     const next = nameDraft.trim();
     editingName = false;
     nameDraft = '';
@@ -117,6 +122,14 @@
   }
 
   async function commitEditTopic() {
+    // BUG-PHASE2A-2 fix (v0.4.3): the topic input wires BOTH
+    // `onkeydown=Enter -> commitEditTopic` AND `onblur -> commitEditTopic`.
+    // Pressing Enter sets `editingTopic = false`, which unmounts the
+    // input ({#if editingTopic} block), which fires onblur on the
+    // unmounting element, which re-enters commitEditTopic with an
+    // already-empty topicDraft and clobbers the topic with ''. Guard
+    // by short-circuiting when we are no longer in editing mode.
+    if (!editingTopic) return;
     const next = topicDraft;
     editingTopic = false;
     topicDraft = '';

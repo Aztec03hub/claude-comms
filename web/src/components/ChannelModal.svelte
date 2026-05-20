@@ -15,6 +15,16 @@
 
   const MAX_CHANNEL_NAME = 63;
 
+  // BUG-PHASE2A-1 fix (v0.4.3): bits-ui Dialog's focus-trap intermittently
+  // swallows synthetic `click` events on the Create button (observed across
+  // .click(), .click({force:true}), dispatchEvent('click'), and Enter on
+  // the input). Activating on `pointerdown` instead of (or in addition to)
+  // `click` bypasses the focus-trap's click interception because
+  // pointerdown fires before the focus-trap's synthetic-click swallow.
+  // A `submitting` latch guards against the rare double-fire case where
+  // BOTH pointerdown AND click reach handleCreate in the same gesture.
+  let submitting = $state(false);
+
   let sanitizedName = $derived(
     channelName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
   );
@@ -33,8 +43,20 @@
   );
 
   function handleCreate() {
-    if (!nameIsValid) return;
+    if (!nameIsValid || submitting) return;
+    submitting = true;
     onCreate(sanitizedName, description);
+  }
+
+  function handlePrimaryPointerDown(e) {
+    // Only fire on primary (left) mouse / touch / pen. Secondary buttons
+    // (right-click, middle-click) must NOT trigger submit.
+    if (e.button !== 0) return;
+    if (!nameIsValid || submitting) return;
+    // Preempt the focus-trap's synthetic click swallow by acting on the
+    // pointer event itself. The subsequent click event will short-circuit
+    // via the `submitting` latch.
+    handleCreate();
   }
 
   function handleKeydown(e) {
@@ -107,7 +129,7 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn secondary" onclick={onClose} data-testid="channel-modal-cancel">Cancel</button>
-        <button class="modal-btn primary" onclick={handleCreate} disabled={!nameIsValid} data-testid="channel-modal-create">Create Channel</button>
+        <button class="modal-btn primary" onpointerdown={handlePrimaryPointerDown} onclick={handleCreate} disabled={!nameIsValid} data-testid="channel-modal-create">Create Channel</button>
       </div>
     </Dialog.Content>
   </Dialog.Portal>
