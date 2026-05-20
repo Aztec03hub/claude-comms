@@ -602,6 +602,12 @@ export class MqttChatStore {
     // the accessor would have to do a lazy cache write on first read
     // and tripping ``state_unsafe_mutation`` under derived tracking.
     this.#prewarmChannelRoles();
+    // v0.4.3 hotfix [VERIFY-PHASE2C-1]: restore localStorage unread cursors
+    // NOW (after channelsById is populated) so the per-channel ``unread`` +
+    // ``unreadFrom`` fields survive tab close + reopen. Moved from
+    // ``connect()`` where the call ran before ``channelsById`` existed and
+    // was effectively dead.
+    this.#restoreUnreadMarkers();
     this.#resetActiveChannelIfStale();
   }
 
@@ -1249,8 +1255,12 @@ export class MqttChatStore {
    * @throws Will set connectionError state if the broker is unreachable.
    */
   async connect() {
-    // Restore unread markers before anything else so the sidebar shows them
-    this.#restoreUnreadMarkers();
+    // v0.4.3 hotfix [VERIFY-PHASE2C-1]: ``#restoreUnreadMarkers`` USED to be
+    // called here, but at this point ``channelsById`` is empty (bootstrap
+    // runs later) so the rehydration loop walked an empty map and the
+    // localStorage cursor was effectively dead. Moved into the tail of
+    // ``#bootstrapChannels`` (after channelsById is populated) so unread
+    // cursors survive tab close + reopen as designed.
 
     // Fetch identity from the daemon config so web + TUI share the same key.
     // Falls back to localStorage if the daemon is not running. UX G-43:
