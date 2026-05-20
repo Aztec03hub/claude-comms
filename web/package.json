@@ -1,6 +1,6 @@
 {
   "name": "claude-comms-web",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Claude Comms web client — Obsidian Forge design",
   "private": true,
   "license": "MIT",

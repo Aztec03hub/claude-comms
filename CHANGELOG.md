@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] -- 2026-05-20
+
+**Second hotfix in 24 hours**: Phil's manual Layer B re-pass against the just-shipped v0.4.3 caught 7 more user-visible regressions that the automated Playwright suite (which had passed 182/183 cold-start) missed. Demonstrates the core §I.19 principle — automated tests are built from assumptions; real eyes catch what assumptions don't think to look for. All 7 fixed with regression-pin tests + 50 new E2E tests added targeting the 7 anti-patterns that allowed each bug class to slip. No breaking changes, no schema migrations, no MCP tool changes.
+
+### Fixed (7 user-visible regressions from Phil v0.4.3 Layer B)
+
+- **Right-click menus rendered BEHIND other elements** (z-stacking bug). Root cause was NOT just z-index — a parent element's `backdrop-filter` created a new stacking context that escaped via `position: fixed`. **Fix**: Svelte 5 `{@attach}` portal helper (`web/src/lib/portal.js` NEW) that mounts each context menu under `<body>` directly + `z-index: 9999`. Applied to `MemberContextMenu`, `ChannelContextMenu`, and submenu mounts.
+- **Ctrl+N opens new Chrome window instead of ChannelModal** (browser-default key consumption). Root cause: keyboard registry's editable-target rule returned BEFORE `event.preventDefault()`, so even when handlers existed, the browser default fired. **Fix**: `browserIntercept: true` opt-in flag on `keyboard.register()` that calls `preventDefault()` UNCONDITIONALLY (even when target is editable — which is correct for Ctrl+N/L/W/Shift+W since the user's intent is the app shortcut, not browser-default).
+- **`state_unsafe_mutation` console error on new channel creation** (`getNotificationPolicy` purity). Same anti-pattern class as v0.4.3's `getChannelRole` cascade fix: lazy-cache `$state` write from within a method called from `$derived` evaluation context (Sidebar's `getChannelNotificationPolicy` via SidebarChannelSection's `notificationPolicy` $derived). **Fix**: make `getNotificationPolicy` a pure read; new `#decodeNotificationPolicyForChannel` private helper does pure localStorage decode; pre-warm calls added at all 4 channel-set-mutation sites (bootstrap + create + join + `conversation_created` system event). **Plus**: project-wide accessor purity audit (P-11) confirmed `getNotificationPolicy` was the only remaining hazard; the other 6 `get*` accessors are already pure; the 2 lazy-write sites (`createChannel`, `muteUserGlobally`) are invoked from event handlers only (safe).
+- **Right-click own username in MemberList — no menu appeared** (zero-items short-circuit). `MemberContextMenu`'s visibility filter killed the mount entirely when all items were hidden for self. **Fix**: always mount the menu + show Mute-globally toggle for self + show "No actions available" empty-state row if everything else is filtered.
+- **SearchPanel + SettingsPanel "unattached" from chat header** (CSS regression). Both panels had a vestigial `top: 82px` from an earlier era when the chat header used a different position scheme. `ArtifactPanel` (the working reference) did NOT have this offset. **Fix**: `top: 0` on both, matching ArtifactPanel's pattern verbatim.
+- **ThreadPanel first-open clobbers chat history + doesn't show replies** (first-mount race). Synchronous batched state-write during ThreadPanel mount: `markThreadSeen` writing `$state` mid-render race-conditioned with the chat view's `$derived` that depended on the same fields. **Fix**: defer `markThreadSeen` via `tick().then(() => ...)` to next microtask. First-open now mounts cleanly without clobbering adjacent UI.
+
+### Added (E2E test infrastructure expansions — 50 new tests + new helper)
+
+- **`web/e2e/fixtures/topLayer.ts`** (NEW, +130 LOC). Exports `expectLocatorOnTop`, `expectOnTop`, `topElementTestIdAt` using `document.elementFromPoint` + ancestor-chain walk to verify a locator is the topmost element at its center coordinates. Direct mitigation of W-8 (`.toBeVisible()` doesn't check stacking).
+- **Targeted anti-pattern mitigation tests** in the existing 10 e2e scenarios:
+  - **W-8 (top-layer hit-test)**: 15 tests across 8 scenarios using `expectLocatorOnTop`
+  - **W-9 (browser-intercepted shortcuts)**: 6 tests in scenario 02 covering Ctrl+L/N/W/Shift+W runtime + source-pin on `browserIntercept: true`
+  - **W-10 + W-11 (creation flow + project-wide accessor audit)**: 7 tests across scenarios 02 + 08 exercising new-channel-creation cache-pre-warm
+  - **W-12 (two-stage menu mount/items)**: 5 tests in scenario 04 covering MemberContextMenu self-case with explicit mount + items two-stage assertion
+  - **W-13 (regenerated baselines)**: 6 tests in scenario 07 covering panel alignment regression + 4 regenerated baseline PNGs visually verified
+  - **W-14 (open-preserves-pre-state)**: 6 tests in scenario 10 covering ThreadPanel first-open + chat-view-still-visible
+- **3 pre-existing tests fixed for v0.4.4 contract drift**: MemberContextMenu self-row `canMute` changed from `!isSelf` to `true` (Bug 4 fix); SearchPanel + SettingsPanel close paths use the panel's own close button (W-15 mitigation — trigger button now overlaid).
+
+### Added (orchestration framework)
+
+- **P-11 (ENFORCE)**: project-wide accessor purity audit. Extends P-9 (sibling-function bug shape scan within file) to PROJECT-WIDE within the same file. Every `if (!this.cache[k]) { this.cache[k] = compute(); } return this.cache[k];` pattern is a `state_unsafe_mutation` hazard if called from any `$derived`. Codified in `.worklogs/v043-iteration-log.md`.
+- **P-12 (ENFORCE)**: `document.elementFromPoint` hit-testing via `expectLocatorOnTop`. Mandatory for any menu/popover/overlay e2e test.
+- **W-8 (AVOID)**: `.toBeVisible()` ≠ "on top of stacking context."
+- **W-9 (AVOID)**: Playwright `keyboard.press` doesn't simulate browser-default key consumption.
+- **W-10 (AVOID)**: Testing only on seeded fixtures misses dynamic creation/join flows.
+- **W-11 (AVOID)**: Lazy-cache-write anti-pattern not project-wide audited.
+- **W-12 (AVOID)**: Visibility-matrix tests that don't distinguish "menu open with reduced items" from "menu doesn't open at all."
+- **W-13 (AVOID)**: First-run screenshot baseline codifies whatever state existed at capture; needs adversarial visual review of every NEW baseline before commit.
+- **W-14 (AVOID)**: "Open X" tests don't assert what was visible BEFORE the open is STILL visible AFTER.
+- **W-15 (AVOID)**: Panel-toggle tests that re-click trigger button to close are fragile after CSS positioning changes (trigger gets overlaid by panel); use the panel's own close button.
+
+### Verified
+
+- Pytest **1347 unchanged** (no Python regressions).
+- vitest **1107 → 1139** (+32 from 5 new bugfix specs).
+- Playwright e2e: **232 passing + 1 intentional skip out of 233** cold-start (the v0.4.3 `transfer-picker-open` flake remains skipped; addressed in a future cycle per W-7).
+- ruff clean, build green, svelte-autofixer clean on every component touched.
+- Layer A install smoke + your Layer B manual pass against the v0.4.4 PyPI wheel.
+
+### Notes for upgraders
+
+- No schema migrations; no MCP tool changes; no breaking changes.
+- If you hit any of the 7 v0.4.3 regressions, this release fixes them all.
+- Hard-refresh the browser (`Ctrl+Shift+R`) after upgrade to load the new bundle.
+
 ## [0.4.3] -- 2026-05-20
 
 **Hotfix + comprehensive Playwright E2E suite + ThreadPanel drag-resize + new orchestration framework rule.** Phil's v0.4.2 Layer B real-browser smoke surfaced 5 user-visible regressions: a `state_unsafe_mutation` cascade originating from a lazy-cache write in `getChannelRole` (which aborted App.svelte's render tree mid-flight + cascaded to 4 visible symptoms), plus 2 production bugs discovered DURING the v0.4.3 E2E build (ChannelModal Create button swallowed under bits-ui focus-trap; ChannelAdminPanel topic-Enter double-fire wiping the topic), plus 1 unread-cursor persistence bug found by Phase 2 Agent C's spec-vs-code freshness audit (`#restoreUnreadMarkers` ran before `channelsById` was populated → dead code → unread cursor didn't survive tab close+reopen). All 5 fixed with regression-pin tests. ThreadPanel gained drag-resize (Phil's mid-Layer-B feature request, mirroring ArtifactPanel pattern). Comprehensive Playwright E2E suite covers all 12 of Phil's Layer B exercise scenarios (183 tests, screenshot baselines).
