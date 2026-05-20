@@ -595,6 +595,13 @@ export class MqttChatStore {
     // (sidebar, toast handler, browser-notification gate) reads from
     // the reactive map without re-decoding localStorage.
     this.#prewarmNotificationPolicies();
+    // v0.4.3 hotfix: pre-warm ``channelRoles`` for every bootstrapped
+    // channel so ``getChannelRole`` can stay a pure read from any
+    // context (including $derived prop expressions like App.svelte's
+    // ChatView mount + MemberContextMenu mount). Without this pre-warm
+    // the accessor would have to do a lazy cache write on first read
+    // and tripping ``state_unsafe_mutation`` under derived tracking.
+    this.#prewarmChannelRoles();
     this.#resetActiveChannelIfStale();
   }
 
@@ -1851,6 +1858,12 @@ export class MqttChatStore {
       }), { qos: 1, retain: true });
     }
 
+    // v0.4.3 hotfix: pre-warm role cache for the just-created channel
+    // (the caller is the creator → 'owner'). Keeps ``getChannelRole``
+    // a pure read; without this, the first read of the new channel's
+    // role would return null until the next bootstrap.
+    this.channelRoles[id] = this.#inferChannelRole(id);
+
     this.switchChannel(id);
   }
 
@@ -2281,6 +2294,10 @@ export class MqttChatStore {
     // Hydrate last-N history so the chat pane has content the moment the
     // user switches to this channel.
     this.#fetchHistory(id);
+    // v0.4.3 hotfix: refresh the role cache so a channel joined
+    // post-bootstrap is reflected in ``channelRoles`` without forcing
+    // the (now pure) ``getChannelRole`` accessor to do a lazy write.
+    this.channelRoles[id] = this.#inferChannelRole(id);
     return { success: true };
   }
 
@@ -3069,14 +3086,29 @@ export class MqttChatStore {
   /**
    * Resolve the caller's role on a channel.
    *
-   * [VERIFY surfaced 2026-05-18 by Wave B implementer]: there is NO
-   * MCP wrapper that exposes 3.0a's ``RegistryStore.get_channel_role``
-   * (verified by grep against ``src/claude_comms/mcp_tools.py`` +
-   * ``mcp_server.py``). A follow-up Wave B.5 / Wave C step should add
-   * ``comms_get_channel_role`` so this accessor can hydrate the
-   * ``channelRoles`` cache async on bootstrap + channel-join.
+   * v0.4.3 hotfix: this accessor is now a PURE READ of the reactive
+   * ``channelRoles`` $state cache. The pre-v0.4.3 implementation did a
+   * lazy cache write (``channelRoles[channelId] = role``) inside the
+   * accessor body, which threw ``state_unsafe_mutation`` the moment a
+   * caller invoked it from inside a ``$derived`` expression — Layer B
+   * real-browser smoke caught this at App.svelte:981 + 1088 where the
+   * ChatView and MemberContextMenu mount blocks read the role via a
+   * prop expression. Prop expressions in Svelte 5 are evaluated under
+   * derived-context read tracking, so ANY ``$state`` write inside them
+   * trips the unsafe-mutation guard.
    *
-   * Until then, this returns a role via CLIENT-SIDE INFERENCE:
+   * The fix splits the concern in three:
+   *   1. ``#inferChannelRole(channelId)`` — pure function that
+   *      returns the inferred role without touching any state.
+   *   2. ``#prewarmChannelRoles()`` — iterates ``channelsById`` and
+   *      bulk-populates ``channelRoles``. Called from bootstrap +
+   *      every known channel-add site (createChannel, joinChannel,
+   *      realtime row inserts).
+   *   3. ``getChannelRole(channelId)`` — the accessor below; just a
+   *      pure read of ``channelRoles[channelId]``. Safe to invoke
+   *      from any context including ``$derived`` and prop expressions.
+   *
+   * Inference rules (unchanged from Wave B):
    *   - If the caller's key matches ``channel.createdBy`` (or, for
    *     pre-3.0a grandfather rows, their display name matches the
    *     legacy ``createdBy`` text per 3.0a's backfill semantics)
@@ -3085,15 +3117,35 @@ export class MqttChatStore {
    *   - ``'admin'`` is never synthesized client-side; that role
    *     requires the future ``comms_get_channel_role`` wrapper.
    *
-   * The resolved role is also written to ``this.channelRoles`` so
-   * consumers can subscribe to the reactive cache (Svelte $state)
-   * instead of polling this method. Future async hydration via the
-   * MCP wrapper will write the same cache.
+   * [VERIFY surfaced 2026-05-18 by Wave B implementer, still open]:
+   * there is no MCP wrapper that exposes 3.0a's
+   * ``RegistryStore.get_channel_role``. A follow-up wave should add
+   * ``comms_get_channel_role`` so this accessor can hydrate the
+   * ``channelRoles`` cache async on bootstrap + channel-join with
+   * the server's authoritative answer.
    *
    * @param {string} channelId
    * @returns {'owner' | 'admin' | 'member' | null}
    */
   getChannelRole(channelId) {
+    if (typeof channelId !== 'string' || !channelId) return null;
+    // Pure read. Missing entries → null. Callers that need a role on a
+    // channel that may not be in the cache yet (e.g. a channel joined
+    // after bootstrap before the post-join pre-warm landed) should gate
+    // on null OR call ``#prewarmChannelRoles`` themselves.
+    return this.channelRoles[channelId] ?? null;
+  }
+
+  /**
+   * Pure client-side role inference. Reads from the channels map and
+   * the user profile; performs NO writes. Centralizes the rule set so
+   * the pre-warm helper and any future MCP-hydration path stay in
+   * lockstep.
+   *
+   * @param {string} channelId
+   * @returns {'owner' | 'admin' | 'member' | null}
+   */
+  #inferChannelRole(channelId) {
     if (typeof channelId !== 'string' || !channelId) return null;
     const ch = this.channelsById[channelId];
     if (!ch) return null;
@@ -3102,21 +3154,41 @@ export class MqttChatStore {
     const selfName = this.userProfile?.name ?? '';
     const creator = ch.createdBy ?? '';
 
-    let role;
     if (selfKey && creator && creator === selfKey) {
-      role = 'owner';
-    } else if (selfName && creator && creator === selfName) {
+      return 'owner';
+    }
+    if (selfName && creator && creator === selfName) {
       // 3.0a grandfather backfill: legacy rows persist createdBy as
       // the display name instead of the key. Match defensively so
       // owners aren't silently demoted to member when their channel
       // pre-dates the schema migration.
-      role = 'owner';
-    } else {
-      role = 'member';
+      return 'owner';
     }
+    return 'member';
+  }
 
-    this.channelRoles[channelId] = role;
-    return role;
+  /**
+   * Pre-warm the ``channelRoles`` reactive cache for every channel
+   * currently in ``channelsById``. Mirrors ``#prewarmNotificationPolicies``
+   * from Wave G: bootstrap calls this once after the local-state
+   * overlay so every consumer reads from a populated cache on first
+   * paint, and every channel-add site (createChannel, joinChannel,
+   * realtime row inserts) calls it to keep the cache in sync without
+   * the accessor itself ever needing to write state.
+   *
+   * v0.4.3 hotfix: this is the ONLY canonical writer to
+   * ``channelRoles`` during normal operation. The optimistic
+   * post-transfer demote in ``transferOwnership`` is the one other
+   * site that writes the map; that is an explicit user action invoked
+   * from an async method body and so safe under Svelte 5's
+   * unsafe-mutation guard.
+   */
+  #prewarmChannelRoles() {
+    for (const ch of Object.values(this.channelsById)) {
+      if (ch && typeof ch.id === 'string' && ch.id.length > 0) {
+        this.channelRoles[ch.id] = this.#inferChannelRole(ch.id);
+      }
+    }
   }
 
   /**
@@ -4010,6 +4082,10 @@ export class MqttChatStore {
             myStarred: false,
             myMuted: false,
           });
+          // v0.4.3 hotfix: pre-warm role cache for realtime-inserted
+          // channels so the (now pure) ``getChannelRole`` returns a
+          // populated value on first read.
+          this.channelRoles[id] = this.#inferChannelRole(id);
         }
         break;
       }
@@ -4503,6 +4579,10 @@ export class MqttChatStore {
         myStarred: false,
         myMuted: false,
       });
+      // v0.4.3 hotfix: pre-warm role cache for meta-broadcast-inserted
+      // channels (mirrors the pre-warm at the conversation_created
+      // case in #handleSystemConversation).
+      this.channelRoles[channelId] = this.#inferChannelRole(channelId);
     } else if (msg.topic) {
       existing.topic = msg.topic;
     }
