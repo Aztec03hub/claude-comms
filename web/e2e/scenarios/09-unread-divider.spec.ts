@@ -52,6 +52,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, CLAUDE, SeedSpec, SeedMessage } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -522,5 +523,38 @@ test.describe('source-level invariants: unread divider', () => {
     expect(ctxSrc).toMatch(/handleAction\(['"]unread['"]\)/);
     expect(appSrc).toMatch(/action\s*===\s*['"]unread['"]/);
     expect(appSrc).toMatch(/store\.markUnread\(/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-8 mitigation: message-bubble ContextMenu paints on top.
+//
+// The ContextMenu (bits-ui ContextMenu under the hood) is the surface
+// scenario 09 uses to fire the "Mark Unread" action. While bits-ui's
+// ContextMenu portals via Radix patterns under the hood, we still pin a
+// W-8 assertion to catch any future regression that breaks the top-layer
+// guarantee (e.g. a CSS regression that sets the menu's parent overflow
+// to clip or a stacking-context bug introduced elsewhere).
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 09 v0.4.4 enhancements: W-8 top-layer coverage', () => {
+  test('Message bubble context menu paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    await appPage.evaluate((key) => localStorage.removeItem(key), UNREAD_STORAGE_KEY);
+    await appPage.reload();
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-channel-row-unread-alpha"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+
+    const bubble = appPage.locator('[data-message-id]').first();
+    await expect(bubble).toBeVisible();
+    await bubble.click({ button: 'right' });
+    const menu = appPage.locator('[data-testid="context-menu"]');
+    await expect(menu).toBeVisible();
+    // W-8: hit-test the menu center.
+    await expectLocatorOnTop(appPage, menu);
+
+    // Close cleanly.
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
   });
 });

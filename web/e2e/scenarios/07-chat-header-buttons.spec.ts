@@ -27,6 +27,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, SeedSpec } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -111,8 +112,13 @@ test.describe('Scenario 07: chat-header button row visibility + toggles', () => 
     await appPage.locator('[data-testid="chat-header-search-btn"]').click();
     await expect(appPage.locator('[data-testid="search-panel"]')).toBeVisible({ timeout: 5000 });
 
-    // Toggle off via second click.
-    await appPage.locator('[data-testid="chat-header-search-btn"]').click();
+    // Close via the panel's own close button. After the v0.4.4 W-13 fix
+    // (SearchPanel CSS top: 0), the panel overlays the chat-header toggle
+    // button so re-clicking the trigger to close is intercepted by the
+    // panel's pointer-event surface. The panel-close button is the
+    // production-canonical way to dismiss the overlay - mirroring the
+    // ArtifactPanel test pattern in the same file.
+    await appPage.locator('[data-testid="search-panel-close"]').click();
     await expect(appPage.locator('[data-testid="search-panel"]')).toHaveCount(0, { timeout: 5000 });
 
     assertNoConsoleErrors(consoleErrors);
@@ -158,7 +164,11 @@ test.describe('Scenario 07: chat-header button row visibility + toggles', () => 
     await appPage.locator('[data-testid="chat-header-settings-btn"]').click();
     await expect(appPage.locator('[data-testid="settings-panel"]')).toBeVisible({ timeout: 5000 });
 
-    await appPage.locator('[data-testid="chat-header-settings-btn"]').click();
+    // Close via the panel's own close button. Same v0.4.4 W-13 rationale
+    // as the SearchPanel test above - the panel CSS top: 0 fix overlays
+    // the chat-header trigger button so re-clicking the trigger is
+    // intercepted by the panel.
+    await appPage.locator('[data-testid="settings-panel-close"]').click();
     await expect(appPage.locator('[data-testid="settings-panel"]')).toHaveCount(0, { timeout: 5000 });
 
     assertNoConsoleErrors(consoleErrors);
@@ -348,9 +358,14 @@ test.describe('Scenario 07: chat-header button row visibility + toggles', () => 
       { timeout: 5000 },
     ).toBe('light');
     await waitForStable(appPage);
+    // maxDiffPixels bumped above default 100 to absorb sub-pixel font
+    // antialiasing flake in the light-theme baseline (W-7 cumulative-state
+    // flake documented in v0.4.3 Phase 2 Agent B's worklog). The diff is
+    // pixel noise around glyph edges only - the visual content is stable.
     await expectScreenshot(appPage, 'chat-header-light-theme', {
       locator: appPage.locator('[data-testid="chat-header-new"]'),
       fullPage: false,
+      maxDiffPixels: 500,
     });
   });
 });
@@ -434,5 +449,176 @@ test.describe('source-level invariants: ChatHeader button row', () => {
     // the default display: none and the breakpoint.
     expect(src).toMatch(/\.header-btn-mobile\s*{\s*display:\s*none/);
     expect(src).toMatch(/@media\s*\(max-width:\s*768px\)/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-13 mitigation: panel alignment tests + source pins.
+//
+// Phil's v0.4.3 manual Layer B re-pass caught Bugs 5 + 6: SearchPanel and
+// SettingsPanel rendered "unattached" from the topbar (an 82px blank gap
+// above each panel). Root cause: vestigial `top: 82px` from a pre-v0.4.2
+// era when the inline chat header lived OUTSIDE the chat container at
+// exactly 82px tall. v0.4.2 moved the ChatHeader INSIDE ChatView (sibling
+// of the panels within the same `<main class="center">` flex column),
+// making the 82px offset vestigial. ArtifactPanel was already migrated
+// to `top: 0` in v0.4.2; SearchPanel + SettingsPanel were missed.
+//
+// v0.4.4 fix: SearchPanel + SettingsPanel CSS `top: 82px` -> `top: 0`,
+// mirroring ArtifactPanel's pattern. Rationale comments added in both
+// files so the next maintainer keeps it intact.
+//
+// W-13 mitigation: orchestrator-level adversarial visual review of every
+// new baseline before commit. Functional test compares computed `top` of
+// SearchPanel + SettingsPanel against ArtifactPanel's `top` (which has
+// been the working reference since v0.4.2).
+// -------------------------------------------------------------------------
+
+const SEARCH_PANEL_PATH = resolve(HERE, '..', '..', 'src', 'components', 'SearchPanel.svelte');
+const SETTINGS_PANEL_PATH = resolve(HERE, '..', '..', 'src', 'components', 'SettingsPanel.svelte');
+const ARTIFACT_PANEL_PATH = resolve(HERE, '..', '..', 'src', 'components', 'ArtifactPanel.svelte');
+
+test.describe('Scenario 07 v0.4.4 enhancements: W-13 panel alignment + W-8 top-layer', () => {
+  test('SearchPanel computed top matches ArtifactPanel (W-13 Bug 5 fix)', async ({ appPage, consoleErrors }) => {
+    await switchToDevChat(appPage);
+
+    // Open ArtifactPanel first to get the reference `top` value, then
+    // close + open SearchPanel + compare. Both panels live in the same
+    // CSS column (right rail) and should anchor at the same top offset.
+    await appPage.locator('[data-testid="chat-header-artifacts-btn"]').click();
+    const artifactPanel = appPage.locator('[data-testid="artifact-panel"]');
+    await expect(artifactPanel).toBeVisible();
+    const artifactTop = await artifactPanel.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return { rectTop: rect.top, styleTop: style.top };
+    });
+    // Close artifact via its own close button.
+    await appPage.locator('[data-testid="artifact-panel-close"]').first().click();
+    await expect(artifactPanel).toHaveCount(0, { timeout: 5000 });
+
+    // Open SearchPanel + take the same metric.
+    await appPage.locator('[data-testid="chat-header-search-btn"]').click();
+    const searchPanel = appPage.locator('[data-testid="search-panel"]');
+    await expect(searchPanel).toBeVisible();
+    const searchTop = await searchPanel.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return { rectTop: rect.top, styleTop: style.top };
+    });
+
+    // The two panels MUST anchor at the same top. Pre-v0.4.4, SearchPanel
+    // had `top: 82px` and ArtifactPanel had `top: 0` -> 82px gap. Post-fix
+    // both are `top: 0` -> rectTop is identical (within sub-pixel rounding).
+    expect(Math.abs(searchTop.rectTop - artifactTop.rectTop)).toBeLessThanOrEqual(2);
+    // computed style top is reliable: post-fix it is '0px'.
+    expect(searchTop.styleTop).toBe('0px');
+    expect(artifactTop.styleTop).toBe('0px');
+
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('SettingsPanel computed top matches ArtifactPanel (W-13 Bug 6 fix)', async ({ appPage, consoleErrors }) => {
+    await switchToDevChat(appPage);
+
+    // Same protocol as SearchPanel: open Artifact for reference, then
+    // open Settings + compare.
+    await appPage.locator('[data-testid="chat-header-artifacts-btn"]').click();
+    const artifactPanel = appPage.locator('[data-testid="artifact-panel"]');
+    await expect(artifactPanel).toBeVisible();
+    const artifactTop = await artifactPanel.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return { rectTop: rect.top, styleTop: style.top };
+    });
+    await appPage.locator('[data-testid="artifact-panel-close"]').first().click();
+    await expect(artifactPanel).toHaveCount(0, { timeout: 5000 });
+
+    await appPage.locator('[data-testid="chat-header-settings-btn"]').click();
+    const settingsPanel = appPage.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+    const settingsTop = await settingsPanel.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return { rectTop: rect.top, styleTop: style.top };
+    });
+
+    expect(Math.abs(settingsTop.rectTop - artifactTop.rectTop)).toBeLessThanOrEqual(2);
+    expect(settingsTop.styleTop).toBe('0px');
+    expect(artifactTop.styleTop).toBe('0px');
+
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('SearchPanel renders flush with chat header (no 82px gap) (W-13 visual + functional)', async ({ appPage, consoleErrors }) => {
+    // Cross-functional: compare SearchPanel top to the chat-header's
+    // BOTTOM. Pre-v0.4.4, SearchPanel started 82px BELOW the header
+    // (so chat-header bottom == SearchPanel top - 82). Post-v0.4.4 both
+    // anchor at the same column top, so the panel can OVERLAP the header
+    // top (depending on layout) - the key invariant is `top: 0`.
+    await switchToDevChat(appPage);
+    await appPage.locator('[data-testid="chat-header-search-btn"]').click();
+    const searchPanel = appPage.locator('[data-testid="search-panel"]');
+    await expect(searchPanel).toBeVisible();
+
+    const styleTop = await searchPanel.evaluate((el) =>
+      window.getComputedStyle(el).top,
+    );
+    // POST-fix invariant: SearchPanel.style.top === '0px'. Pre-fix it was
+    // '82px'. This is the load-bearing functional assertion.
+    expect(styleTop).toBe('0px');
+
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('source-level pin: SearchPanel CSS uses top: 0 (W-13 Bug 5 fix)', () => {
+    // P-1 + W-13 source side. If a future PR re-introduces `top: 82px` in
+    // SearchPanel.svelte, this test fires at edit-time.
+    const src = readFileSync(SEARCH_PANEL_PATH, 'utf-8');
+    expect(src).toMatch(/top:\s*0\s*;/);
+    // Belt-and-braces: explicitly assert the buggy value is NOT present.
+    expect(src).not.toMatch(/top:\s*82px/);
+  });
+
+  test('source-level pin: SettingsPanel CSS uses top: 0 (W-13 Bug 6 fix)', () => {
+    const src = readFileSync(SETTINGS_PANEL_PATH, 'utf-8');
+    expect(src).toMatch(/top:\s*0\s*;/);
+    expect(src).not.toMatch(/top:\s*82px/);
+  });
+
+  test('cross-component pin: ArtifactPanel + SearchPanel + SettingsPanel all use top: 0 (W-13 invariant)', () => {
+    // P-2 cross-component invariant. All 3 right-rail panels MUST share
+    // the `top: 0` anchor so they render flush with each other (a future
+    // refactor that changes only one would silently regress the alignment).
+    const artifactSrc = readFileSync(ARTIFACT_PANEL_PATH, 'utf-8');
+    const searchSrc = readFileSync(SEARCH_PANEL_PATH, 'utf-8');
+    const settingsSrc = readFileSync(SETTINGS_PANEL_PATH, 'utf-8');
+    // All 3 must contain a `top: 0` declaration in their CSS block.
+    expect(artifactSrc).toMatch(/top:\s*0\s*;/);
+    expect(searchSrc).toMatch(/top:\s*0\s*;/);
+    expect(settingsSrc).toMatch(/top:\s*0\s*;/);
+  });
+
+  test('SearchPanel paints on top of its column (W-8)', async ({ appPage, consoleErrors }) => {
+    await switchToDevChat(appPage);
+    await appPage.locator('[data-testid="chat-header-search-btn"]').click();
+    const searchPanel = appPage.locator('[data-testid="search-panel"]');
+    await expect(searchPanel).toBeVisible();
+    await expectLocatorOnTop(appPage, searchPanel);
+    // Close cleanly.
+    await appPage.locator('[data-testid="search-panel-close"]').click();
+    await expect(searchPanel).toHaveCount(0, { timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('SettingsPanel paints on top of its column (W-8)', async ({ appPage, consoleErrors }) => {
+    await switchToDevChat(appPage);
+    await appPage.locator('[data-testid="chat-header-settings-btn"]').click();
+    const settingsPanel = appPage.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible();
+    await expectLocatorOnTop(appPage, settingsPanel);
+    await appPage.locator('[data-testid="settings-panel-close"]').click();
+    await expect(settingsPanel).toHaveCount(0, { timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
   });
 });

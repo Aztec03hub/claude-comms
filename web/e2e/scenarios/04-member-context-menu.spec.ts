@@ -30,6 +30,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, CLAUDE, BOT, SeedSpec } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -280,14 +281,16 @@ test.describe('Scenario 04: member context menu', () => {
 // -------------------------------------------------------------------------
 
 test.describe('source-level invariants: MemberContextMenu', () => {
-  test('MemberContextMenu pins isSelf gating on kick + dm + mute', () => {
+  test('MemberContextMenu pins isSelf gating on kick + dm (post-v0.4.4 Bug 4)', () => {
     const src = readFileSync(MEMBER_CTX_PATH, 'utf-8');
     // P-1: pin the isSelf gating so any future refactor that allows
-    // self-kick / self-dm / self-mute trips this test immediately.
+    // self-kick / self-dm trips this test immediately. The v0.4.4 Bug 4
+    // fix intentionally REMOVED the !isSelf gate on canMute - Mute-globally
+    // (Pause notifications) is a legitimate self-action. The Mute gate is
+    // pinned in a separate v0.4.4 test below.
     expect(src).toMatch(/let\s+isSelf\s*=\s*\$derived/);
     expect(src).toMatch(/canKick\s*=\s*\$derived\(\s*!isSelf\s*&&/);
     expect(src).toMatch(/canDM\s*=\s*\$derived\(!isSelf\)/);
-    expect(src).toMatch(/canMute\s*=\s*\$derived\(!isSelf\)/);
   });
 
   test('MemberContextMenu pins data-testid surface', () => {
@@ -314,5 +317,201 @@ test.describe('source-level invariants: MemberContextMenu', () => {
     const storePath = resolve(HERE, '..', '..', 'src', 'lib', 'mqtt-store.svelte.js');
     const src = readFileSync(storePath, 'utf-8');
     expect(src).toMatch(/cc:user-muted:/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-8 + W-12 mitigation tests.
+//
+// Phil's v0.4.3 manual Layer B re-pass caught:
+//   - Bug 1: context menus rendered BEHIND other elements (backdrop-filter
+//     panels created new stacking contexts that z-index couldn't escape).
+//     v0.4.4 fix: portal via Svelte 5 `{@attach}` to <body> + z-index 9999.
+//   - Bug 4: right-click own username -> NO menu appeared (console clean).
+//     The pre-fix self-case filter killed mount entirely (items.length===0
+//     guard short-circuited render). v0.4.4 fix: canMute=true for self
+//     (Mute-globally is "Pause notifications" - sensible for self) + remove
+//     the items.length>0 outer guard + add member-ctx-empty empty-state row.
+//
+// W-8 mitigation: every menu test asserts top-layer via expectLocatorOnTop.
+// W-12 mitigation: two-stage assertion - menu MOUNT visible first, then
+// each item visible/absent separately. Distinguishes "menu open with
+// reduced items" from "menu doesn't mount at all" (Phil's Bug 4 symptom).
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 04 v0.4.4 enhancements: W-8 + W-12 coverage', () => {
+  test('Menu on other member paints on TOP of other elements (W-8)', async ({ appPage, consoleErrors }) => {
+    await switchToDevChat(appPage);
+    await rightClickMember(appPage, CLAUDE.key);
+
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    await expect(menu).toBeVisible();
+    // W-8: assert hit-test resolves to the menu (or its descendants). The
+    // v0.4.4 fix portals the menu to <body> + z-index 9999. If either leg
+    // regresses (portal removed; z-index drops), the elementFromPoint walk
+    // will return some other element (panel, sidebar) and this test bites.
+    await expectLocatorOnTop(appPage, menu);
+
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Self-case menu MOUNTS (W-12 stage 1) - menu container present', async ({ appPage, consoleErrors }) => {
+    // W-12 STAGE 1: assert the menu MOUNT is visible. Phil's Bug 4 manifest
+    // was no menu mounted - the {#if items.length > 0} guard short-
+    // circuited render entirely. The v0.4.4 fix removes that guard +
+    // always mounts.
+    await switchToDevChat(appPage);
+    const selfRow = appPage.locator(`[data-testid="member-${PHIL.key}"]`);
+    await expect(selfRow).toBeVisible();
+    await selfRow.click({ button: 'right' });
+
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    // STAGE 1: assert the menu MOUNT (container) visible. Pre-v0.4.4 this
+    // would fail because no DOM was produced at all.
+    await expect(menu).toBeVisible({ timeout: 5000 });
+
+    // Close cleanly.
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Self-case menu items (W-12 stage 2) - Mute visible, Kick + DM absent', async ({ appPage, consoleErrors }) => {
+    // W-12 STAGE 2: now that we know the menu mounts (stage 1), assert each
+    // expected item visible/absent. v0.4.4 contract:
+    //   - Mute-globally (canMute=true for self in v0.4.4) -> VISIBLE
+    //   - Kick (canKick=!isSelf) -> ABSENT
+    //   - DM (canDM=!isSelf) -> ABSENT
+    await switchToDevChat(appPage);
+    const selfRow = appPage.locator(`[data-testid="member-${PHIL.key}"]`);
+    await expect(selfRow).toBeVisible();
+    await selfRow.click({ button: 'right' });
+
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    await expect(menu).toBeVisible();
+
+    // The v0.4.4 fix: Mute is available for self (legitimate quiet-hours
+    // toggle).
+    await expect(menu.locator('[data-testid="member-ctx-item-mute"]')).toBeVisible();
+    // Kick + DM remain self-gated.
+    await expect(menu.locator('[data-testid="member-ctx-item-kick"]')).toHaveCount(0);
+    await expect(menu.locator('[data-testid="member-ctx-item-dm"]')).toHaveCount(0);
+
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Self-case menu paints on TOP (W-8 + W-12 combined)', async ({ appPage, consoleErrors }) => {
+    // Combined assertion: the self-case menu mounts AND paints on top.
+    await switchToDevChat(appPage);
+    const selfRow = appPage.locator(`[data-testid="member-${PHIL.key}"]`);
+    await selfRow.click({ button: 'right' });
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    await expect(menu).toBeVisible();
+    await expectLocatorOnTop(appPage, menu);
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Menu on bot in #general paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    // Mirror of the existing "right-click bot in #general" test, with the
+    // top-layer assertion added.
+    await switchToDevChat(appPage);
+    await appPage.locator('[data-testid="sidebar-channel-row-general"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+    await expect(appPage.locator('[data-testid="member-list"]')).toBeVisible();
+
+    await rightClickMember(appPage, BOT.key);
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    await expect(menu).toBeVisible();
+    await expectLocatorOnTop(appPage, menu);
+
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('source-level pin: MemberContextMenu portals to <body> (W-8)', () => {
+    // P-1 + W-8 source side: the v0.4.4 fix relocates the menu DOM under
+    // <body> via Svelte 5 `{@attach portal()}`. If the attachment is
+    // removed, the menu falls back to its native location (inside the
+    // backdrop-filter stacking context) and Phil's Bug 1 returns.
+    const src = readFileSync(MEMBER_CTX_PATH, 'utf-8');
+    // Pin the attach directive + the portal import.
+    expect(src).toMatch(/\{@attach\s+portal\(\)\}/);
+    expect(src).toMatch(/from\s+['"][^'"]*portal/);
+    // Pin the z-index bump (post-v0.4.4 = 9999, pre-v0.4.4 = 250).
+    expect(src).toMatch(/z-index:\s*9999/);
+  });
+
+  test('source-level pin: portal helper exists at lib/portal.js (W-8)', () => {
+    // P-1 + W-8 + cross-component invariant. The portal helper is the
+    // shared lib that ChannelContextMenu + MemberContextMenu both attach.
+    const PORTAL_PATH = resolve(HERE, '..', '..', 'src', 'lib', 'portal.js');
+    const src = readFileSync(PORTAL_PATH, 'utf-8');
+    // The helper must export a function (default or named).
+    expect(src).toMatch(/export\s+(?:default\s+)?function\s+portal|export\s+const\s+portal\s*=/);
+    // Plus the document.body relocation logic.
+    expect(src).toMatch(/document\.body/);
+  });
+
+  test('source-level pin: canMute = true for self (W-12 Bug 4 fix)', () => {
+    // P-1 + W-12 source side: the v0.4.4 fix changes canMute from
+    // !isSelf to true (Mute-globally available for self).
+    const src = readFileSync(MEMBER_CTX_PATH, 'utf-8');
+    expect(src).toMatch(/canMute\s*=\s*\$derived\(\s*true\s*\)/);
+  });
+
+  test('source-level pin: member-ctx-empty empty-state testid (W-12 Bug 4 fix)', () => {
+    // P-1 + W-12 source side: the v0.4.4 fix adds an empty-state row that
+    // mounts when items.length === 0 (rare with canMute=true, but possible
+    // under future role gating).
+    const src = readFileSync(MEMBER_CTX_PATH, 'utf-8');
+    expect(src).toMatch(/data-testid="member-ctx-empty"/);
+  });
+
+  test('Two-stage assertion on other-member menu: mount visible then items present (W-12)', async ({ appPage, consoleErrors }) => {
+    // W-12 protocol on a NON-self row. STAGE 1: assert the menu mount
+    // visible. STAGE 2: assert each expected item visible (Kick / Mute /
+    // DM all present because phil is owner of dev-chat).
+    await switchToDevChat(appPage);
+    await rightClickMember(appPage, CLAUDE.key);
+
+    // STAGE 1: menu container.
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    await expect(menu).toBeVisible({ timeout: 5000 });
+
+    // STAGE 2: each expected item independently. (Pre-W-12 the visibility-
+    // matrix tests used menu.toBeVisible + count > 0 - which conflates
+    // "menu open with reduced items" with "menu doesn't mount." The
+    // two-stage pattern distinguishes them.)
+    await expect(menu.locator('[data-testid="member-ctx-item-kick"]')).toBeVisible();
+    await expect(menu.locator('[data-testid="member-ctx-item-mute"]')).toBeVisible();
+    await expect(menu.locator('[data-testid="member-ctx-item-dm"]')).toBeVisible();
+
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Two-stage assertion when role demotes Kick: mount visible, Kick absent (W-12)', async ({ appPage, consoleErrors }) => {
+    // W-12 boundary: in #general phil is a regular member (not owner).
+    // Kick should be ABSENT but the menu still mounts with Mute + DM.
+    // The two-stage pattern catches this cleanly.
+    await switchToDevChat(appPage);
+    await appPage.locator('[data-testid="sidebar-channel-row-general"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+    await expect(appPage.locator('[data-testid="member-list"]')).toBeVisible();
+    await rightClickMember(appPage, BOT.key);
+
+    // STAGE 1: menu mount.
+    const menu = appPage.locator('[data-testid="member-ctx-menu"]');
+    await expect(menu).toBeVisible({ timeout: 5000 });
+
+    // STAGE 2: Mute + DM present, Kick absent.
+    await expect(menu.locator('[data-testid="member-ctx-item-mute"]')).toBeVisible();
+    await expect(menu.locator('[data-testid="member-ctx-item-dm"]')).toBeVisible();
+    await expect(menu.locator('[data-testid="member-ctx-item-kick"]')).toHaveCount(0);
+
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
   });
 });

@@ -51,6 +51,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, CLAUDE, BOT, SeedSpec } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -647,5 +648,120 @@ test.describe('source-level invariants: notification policy', () => {
     // Highlight-word resolution must use .includes() (case-insensitive
     // because the store lowercases on write).
     expect(src).toMatch(/highlightWords\.some\(/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-8 + W-10 + W-11 mitigation tests.
+//
+// W-8: ChannelContextMenu + NotificationPolicyMenu paint on top.
+// W-10: exercise notification-policy across NEW channel creation path
+//        (the v0.4.3 cascade only covered bootstrap channels).
+// W-11: spy console.error for state_unsafe_mutation across all menus + new
+//        channel path.
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 08 v0.4.4 enhancements: W-8 + W-10 + W-11 coverage', () => {
+  test('ChannelContextMenu paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    const menu = await openChannelMenu(appPage, 'policy-alpha');
+    await expectLocatorOnTop(appPage, menu);
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('NotificationPolicyMenu popover paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    const menu = await openChannelMenu(appPage, 'policy-bravo');
+    await menu.locator('[data-testid="channel-ctx-item-notif:configure"]').click();
+    const popover = appPage.locator('[data-testid="notification-policy-menu"]');
+    await expect(popover).toBeVisible();
+    await expectLocatorOnTop(appPage, popover);
+    await popover.locator('[data-testid="notif-policy-cancel"]').click();
+    await expect(popover).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Newly created channel: configure notifications popover opens without state_unsafe_mutation (W-10 + W-11)', async ({ appPage, consoleErrors }) => {
+    // W-10: exercise the NEW channel path. Create via the modal, then
+    // right-click the freshly-mounted sidebar row and open the policy
+    // popover. This exercises the post-bootstrap pre-warm wired in v0.4.4
+    // at createChannel (via #prewarmNotificationPolicyForChannel).
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-create-channel"]').click();
+    await expect(appPage.locator('[data-testid="channel-modal-content"]')).toBeVisible();
+
+    const uniqueName = 'w10-policy-fresh-creation';
+    await appPage.locator('[data-testid="channel-modal-name-input"]').fill(uniqueName);
+    await appPage.locator('[data-testid="channel-modal-create"]').click();
+    await expect(appPage.locator('[data-testid="channel-modal-content"]'))
+      .not.toBeVisible({ timeout: 7000 });
+
+    const newRow = appPage.locator(`[data-testid="sidebar-channel-row-${uniqueName}"]`);
+    await expect(newRow).toBeVisible({ timeout: 7000 });
+
+    // Right-click to open the channel menu + click Configure notifications.
+    await newRow.click({ button: 'right' });
+    const menu = appPage.locator('[data-testid="channel-ctx-menu"]');
+    await expect(menu).toBeVisible({ timeout: 7000 });
+    // The quickview row reads "Notifications: All" by default (pre-warm
+    // populated the in-memory entry without throwing).
+    await expect(menu.locator('[data-testid="channel-ctx-item-notif:cycle"]'))
+      .toHaveText(/Notifications:\s*All/);
+
+    // Click Configure to open the popover.
+    await menu.locator('[data-testid="channel-ctx-item-notif:configure"]').click();
+    const popover = appPage.locator('[data-testid="notification-policy-menu"]');
+    await expect(popover).toBeVisible();
+    // P-8: assert all surfaces visible BEFORE interacting.
+    await expect(popover.locator('[data-testid="notif-policy-radio-All"]')).toBeVisible();
+    await expect(popover.locator('[data-testid="notif-policy-radio-All"]')).toBeChecked();
+
+    // W-11 load-bearing: no state_unsafe_mutation across the full path.
+    const cascades = consoleErrors.filter((e) => e.includes('state_unsafe_mutation'));
+    expect(cascades).toEqual([]);
+
+    // Close cleanly.
+    await popover.locator('[data-testid="notif-policy-cancel"]').click();
+    await expect(popover).not.toBeVisible({ timeout: 5000 });
+
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Cycling notification policy on a newly created channel does not throw (W-10 + W-11)', async ({ appPage, consoleErrors }) => {
+    // W-10: cycle via the quickview row on a fresh channel. Pre-v0.4.4
+    // this would trip state_unsafe_mutation on the first cycle (the cycle
+    // reads getNotificationPolicy under a $derived consumer; the lazy-
+    // write would fire on the post-bootstrap-created channel).
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-create-channel"]').click();
+    await expect(appPage.locator('[data-testid="channel-modal-content"]')).toBeVisible();
+
+    const uniqueName = 'w10-policy-cycle-fresh';
+    await appPage.locator('[data-testid="channel-modal-name-input"]').fill(uniqueName);
+    await appPage.locator('[data-testid="channel-modal-create"]').click();
+    await expect(appPage.locator('[data-testid="channel-modal-content"]'))
+      .not.toBeVisible({ timeout: 7000 });
+
+    const newRow = appPage.locator(`[data-testid="sidebar-channel-row-${uniqueName}"]`);
+    await expect(newRow).toBeVisible({ timeout: 7000 });
+
+    // Cycle policy: All -> Mentions via the quickview.
+    await newRow.click({ button: 'right' });
+    let menu = appPage.locator('[data-testid="channel-ctx-menu"]');
+    await expect(menu).toBeVisible({ timeout: 7000 });
+    await menu.locator('[data-testid="channel-ctx-item-notif:cycle"]').click();
+    await expect(menu).not.toBeVisible({ timeout: 5000 });
+
+    // Re-open + verify the new label.
+    await newRow.click({ button: 'right' });
+    menu = appPage.locator('[data-testid="channel-ctx-menu"]');
+    await expect(menu).toBeVisible({ timeout: 7000 });
+    await expect(menu.locator('[data-testid="channel-ctx-item-notif:cycle"]'))
+      .toHaveText(/Notifications:\s*Mentions/);
+
+    await appPage.keyboard.press('Escape');
+
+    const cascades = consoleErrors.filter((e) => e.includes('state_unsafe_mutation'));
+    expect(cascades).toEqual([]);
+    assertNoConsoleErrors(consoleErrors);
   });
 });

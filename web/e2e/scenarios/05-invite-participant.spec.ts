@@ -27,6 +27,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, CLAUDE, BOT, SeedSpec } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -517,5 +518,46 @@ test.describe('source-level invariants: InviteParticipantDialog', () => {
     expect(src).toMatch(/apiPost\(\s*['"]\/api\/invite['"]/);
     expect(src).toMatch(/conversation_id:\s*channelId/);
     expect(src).toMatch(/invitee_key:\s*inviteeKey/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-8 mitigation: top-layer assertions on the invite dialog.
+//
+// Phil's v0.4.3 manual Layer B re-pass caught Bug 1 (right-click menus
+// behind other elements). The InviteParticipantDialog is a bits-ui Dialog
+// + Portal so it sits in the top layer by default, but the channel-
+// context-menu it opens FROM needs the same coverage (Bug 1 root cause).
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 05 v0.4.4 enhancements: W-8 top-layer coverage', () => {
+  test('Channel context menu paints on top when right-clicked from sidebar (W-8)', async ({ appPage, consoleErrors }) => {
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    const row = appPage.locator(`[data-testid="sidebar-channel-row-${TARGET_CHANNEL}"]`);
+    await expect(row).toBeVisible();
+    await row.click({ button: 'right' });
+    const menu = appPage.locator('[data-testid="channel-ctx-menu"]');
+    await expect(menu).toBeVisible();
+    // W-8: hit-test the menu center to confirm it is on top. v0.4.4 fix
+    // portals + bumps z-index to 9999.
+    await expectLocatorOnTop(appPage, menu);
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Invite dialog paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    const dialog = await openInviteDialog(appPage, TARGET_CHANNEL);
+    await expectLocatorOnTop(appPage, dialog);
+    // Cancel cleanly.
+    await dialog.locator('[data-testid="invite-dialog-cancel"]').click();
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('source-level pin: ChannelContextMenu portals + z-index 9999 (W-8)', () => {
+    const src = readFileSync(CHANNEL_CTX_MENU_PATH, 'utf-8');
+    // The v0.4.4 fix applied portal to both the main menu AND the submenu.
+    expect(src).toMatch(/\{@attach\s+portal\(\)\}/);
+    expect(src).toMatch(/z-index:\s*9999/);
   });
 });

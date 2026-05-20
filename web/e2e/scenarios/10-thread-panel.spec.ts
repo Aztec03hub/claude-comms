@@ -37,6 +37,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, CLAUDE, SeedSpec, SeedMessage } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -525,5 +526,235 @@ test.describe('source-level invariants: thread panel + drag-resize', () => {
     // <input> and the thread-composer testid is absent.
     expect(src).toMatch(/<ThreadPanel[\s\S]*?\{store\}/);
     expect(src).toMatch(/handleOpenThread/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-14 mitigation: pre-state + post-state assertions for thread open.
+//
+// Phil's v0.4.3 manual Layer B re-pass caught Bug 7: ThreadPanel first-open
+// clobbered the chat history (chat view went blank). Tests passed because
+// they only checked ThreadPanel visibility - never asserted the chat view
+// stayed visible.
+//
+// v0.4.4 fix: defer markThreadSeen via tick().then(...) so the cursor
+// advance applies AFTER DOM flush.
+//
+// W-14 mitigation: every "open X" test asserts PRE-state (chat view shows
+// N bubbles) AND POST-state (chat view STILL shows N bubbles AND the thread
+// panel mounted). Then close + reopen to verify idempotence.
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 10 v0.4.4 enhancements: W-14 thread open + chat preservation', () => {
+  test('First thread open does NOT clobber chat view (W-14 Bug 7 fix)', async ({ appPage, consoleErrors }) => {
+    // Cold mount + fresh page so this exercises the FIRST mount of thread
+    // panel (the race only fires on first mount; second+ mounts are
+    // unaffected because the cursor is already populated).
+    await appPage.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
+    await appPage.reload();
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-channel-row-dev-chat"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+    // Wait for messages to actually render before counting (async hydration).
+    await expect(appPage.locator('[data-message-id]').first()).toBeVisible({ timeout: 7000 });
+
+    // W-14 PRE-STATE: assert the chat view shows N message bubbles BEFORE
+    // opening any thread. N is at least 1 (dev-chat has 4 canonical + 20
+    // overflow messages = 24 total).
+    const beforeCount = await appPage.locator('[data-message-id]').count();
+    expect(beforeCount).toBeGreaterThan(0);
+
+    // Open the thread on the FIRST message (first-mount path).
+    const firstBubble = appPage.locator('[data-message-id]').first();
+    await firstBubble.hover();
+    const replyBtn = firstBubble.locator('[data-testid="action-reply"]').first();
+    await replyBtn.click({ force: true });
+    const panel = appPage.locator('[data-testid="thread-panel"]');
+    await expect(panel).toBeVisible();
+
+    // W-14 POST-STATE: chat view STILL shows the same N message bubbles.
+    // Pre-v0.4.4 this assertion failed because the chat view went blank
+    // (groupedMessages re-derivation races against ThreadPanel's first
+    // mount).
+    await expect(appPage.locator('[data-testid="chat-view"]')).toBeVisible();
+    const afterCount = await appPage.locator('[data-message-id]').count();
+    // The thread panel ALSO renders message bubbles (for replies + parent),
+    // so the after-count is >= before-count. The load-bearing assertion
+    // is that the chat view itself still shows at least the original N
+    // bubbles (i.e. it didn't clobber).
+    expect(afterCount).toBeGreaterThanOrEqual(beforeCount);
+
+    // Belt-and-braces: scope the count check to the chat-view subtree
+    // (excluding the thread panel).
+    const chatViewBubbles = await appPage
+      .locator('[data-testid="chat-view"] [data-message-id]')
+      .count();
+    expect(chatViewBubbles).toBeGreaterThanOrEqual(beforeCount);
+
+    const cascades = consoleErrors.filter((e) => e.includes('state_unsafe_mutation'));
+    expect(cascades).toEqual([]);
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('First thread open: thread panel shows parent message (W-14 Bug 7 fix)', async ({ appPage, consoleErrors }) => {
+    // The other half of Bug 7: replies + parent message DO render on first
+    // open. Pre-v0.4.4, the second symptom was that the panel mounted but
+    // showed empty - the race aborted ThreadPanel's reactive subscriptions
+    // before they could resolve the parent message.
+    await appPage.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
+    await appPage.reload();
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-channel-row-dev-chat"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+
+    const firstBubble = appPage.locator('[data-message-id]').first();
+    const parentBody = await firstBubble.evaluate((el) => el.textContent ?? '');
+    await firstBubble.hover();
+    const replyBtn = firstBubble.locator('[data-testid="action-reply"]').first();
+    await replyBtn.click({ force: true });
+    const panel = appPage.locator('[data-testid="thread-panel"]');
+    await expect(panel).toBeVisible();
+
+    // The parent message is rendered inside the panel. Its visible text
+    // should overlap with the original bubble's body. We check the panel
+    // shows SOMETHING (non-empty) as the load-bearing assertion - empty
+    // panel = race aborted.
+    const panelText = await panel.textContent();
+    expect(panelText?.length ?? 0).toBeGreaterThan(0);
+
+    const cascades = consoleErrors.filter((e) => e.includes('state_unsafe_mutation'));
+    expect(cascades).toEqual([]);
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Close + reopen thread: idempotent + chat preserved (W-14)', async ({ appPage, consoleErrors }) => {
+    // Idempotence: the v0.4.4 fix defers markThreadSeen via tick(); the
+    // race only triggers once on cold mount. Closing + reopening should
+    // work identically without surfacing any state_unsafe_mutation.
+    await appPage.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
+    await appPage.reload();
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-channel-row-dev-chat"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+    // Wait for messages to actually render before counting.
+    await expect(
+      appPage.locator('[data-testid="chat-view"] [data-message-id]').first(),
+    ).toBeVisible({ timeout: 7000 });
+
+    const beforeCount = await appPage.locator('[data-testid="chat-view"] [data-message-id]').count();
+    expect(beforeCount).toBeGreaterThan(0);
+
+    // Open thread (1st).
+    const firstBubble = appPage.locator('[data-message-id]').first();
+    await firstBubble.hover();
+    await firstBubble.locator('[data-testid="action-reply"]').first().click({ force: true });
+    const panel = appPage.locator('[data-testid="thread-panel"]');
+    await expect(panel).toBeVisible();
+
+    // Close.
+    await panel.locator('[data-testid="thread-panel-close"]').click();
+    await expect(panel).not.toBeVisible({ timeout: 5000 });
+
+    // Chat view still shows the same N bubbles.
+    const midCount = await appPage.locator('[data-testid="chat-view"] [data-message-id]').count();
+    expect(midCount).toBe(beforeCount);
+
+    // Re-open (2nd) - subsequent opens hit the warm cursor path; should be
+    // unaffected by the deferral fix.
+    const secondBubble = appPage.locator('[data-testid="chat-view"] [data-message-id]').first();
+    await secondBubble.hover();
+    await secondBubble.locator('[data-testid="action-reply"]').first().click({ force: true });
+    await expect(panel).toBeVisible();
+
+    // Chat view STILL shows same N bubbles.
+    const afterCount = await appPage.locator('[data-testid="chat-view"] [data-message-id]').count();
+    expect(afterCount).toBe(beforeCount);
+
+    const cascades = consoleErrors.filter((e) => e.includes('state_unsafe_mutation'));
+    expect(cascades).toEqual([]);
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('source-level pin: handleOpenThread defers markThreadSeen via tick() (W-14)', () => {
+    // P-1 + W-14 source side. The v0.4.4 fix wraps markThreadSeen in
+    // tick().then(() => store.markThreadSeen(...)). Pin both the tick
+    // import and the deferral pattern.
+    const src = readFileSync(APP_SVELTE_PATH, 'utf-8');
+    expect(src).toMatch(/import\s+\{[^}]*\btick\b[^}]*\}\s+from\s+['"]svelte['"]/);
+    // The function body contains tick().then(...) calling markThreadSeen.
+    expect(src).toMatch(/tick\(\)[\s\S]{0,200}?markThreadSeen/);
+  });
+
+  test('source-level pin: handleOpenThread does NOT synchronously call markThreadSeen (W-14)', () => {
+    // P-1 + W-14: regression-prevent. If a future refactor reverts the
+    // deferral, this test bites. We pin: in the handleOpenThread function
+    // body, markThreadSeen MUST be inside a tick().then(...) chain, never
+    // bare.
+    const src = readFileSync(APP_SVELTE_PATH, 'utf-8');
+    const fnMatch = src.match(/function\s+handleOpenThread[^{]*\{([\s\S]*?)\n  \}/);
+    expect(fnMatch, "handleOpenThread function must exist").not.toBeNull();
+    const body = fnMatch![1];
+    // The markThreadSeen call must be inside a tick().then(...) callback.
+    // Allow optional optional-chaining + arrow function variants.
+    expect(body).toMatch(/tick\(\)[\s\S]*?markThreadSeen/);
+  });
+
+  test('Thread panel paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    await appPage.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
+    await appPage.reload();
+    const panel = await openThreadOnFirstMessage(appPage);
+    await expectLocatorOnTop(appPage, panel);
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Cold-reload + thread open: chat-view stays populated after panel mount (W-14 cold mount)', async ({ appPage, consoleErrors }) => {
+    // Mirror of the FIRST test but with explicit cold-reload sequencing
+    // (clear localStorage, navigate to dev-chat, count bubbles, then open
+    // thread). Pre-v0.4.4 the race was a function of MOUNT TIMING - the
+    // synchronous markThreadSeen during the same batch as the panel
+    // mount. The deferral via tick() decouples them. This test exercises
+    // the cold path explicitly.
+    await appPage.evaluate(() => {
+      // Clear everything thread-related so cold mount is deterministic.
+      const keys = Object.keys(localStorage);
+      for (const k of keys) {
+        if (k.startsWith('claude-comms:thread') || k.startsWith('cc:thread')) {
+          localStorage.removeItem(k);
+        }
+      }
+    });
+    await appPage.reload();
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    await appPage.locator('[data-testid="sidebar-channel-row-dev-chat"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+    // Wait for messages to actually render.
+    await expect(
+      appPage.locator('[data-testid="chat-view"] [data-message-id]').first(),
+    ).toBeVisible({ timeout: 7000 });
+
+    // PRE-state count.
+    const chatViewBefore = await appPage
+      .locator('[data-testid="chat-view"] [data-message-id]')
+      .count();
+    expect(chatViewBefore).toBeGreaterThan(0);
+
+    // Cold open.
+    const firstBubble = appPage.locator('[data-testid="chat-view"] [data-message-id]').first();
+    await firstBubble.hover();
+    await firstBubble.locator('[data-testid="action-reply"]').first().click({ force: true });
+    const panel = appPage.locator('[data-testid="thread-panel"]');
+    await expect(panel).toBeVisible();
+
+    // POST-state: chat view bubbles unchanged (count preserved within the
+    // chat-view subtree; thread panel adds its own bubbles but they live
+    // under [data-testid="thread-panel"]).
+    const chatViewAfter = await appPage
+      .locator('[data-testid="chat-view"] [data-message-id]')
+      .count();
+    expect(chatViewAfter).toBe(chatViewBefore);
+
+    const cascades = consoleErrors.filter((e) => e.includes('state_unsafe_mutation'));
+    expect(cascades).toEqual([]);
+    assertNoConsoleErrors(consoleErrors);
   });
 });

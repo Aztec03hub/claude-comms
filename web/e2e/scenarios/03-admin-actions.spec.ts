@@ -30,6 +30,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { canonicalSeed, PHIL, CLAUDE, BOT, SeedSpec } from '../fixtures/seedData';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -354,5 +355,70 @@ test.describe('source-level invariants: ChannelAdminPanel', () => {
     const fnMatch = src.match(/getChannelRole\(channelId\)\s*{([\s\S]*?)\n  }/);
     expect(fnMatch).not.toBeNull();
     expect(fnMatch![1]).not.toMatch(/this\.channelRoles\[\w+\]\s*=/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-8 mitigation: top-layer assertions on admin-tab dialogs.
+//
+// Phil's v0.4.3 manual Layer B re-pass caught Bug 1: right-click menus
+// rendered BEHIND other elements. The automated suite missed it because
+// `.toBeVisible()` does NOT check stacking. We close the gap by using
+// `expectLocatorOnTop(page, locator)` from fixtures/topLayer.ts which
+// performs `document.elementFromPoint` at the locator center and walks the
+// hit chain for the target element.
+//
+// Pinned overlays in scenario 03: channel-directory-modal,
+// type-name-confirm-dialog. Each is a top-layer surface that must paint
+// on top of everything else when open.
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 03 v0.4.4 enhancements: W-8 top-layer coverage', () => {
+  test('Channel directory modal paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    await openAdminTabFor(appPage, 'dev-chat');
+    const modal = appPage.locator('[data-testid="channel-directory-modal"]');
+    await expect(modal).toBeVisible();
+    // The MODAL CONTENT panel is the on-top surface (the modal element may
+    // be a transparent overlay wrapper). Try the content first; fall back
+    // to the modal root.
+    const content = appPage.locator('[data-testid="channel-directory-admin-panel"]');
+    await expect(content).toBeVisible();
+    await expectLocatorOnTop(appPage, content);
+
+    // Close cleanly.
+    await appPage.keyboard.press('Escape');
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Archive confirm dialog paints on top (W-8)', async ({ appPage, consoleErrors }) => {
+    // Use private-room because doomed-channel may have been archived in a
+    // previous test in this worker. private-room is also phil-owned per
+    // the seed override.
+    const row = await openAdminTabFor(appPage, 'private-room');
+    await row.locator('[data-testid="channel-admin-action-archive"]').click();
+    const dialog = appPage.locator('[data-testid="type-name-confirm-dialog"]');
+    await expect(dialog).toBeVisible();
+    // The dialog body is the on-top surface.
+    await expectLocatorOnTop(appPage, dialog);
+
+    // Cancel cleanly.
+    await appPage.locator('[data-testid="type-name-confirm-cancel"]').click();
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Delete confirm dialog paints on top of admin tab (W-8)', async ({ appPage, consoleErrors }) => {
+    const row = await openAdminTabFor(appPage, 'dev-chat');
+    await row.locator('[data-testid="channel-admin-action-delete"]').click();
+    const dialog = appPage.locator('[data-testid="type-name-confirm-dialog"]');
+    await expect(dialog).toBeVisible();
+    await expectLocatorOnTop(appPage, dialog);
+
+    // Cancel cleanly.
+    await appPage.locator('[data-testid="type-name-confirm-cancel"]').click();
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+
+    assertNoConsoleErrors(consoleErrors);
   });
 });

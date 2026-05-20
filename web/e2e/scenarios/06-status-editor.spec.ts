@@ -28,6 +28,7 @@
 
 import { test, expect, assertNoConsoleErrors } from '../fixtures/browser';
 import { expectScreenshot, waitForStable } from '../fixtures/screenshot';
+import { expectLocatorOnTop } from '../fixtures/topLayer';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -472,5 +473,47 @@ test.describe('source-level invariants: StatusEditor', () => {
     const setMatch = src.match(/mcpCall\(\s*['"]comms_profile_status_set['"][\s\S]{0,400}?\}\)/);
     expect(setMatch).not.toBeNull();
     expect(setMatch![0]).toMatch(/expires_at:/);
+  });
+});
+
+// -------------------------------------------------------------------------
+// v0.4.4 W-8 mitigation: top-layer assertions on the status editor popover.
+//
+// StatusEditor is a popover that opens from the sidebar identity row. It
+// must paint on top of the sidebar + any panel that happens to be open
+// (e.g. SettingsPanel which lives in the right rail). Phil's Bug 1 didn't
+// directly hit StatusEditor, but the same anti-pattern (backdrop-filter
+// parent + low z-index) could regress here.
+// -------------------------------------------------------------------------
+
+test.describe('Scenario 06 v0.4.4 enhancements: W-8 top-layer coverage', () => {
+  test('Status editor paints on TOP when opened from sidebar (W-8)', async ({ appPage, consoleErrors }) => {
+    const editor = await openStatusEditor(appPage);
+    await expectLocatorOnTop(appPage, editor);
+    // Cancel cleanly.
+    await editor.locator('[data-testid="status-editor-cancel"]').click();
+    await expect(editor).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('Status editor paints on top even with right-rail panel open (W-8)', async ({ appPage, consoleErrors }) => {
+    // Open a panel first (search) so a backdrop-filter element sits in
+    // the DOM tree under the editor's mount point. If the editor's z-index
+    // / stacking-context fix regresses, this test catches it.
+    await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+    // Switch to general so the chat-header buttons are reachable.
+    await appPage.locator('[data-testid="sidebar-channel-row-general"]').click();
+    await appPage.waitForSelector('[data-testid="chat-view"]');
+    await appPage.locator('[data-testid="chat-header-search-btn"]').click();
+    await expect(appPage.locator('[data-testid="search-panel"]')).toBeVisible();
+
+    // Now open the status editor from the sidebar.
+    const editor = await openStatusEditor(appPage);
+    await expectLocatorOnTop(appPage, editor);
+
+    // Cancel.
+    await editor.locator('[data-testid="status-editor-cancel"]').click();
+    await expect(editor).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
   });
 });
