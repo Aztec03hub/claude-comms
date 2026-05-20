@@ -195,9 +195,7 @@ class RegistryStore:
                 prior_row = self._conn.execute(
                     "SELECT value FROM schema_meta WHERE key='schema_version'"
                 ).fetchone()
-                prior_version = (
-                    int(prior_row[0]) if prior_row is not None else None
-                )
+                prior_version = int(prior_row[0]) if prior_row is not None else None
             except sqlite3.OperationalError:
                 # schema_meta table does not exist yet (fresh install).
                 prior_version = None
@@ -215,8 +213,7 @@ class RegistryStore:
             # have these columns from ``_SCHEMA_DDL`` above, so the guard
             # short-circuits on the first iteration.
             existing_cols = {
-                row[1]
-                for row in self._conn.execute("PRAGMA table_info(participants)")
+                row[1] for row in self._conn.execute("PRAGMA table_info(participants)")
             }
             for col_name, col_type in (
                 ("profile_status_emoji", "TEXT NULL"),
@@ -505,9 +502,7 @@ class RegistryStore:
 
     # -- Channel roles (v0.4.2 Step 3.0a) ---------------------------------
 
-    def get_channel_role(
-        self, conversation: str, participant_key: str
-    ) -> ChannelRole:
+    def get_channel_role(self, conversation: str, participant_key: str) -> ChannelRole:
         """Return ``participant_key``'s explicit role in ``conversation``.
 
         Defaults to ``"member"`` for any (conversation, key) pair with no

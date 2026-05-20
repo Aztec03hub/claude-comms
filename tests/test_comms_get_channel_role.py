@@ -188,7 +188,13 @@ def test_post_3_0a_backfill_creator_returns_owner(tmp_path: Path) -> None:
         conn.execute(
             "INSERT INTO participants (key, name, type, created_at, last_seen) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("1234abcd", "claude", "claude", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            (
+                "1234abcd",
+                "claude",
+                "claude",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
         )
         # Seed a membership row so the rehydrated registry recognises the
         # caller as a member of "general" (the wrapper checks membership
@@ -233,9 +239,7 @@ def test_post_3_0a_backfill_creator_returns_owner(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_conversation_id_rejected(
-    store: RegistryStore, tmp_path: Path
-) -> None:
+def test_invalid_conversation_id_rejected(store: RegistryStore, tmp_path: Path) -> None:
     """Malformed conversation id returns an error envelope."""
     registry = _registry_with(store)
     _join(registry, "alice", "design", key="aaaaaaaa")

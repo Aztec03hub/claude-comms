@@ -1427,6 +1427,7 @@ def start(
             # `.routes.insert(...)` calls above because CORSMiddleware
             # returns an ASGI callable, not a Starlette instance.
             from starlette.middleware.cors import CORSMiddleware
+
             starlette_app = CORSMiddleware(
                 starlette_app,
                 allow_origins=cors_origins,
@@ -1530,8 +1531,7 @@ def start(
                 )
             )
             console.print(
-                "  [green]Profile-status auto-expire[/green] sweep started "
-                "(~60s tick)"
+                "  [green]Profile-status auto-expire[/green] sweep started (~60s tick)"
             )
 
             console.print(

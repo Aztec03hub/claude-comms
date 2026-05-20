@@ -1712,8 +1712,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             str | None,
             Field(
                 description=(
-                    "Join mode: 'open' = anyone can join; "
-                    "'invite' = invite-only."
+                    "Join mode: 'open' = anyone can join; 'invite' = invite-only."
                 )
             ),
         ] = None,

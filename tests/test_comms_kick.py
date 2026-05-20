@@ -74,9 +74,7 @@ def _seed_pair(
 
 
 @pytest.mark.asyncio
-async def test_kick_by_owner_succeeds(
-    store: RegistryStore, tmp_path: Path
-) -> None:
+async def test_kick_by_owner_succeeds(store: RegistryStore, tmp_path: Path) -> None:
     """Owner of the channel may kick another member."""
     registry = _registry_with(store)
     _seed_pair(registry)
@@ -110,9 +108,7 @@ async def test_kick_by_owner_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_kick_by_admin_succeeds(
-    store: RegistryStore, tmp_path: Path
-) -> None:
+async def test_kick_by_admin_succeeds(store: RegistryStore, tmp_path: Path) -> None:
     """Channel admin may also kick another member."""
     registry = _registry_with(store)
     _seed_pair(registry)
@@ -141,9 +137,7 @@ async def test_kick_by_admin_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_kick_by_non_admin_rejected(
-    store: RegistryStore, tmp_path: Path
-) -> None:
+async def test_kick_by_non_admin_rejected(store: RegistryStore, tmp_path: Path) -> None:
     """A caller with the default 'member' role gets an error envelope."""
     registry = _registry_with(store)
     _seed_pair(registry)

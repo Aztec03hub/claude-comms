@@ -247,7 +247,13 @@ def test_backfill_grandfathers_creator_as_owner(tmp_path: Path) -> None:
         conn.execute(
             "INSERT INTO participants (key, name, type, created_at, last_seen) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("1234abcd", "claude", "claude", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            (
+                "1234abcd",
+                "claude",
+                "claude",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
         )
         conn.commit()
     finally:
@@ -302,12 +308,24 @@ def test_backfill_skips_ambiguous_name_collision(
         conn.execute(
             "INSERT INTO participants (key, name, type, created_at, last_seen) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("aaaa0001", "claude", "claude", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            (
+                "aaaa0001",
+                "claude",
+                "claude",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
         )
         conn.execute(
             "INSERT INTO participants (key, name, type, created_at, last_seen) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("bbbb0002", "claude", "claude", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            (
+                "bbbb0002",
+                "claude",
+                "claude",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
         )
         conn.commit()
     finally:

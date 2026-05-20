@@ -81,9 +81,7 @@ def _seed_registry(
     """
     reg = ParticipantRegistry()
     if caller_in_conv:
-        reg.join(
-            "caller", conversation, participant_type="human", key=CALLER_KEY
-        )
+        reg.join("caller", conversation, participant_type="human", key=CALLER_KEY)
     else:
         # Register the caller under a *different* conversation so the
         # 403 path is exercised by membership absence — not by unknown key.
@@ -95,9 +93,7 @@ def _seed_registry(
                 "invitee", conversation, participant_type="claude", key=INVITEE_KEY
             )
         else:
-            reg.join(
-                "invitee", "elsewhere", participant_type="claude", key=INVITEE_KEY
-            )
+            reg.join("invitee", "elsewhere", participant_type="claude", key=INVITEE_KEY)
     return reg
 
 
@@ -421,9 +417,7 @@ def test_invite_options_preflight_disallowed_origin(tmp_path: Path) -> None:
     )
     assert r.status_code == 200
     # The browser will refuse to use the preflight without Allow-Origin.
-    assert "access-control-allow-origin" not in {
-        k.lower() for k in r.headers.keys()
-    }
+    assert "access-control-allow-origin" not in {k.lower() for k in r.headers.keys()}
 
 
 # ---------------------------------------------------------------------------

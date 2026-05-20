@@ -87,10 +87,7 @@ class ConversationMeta(BaseModel):
     )
     mode: str = Field(
         default="open",
-        description=(
-            "Join mode: 'open' = anyone can join; "
-            "'invite' = invite-only."
-        ),
+        description=("Join mode: 'open' = anyone can join; 'invite' = invite-only."),
     )
     display_name: str | None = Field(
         default=None,

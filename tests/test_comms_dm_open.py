@@ -272,9 +272,7 @@ async def test_dm_open_visibility_is_private_mode_is_invite(
 
 
 @pytest.mark.asyncio
-async def test_dm_with_self_rejected(
-    store: RegistryStore, tmp_path: Path
-) -> None:
+async def test_dm_with_self_rejected(store: RegistryStore, tmp_path: Path) -> None:
     """key == target_key returns an error envelope."""
     registry = _registry_with(store)
     _seed_pair(registry)

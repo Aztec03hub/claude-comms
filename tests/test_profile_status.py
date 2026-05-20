@@ -73,9 +73,7 @@ def registry(store: RegistryStore) -> ParticipantRegistry:
     return ParticipantRegistry(store=store)
 
 
-async def _join_claude(
-    reg: ParticipantRegistry, name: str = "claude-x"
-) -> str:
+async def _join_claude(reg: ParticipantRegistry, name: str = "claude-x") -> str:
     res = await tool_comms_join(reg, name=name, conversation="general")
     assert res.get("error") is not True, res
     return res["key"]
@@ -118,9 +116,7 @@ async def test_profile_status_set_happy_path(registry: ParticipantRegistry):
 @pytest.mark.asyncio
 async def test_profile_status_clear_happy_path(registry: ParticipantRegistry):
     key = await _join_claude(registry)
-    await tool_comms_profile_status_set(
-        registry, key=key, emoji="x", text="something"
-    )
+    await tool_comms_profile_status_set(registry, key=key, emoji="x", text="something")
     res = await tool_comms_profile_status_clear(registry, key=key)
     assert res["status"] == "cleared"
     p = registry.get(key)
@@ -181,9 +177,7 @@ async def test_profile_status_set_expires_at_past_swept_on_first_tick(
         registry, key=key, emoji="x", text="leftover", expires_at=past_iso
     )
     assert res["status"] == "set"
-    cleared_keys = await auto_expire_profile_statuses_once(
-        registry, publish_fn=None
-    )
+    cleared_keys = await auto_expire_profile_statuses_once(registry, publish_fn=None)
     assert key in cleared_keys
     p = registry.get(key)
     assert p.profile_status_emoji is None
@@ -207,12 +201,8 @@ async def test_profile_status_set_both_emoji_and_text_none_collapses_to_clear(
     """
     key = await _join_claude(registry)
     # Seed something so we can prove the collapse actually wipes it.
-    await tool_comms_profile_status_set(
-        registry, key=key, emoji="x", text="seed"
-    )
-    res = await tool_comms_profile_status_set(
-        registry, key=key, emoji=None, text=None
-    )
+    await tool_comms_profile_status_set(registry, key=key, emoji="x", text="seed")
+    res = await tool_comms_profile_status_set(registry, key=key, emoji=None, text=None)
     assert res["status"] == "cleared"
     p = registry.get(key)
     assert p.profile_status_emoji is None
@@ -357,7 +347,8 @@ def test_schema_migration_v2_to_v3_adds_columns_on_first_open(tmp_path: Path):
     s = RegistryStore.open(data_dir)
     try:
         cols_post = {
-            row[1] for row in s._conn.execute(  # noqa: SLF001
+            row[1]
+            for row in s._conn.execute(  # noqa: SLF001
                 "PRAGMA table_info(participants)"
             )
         }
@@ -398,7 +389,8 @@ def test_schema_migration_pragma_before_after(tmp_path: Path):
     s = RegistryStore.open(data_dir)
     try:
         post_cols = [
-            row[1] for row in s._conn.execute(  # noqa: SLF001
+            row[1]
+            for row in s._conn.execute(  # noqa: SLF001
                 "PRAGMA table_info(participants)"
             )
         ]
@@ -465,9 +457,7 @@ async def test_auto_expire_sweep_clears_expired_and_republishes(
         registry, key=key, emoji="x", text="stale", expires_at=past_iso
     )
     publish_fn, captured = _capture_publish_fn()
-    cleared = await auto_expire_profile_statuses_once(
-        registry, publish_fn=publish_fn
-    )
+    cleared = await auto_expire_profile_statuses_once(registry, publish_fn=publish_fn)
     assert key in cleared
     # At least one retained-clear publish per active connection.
     assert captured, "auto-expire produced no publishes"
@@ -499,9 +489,7 @@ async def test_profile_status_and_activity_are_independent(
         ttl_seconds=60,
     )
     # Then set profile_status — must not clobber the activity.
-    await tool_comms_profile_status_set(
-        registry, key=key, emoji="x", text="durable"
-    )
+    await tool_comms_profile_status_set(registry, key=key, emoji="x", text="durable")
     p = registry.get(key)
     assert p.profile_status_text == "durable"
     assert p.connections["mcp"].activity is not None

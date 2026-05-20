@@ -1652,7 +1652,9 @@ async def auto_expire_profile_statuses_loop(
     """
     while True:
         try:
-            publish_fn = publish_fn_provider() if callable(publish_fn_provider) else None
+            publish_fn = (
+                publish_fn_provider() if callable(publish_fn_provider) else None
+            )
             await auto_expire_profile_statuses_once(registry, publish_fn=publish_fn)
         except asyncio.CancelledError:
             return
@@ -2298,9 +2300,7 @@ async def tool_comms_conversation_update(  # noqa: PLR0912, PLR0913, PLR0915
             f"{sorted(_VALID_VISIBILITY)}."
         )
     if mode is not None and mode not in _VALID_MODE:
-        return _error(
-            f"Invalid mode {mode!r}. Must be one of {sorted(_VALID_MODE)}."
-        )
+        return _error(f"Invalid mode {mode!r}. Must be one of {sorted(_VALID_MODE)}.")
 
     # Require at least one update field.
     update_fields = {
@@ -2391,10 +2391,18 @@ async def tool_comms_conversation_update(  # noqa: PLR0912, PLR0913, PLR0915
         # might be parsing the string); multi-field updates get a
         # generic "updated #X: <field list>" phrasing.
         if list(provided.keys()) == ["topic"]:
-            body = f"[system] {participant.name} updated #{conversation} topic: '{topic}'"
+            body = (
+                f"[system] {participant.name} updated #{conversation} topic: '{topic}'"
+            )
         else:
             change_descriptions: list[str] = []
-            for field_name in ("topic", "display_name", "visibility", "mode", "created_by"):
+            for field_name in (
+                "topic",
+                "display_name",
+                "visibility",
+                "mode",
+                "created_by",
+            ):
                 value = provided.get(field_name)
                 if value is None:
                     continue
@@ -2404,9 +2412,8 @@ async def tool_comms_conversation_update(  # noqa: PLR0912, PLR0913, PLR0915
                     )
                 else:
                     change_descriptions.append(f"{field_name}='{value}'")
-            body = (
-                f"[system] {participant.name} updated #{conversation}: "
-                + "; ".join(change_descriptions)
+            body = f"[system] {participant.name} updated #{conversation}: " + "; ".join(
+                change_descriptions
             )
         system_msg = {
             "id": str(uuid4()),
@@ -2476,9 +2483,7 @@ def tool_comms_get_channel_role(
     # Caller must be a member to query channel roles.
     convs = registry.conversations_for(key)
     if conversation not in convs:
-        return _error(
-            f"Not a member of conversation {conversation!r}. Join first."
-        )
+        return _error(f"Not a member of conversation {conversation!r}. Join first.")
 
     target_key = target_participant_key if target_participant_key is not None else key
     if not validate_key(target_key):
@@ -2673,9 +2678,7 @@ async def tool_comms_kick(
     registry.leave(target_key, conversation)
 
     # Publish system message to the kicked-from channel.
-    body = (
-        f"[system] {caller.name} kicked {target.name} from #{conversation}"
-    )
+    body = f"[system] {caller.name} kicked {target.name} from #{conversation}"
     system_msg = {
         "id": str(uuid4()),
         "ts": now_iso(),
@@ -2791,12 +2794,8 @@ async def tool_comms_dm_open(
     # Auto-join both parties. ``registry.join`` is idempotent for the
     # caller (they're already in the registry) but adds membership to
     # the new DM slug.
-    registry.join(
-        caller.name, dm_slug, key=key, participant_type=caller.type
-    )
-    registry.join(
-        target.name, dm_slug, key=target_key, participant_type=target.type
-    )
+    registry.join(caller.name, dm_slug, key=key, participant_type=caller.type)
+    registry.join(target.name, dm_slug, key=target_key, participant_type=target.type)
 
     # Symmetric ownership: both parties are 'owner' of the DM. There is
     # no member-vs-owner hierarchy for DMs — either party may kick

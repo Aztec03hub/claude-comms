@@ -440,7 +440,9 @@ async def test_name_rejected_slug_immutable(tmp_path: Path) -> None:
     )
 
     assert result.get("error") is True
-    assert "immutable" in result["message"].lower() or "name" in result["message"].lower()
+    assert (
+        "immutable" in result["message"].lower() or "name" in result["message"].lower()
+    )
     assert "display_name" in result["message"].lower()
     # Disk: name stays put.
     meta = load_meta("design", tmp_path)
