@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { MqttChatStore } from './lib/mqtt-store.svelte.js';
   import { requestPermission, sendNotification } from './lib/notifications.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -129,11 +129,24 @@
   // a registered handler for; other keys (including Escape and Ctrl+K)
   // pass through to the svelte:window onkeydown listener untouched.
   $effect(() => {
+    // v0.4.4 hotfix (Bug 2): Ctrl+L / Ctrl+N / Ctrl+W / Ctrl+Shift+W
+    // are all combos Chrome reserves for browser-default actions
+    // (focus location bar, new window, close tab). Without
+    // ``browserIntercept: true`` the dispatch path only calls
+    // ``event.preventDefault()`` when the target is non-editable, so
+    // typing the combo inside MessageInput would fall through to the
+    // browser (Phil's Layer B finding: Ctrl+N opened Chrome new-window
+    // while typing in chat). The flag makes preventDefault() fire
+    // unconditionally, blocking the browser default; the user handler
+    // still respects the editable-target rule so the app action
+    // doesn't fire mid-sentence.
     keyboard.register('Ctrl+L', () => { showChannelDirectory = true; }, {
       description: 'Open channel directory',
+      browserIntercept: true,
     });
     keyboard.register('Ctrl+N', () => { showChannelModal = true; }, {
       description: 'Create channel',
+      browserIntercept: true,
     });
     keyboard.register('Ctrl+J', () => {
       quickJoinValue = '';
@@ -153,7 +166,7 @@
           });
         }
       }
-    }, { description: 'Leave current channel' });
+    }, { description: 'Leave current channel', browserIntercept: true });
     keyboard.register('Ctrl+Shift+W', () => {
       // Fallback for browsers that hijack Ctrl+W (closes tab). Same
       // behaviour as Ctrl+W above; users discover the variant from the
@@ -165,7 +178,10 @@
           handle.done.catch(() => {});
         }
       }
-    }, { description: 'Leave current channel (fallback if browser hijacks Ctrl+W)' });
+    }, {
+      description: 'Leave current channel (fallback if browser hijacks Ctrl+W)',
+      browserIntercept: true,
+    });
     keyboard.register('?', () => { showKeyboardHelp = true; }, {
       description: 'Show this help overlay',
     });
@@ -756,9 +772,22 @@
     threadParent = message;
     showThreadPanel = true;
     showSearchPanel = false;
-    // Acknowledge the thread's existing replies — clears the chip's unread
-    // accent, mirrors how switching to a channel clears its unread count.
-    store?.markThreadSeen?.(message.id);
+    // v0.4.4 hotfix (Bug 7): defer ``markThreadSeen`` until AFTER
+    // Svelte has flushed the DOM for the new ``threadParent`` /
+    // ``showThreadPanel`` writes. ``markThreadSeen`` mutates
+    // ``threadSeenCursors`` which is a tracked dependency of
+    // ``activeMessages`` ($derived). Mutating it inline with the
+    // same synchronous batch that triggers ChatView's re-render and
+    // ThreadPanel's first-time mount caused a first-mount race
+    // (Phil's Layer B finding: first ThreadPanel open blanked the
+    // chat + the replies list; second open worked). Deferring via
+    // ``tick()`` lets the mount complete with stable derivations,
+    // then the cursor advance applies cleanly. Subsequent opens are
+    // unaffected (cursor already exists; mutation is a no-op
+    // ref-swap that doesn't change derived values).
+    tick().then(() => {
+      store?.markThreadSeen?.(message.id);
+    });
   }
 
   function handleContextMenu(e) {

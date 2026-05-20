@@ -164,8 +164,16 @@ describe('MemberContextMenu -- action visibility matrix', () => {
     expect(getByTestId('member-ctx-item-dm')).toBeTruthy();
   });
 
-  it('owner viewing SELF row: menu renders no items (returns null block)', () => {
-    const { queryByTestId } = render(
+  it('owner viewing SELF row: menu mounts with Mute-globally only (v0.4.4 Bug 4 fix)', () => {
+    // v0.4.4 hotfix (Bug 4): pre-v0.4.4 the self-row filtered every
+    // action to zero items, and the menu's ``{#if items.length}`` gate
+    // suppressed the entire mount → user saw NO feedback that the
+    // right-click was registered (Phil's Layer B finding). Post-fix
+    // the menu always mounts when invoked; Mute-globally is now
+    // VISIBLE for self (legitimate "quiet hours" toggle), Kick + DM
+    // remain hidden (kick-self is the channel menu's Leave action;
+    // DM-self is nonsensical).
+    const { queryByTestId, getByTestId } = render(
       MemberContextMenu,
       defaultProps({
         currentChannelRole: 'owner',
@@ -173,11 +181,15 @@ describe('MemberContextMenu -- action visibility matrix', () => {
         currentUserKey: '11111111',
       }),
     );
-    // Self-row suppresses every action; the menu element is never mounted.
-    expect(queryByTestId('member-ctx-menu')).toBeNull();
+    // Menu mounts.
+    expect(queryByTestId('member-ctx-menu')).not.toBeNull();
+    // Mute is visible for self (Bug 4 fix).
+    expect(getByTestId('member-ctx-item-mute')).toBeTruthy();
+    // Kick + DM still filter out for self.
     expect(queryByTestId('member-ctx-item-kick')).toBeNull();
-    expect(queryByTestId('member-ctx-item-mute')).toBeNull();
     expect(queryByTestId('member-ctx-item-dm')).toBeNull();
+    // No empty-state row when at least one item is visible.
+    expect(queryByTestId('member-ctx-empty')).toBeNull();
   });
 
   it('isMuted=true flips the mute toggle: Unmute visible, Mute hidden', () => {

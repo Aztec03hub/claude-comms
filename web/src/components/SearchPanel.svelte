@@ -144,7 +144,16 @@
 <style>
   .search-panel {
     position: absolute;
-    top: 82px;
+    /* v0.4.4 hotfix (Bug 5): align with the chat container's top edge
+       so the panel sits flush against the ChatHeader instead of
+       leaving an 82px gap. Pre-v0.4.2 the inline chat header lived
+       OUTSIDE the chat container at exactly 82px tall, and this
+       offset kept the panel from covering it; v0.4.2 moved ChatHeader
+       INSIDE ChatView so the panel now mounts as a sibling of the
+       header within the same flex column; the gap was vestigial.
+       ArtifactPanel.svelte already uses ``top: 0`` for the same
+       reason (post-v0.4.2). Pattern reference: ArtifactPanel. */
+    top: 0;
     right: 0;
     bottom: 0;
     width: 380px;

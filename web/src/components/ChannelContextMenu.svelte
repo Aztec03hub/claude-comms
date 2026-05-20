@@ -65,6 +65,7 @@
 -->
 <script>
   import { tick } from 'svelte';
+  import { portal } from '../lib/portal.js';
   import {
     Star,
     StarOff,
@@ -466,6 +467,14 @@
   }}
 />
 
+<!--
+  v0.4.4 hotfix (Bug 1): portal the menu into ``document.body`` via the
+  ``portal`` attachment so it escapes any ancestor stacking context
+  created by ``backdrop-filter`` on neighbouring panels (ArtifactPanel /
+  ThreadPanel / SearchPanel / SettingsPanel all use it). Combined with
+  ``z-index: 9999`` below the menu paints above all other UI regardless
+  of where in the DOM it was declared.
+-->
 <div
   bind:this={menuEl}
   class="channel-ctx-menu"
@@ -475,6 +484,7 @@
   style:left="{menuX}px"
   style:top="{menuY}px"
   onkeydown={handleMenuKeydown}
+  {@attach portal()}
 >
   {#each items as item, idx (item.id)}
     <button
@@ -513,6 +523,7 @@
     style:left="{submenuX}px"
     style:top="{submenuY}px"
     onkeydown={handleSubmenuKeydown}
+    {@attach portal()}
   >
     {#each sub as subItem, subIdx (subItem.id)}
       <button
@@ -543,7 +554,13 @@
 <style>
   .channel-ctx-menu {
     position: fixed;
-    z-index: 250;
+    /* v0.4.4 hotfix (Bug 1): max-out z-index above every other layer.
+       Used alongside the {@attach portal()} relocation which lifts the
+       element to <body>, escaping any ancestor stacking context
+       (backdrop-filter / filter / transform create them). Either fix
+       in isolation is fragile; both together guarantee top-layer
+       paint. */
+    z-index: 9999;
     min-width: 200px;
     background: rgba(37, 37, 40, 0.96);
     backdrop-filter: blur(20px) saturate(1.2);

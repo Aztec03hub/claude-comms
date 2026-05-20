@@ -26,6 +26,17 @@
 // ``contenteditable`` element. Escape always fires so the universal-close
 // path works even when focus is in a search box.
 //
+// v0.4.4 hotfix (Bug 2): a third class of bindings opts-in via the
+// ``browserIntercept: true`` option on ``register``. Those bindings call
+// ``event.preventDefault()`` UNCONDITIONALLY (even when the target is
+// editable) so the browser's built-in shortcut (e.g. Chrome's Ctrl+N =
+// new window) doesn't fire. The user's handler still runs only when the
+// target is non-editable (so Ctrl+N typed inside a textarea won't open
+// the channel modal mid-sentence); but the preventDefault path runs
+// regardless so the browser stops intercepting. This is the documented
+// fix for Phil's Layer B finding that Ctrl+N opened Chrome new-window
+// instead of the ChannelModal when typing in MessageInput.
+//
 // Combo serialization: modifier order is ``Ctrl+Alt+Shift+<key>`` and the
 // key portion is lower-cased so ``Ctrl+L`` and ``Ctrl+l`` map to the same
 // binding (browser yields different cases depending on Shift). ``Ctrl``
@@ -41,6 +52,16 @@ export class KeyboardRegistry {
 
   /** @type {Record<string, string>} */
   descriptions = $state({});
+
+  /**
+   * v0.4.4 hotfix (Bug 2): set of combo keys (post-``normalizeCombo``)
+   * whose handlers opted in to ``browserIntercept: true`` and therefore
+   * call ``event.preventDefault()`` even when the keydown target is an
+   * editable element. Backed by a plain object (Set is not natively
+   * reactive in Svelte 5 runes; we don't need reactivity here anyway).
+   * @type {Record<string, true>}
+   */
+  #browserIntercepts = {};
 
   /** Whether the help overlay is currently visible. App.svelte binds to this. */
   helpVisible = $state(false);
@@ -59,7 +80,15 @@ export class KeyboardRegistry {
    *
    * @param {string} combo
    * @param {KeyboardHandler} handler
-   * @param {{ description?: string }} [opts]
+   * @param {{ description?: string, browserIntercept?: boolean }} [opts]
+   *   ``browserIntercept: true`` (v0.4.4 hotfix Bug 2) makes the dispatch
+   *   path call ``event.preventDefault()`` unconditionally - even when the
+   *   keydown target is an editable element - so the browser's built-in
+   *   shortcut for this combo doesn't fire (e.g. Ctrl+N = new window,
+   *   Ctrl+W = close tab, Ctrl+L = focus location bar). The user handler
+   *   still respects the editable-target rule so typing the combo inside
+   *   a textarea doesn't trigger the app action; the only effect of the
+   *   opt-in is the preventDefault.
    */
   register(combo, handler, opts = {}) {
     if (typeof combo !== 'string' || combo.length === 0) return;
@@ -68,6 +97,11 @@ export class KeyboardRegistry {
     this.bindings[key] = handler;
     if (opts.description) {
       this.descriptions[key] = opts.description;
+    }
+    if (opts.browserIntercept === true) {
+      this.#browserIntercepts[key] = true;
+    } else {
+      delete this.#browserIntercepts[key];
     }
   }
 
@@ -79,6 +113,7 @@ export class KeyboardRegistry {
     const key = normalizeCombo(combo);
     delete this.bindings[key];
     delete this.descriptions[key];
+    delete this.#browserIntercepts[key];
   }
 
   /**
@@ -104,10 +139,26 @@ export class KeyboardRegistry {
 
     const handler = this.bindings[combo];
     const isEscape = combo === 'Escape';
+    // v0.4.4 hotfix (Bug 2): bindings registered with
+    // ``browserIntercept: true`` call ``event.preventDefault()`` even
+    // when typed inside an editable element so the browser's built-in
+    // shortcut (e.g. Chrome's Ctrl+N) doesn't fire. Without this the
+    // browser intercepts the key before the page handler ever sees it.
+    const isBrowserIntercept =
+      handler !== undefined && this.#browserIntercepts[combo] === true;
 
     // Focus context check (§III.4 step 2.17 focus rule): every binding
-    // except Escape is suppressed when typing into an input.
+    // except Escape and explicit browser-intercept opt-ins is suppressed
+    // when typing into an input. Browser-intercept combos still call
+    // preventDefault() (below) so the browser default is blocked even
+    // though the user handler is intentionally NOT fired in editable
+    // context (typing Ctrl+N inside MessageInput should not pop the
+    // ChannelModal mid-sentence - but should also not open Chrome's
+    // new-window).
     if (!isEscape && isEditableTarget(event.target)) {
+      if (isBrowserIntercept) {
+        event.preventDefault();
+      }
       return false;
     }
 

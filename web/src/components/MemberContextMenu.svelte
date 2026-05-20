@@ -54,6 +54,7 @@
 <script>
   import { tick } from 'svelte';
   import { UserX, BellOff, Bell, MessageSquare } from 'lucide-svelte';
+  import { portal } from '../lib/portal.js';
 
   let {
     member,
@@ -69,9 +70,20 @@
 
   // -----------------------------------------------------------------
   // Action visibility. Computed once per render via $derived so the
-  // keyboard nav can address the rendered list by index. Self-row
-  // suppresses kick / mute / dm so the menu never appears with only
-  // self-targeting actions.
+  // keyboard nav can address the rendered list by index.
+  //
+  // v0.4.4 hotfix (Bug 4): the self row STILL mounts the menu - Phil's
+  // Layer B pass against v0.4.3 caught that right-clicking own username
+  // emitted nothing visible (no error, no menu). Pre-fix, when ALL
+  // items were filtered out for self the entire ``{#if items.length}``
+  // gate kept the menu un-rendered, so the user saw no feedback. Post-
+  // fix the menu always mounts when invoked; self-row shows a single
+  // "No actions available" empty-state if nothing applies. In practice
+  // the only items that hide for self are Kick (owner/admin only) and
+  // DM (start-a-dm to self is nonsensical); Mute-globally is now
+  // VISIBLE for self too so users can mute their own notifications
+  // chain across the app (matches Slack's "Pause notifications" being
+  // available from anywhere including one's own row).
   // -----------------------------------------------------------------
   let isSelf = $derived(
     typeof currentUserKey === 'string' &&
@@ -83,7 +95,10 @@
       (currentChannelRole === 'owner' || currentChannelRole === 'admin'),
   );
   let canDM = $derived(!isSelf);
-  let canMute = $derived(!isSelf);
+  // Mute globally is available for self too (W-12 mitigation per v0.4.4
+  // iteration log): users get visible feedback that the right-click was
+  // registered, and self-muting is a legitimate "quiet hours" toggle.
+  let canMute = $derived(true);
 
   let items = $derived.by(() => {
     const list = [];
@@ -213,46 +228,78 @@
   }}
 />
 
-{#if items.length > 0}
-  <div
-    bind:this={menuEl}
-    class="member-ctx-menu"
-    role="menu"
-    tabindex="-1"
-    data-testid="member-ctx-menu"
-    style:left="{menuX}px"
-    style:top="{menuY}px"
-    onkeydown={handleMenuKeydown}
-  >
-    {#each items as item, idx (item.id)}
-      <button
-        type="button"
-        class="ctx-row"
-        class:danger={item.danger}
-        role="menuitem"
-        tabindex={idx === activeIndex ? 0 : -1}
-        data-row-index={idx}
-        data-action-id={item.id}
-        data-testid="member-ctx-item-{item.id}"
-        onclick={() => activateItem(idx)}
-        onmouseenter={() => {
-          activeIndex = idx;
-        }}
-        onfocus={() => {
-          activeIndex = idx;
-        }}
-      >
-        <item.icon size={14} aria-hidden="true" />
-        <span class="ctx-label">{item.label}</span>
-      </button>
-    {/each}
-  </div>
-{/if}
+<!--
+  v0.4.4 hotfix (Bug 1 + Bug 4): the menu ALWAYS mounts when invoked so
+  users get visible feedback (Bug 4); it is portaled into ``document.body``
+  via the ``portal`` attachment so it escapes any ancestor stacking context
+  (the right-side ArtifactPanel / ThreadPanel / SearchPanel / SettingsPanel
+  all use ``backdrop-filter`` which creates a new stacking context that a
+  ``position: fixed`` element declared INSIDE the sidebar cannot escape via
+  z-index alone). The portal lifts the menu out of ``.app-layout``
+  entirely; combined with ``z-index: 9999`` the menu paints above every
+  other UI surface (Bug 1).
+-->
+<div
+  bind:this={menuEl}
+  class="member-ctx-menu"
+  role="menu"
+  tabindex="-1"
+  data-testid="member-ctx-menu"
+  style:left="{menuX}px"
+  style:top="{menuY}px"
+  onkeydown={handleMenuKeydown}
+  {@attach portal()}
+>
+  {#each items as item, idx (item.id)}
+    <button
+      type="button"
+      class="ctx-row"
+      class:danger={item.danger}
+      role="menuitem"
+      tabindex={idx === activeIndex ? 0 : -1}
+      data-row-index={idx}
+      data-action-id={item.id}
+      data-testid="member-ctx-item-{item.id}"
+      onclick={() => activateItem(idx)}
+      onmouseenter={() => {
+        activeIndex = idx;
+      }}
+      onfocus={() => {
+        activeIndex = idx;
+      }}
+    >
+      <item.icon size={14} aria-hidden="true" />
+      <span class="ctx-label">{item.label}</span>
+    </button>
+  {/each}
+  {#if items.length === 0}
+    <!--
+      v0.4.4 hotfix (Bug 4): empty-state for the rare case that every
+      action filters out (e.g. self-row with future role rules). Shows
+      "No actions available" so the user sees the menu opened + sees
+      that nothing applies, rather than the menu silently failing to
+      mount (which was the pre-fix bug).
+    -->
+    <div
+      class="ctx-empty"
+      role="menuitem"
+      aria-disabled="true"
+      data-testid="member-ctx-empty"
+    >
+      No actions available
+    </div>
+  {/if}
+</div>
 
 <style>
   .member-ctx-menu {
     position: fixed;
-    z-index: 250;
+    /* v0.4.4 hotfix (Bug 1): max-out z-index above every other layer
+       in the app. Used alongside the {@attach portal()} relocation
+       which lifts the element to <body>, escaping any ancestor
+       stacking context. Either fix in isolation is fragile; both
+       together guarantee top-layer paint. */
+    z-index: 9999;
     min-width: 200px;
     background: rgba(37, 37, 40, 0.96);
     backdrop-filter: blur(20px) saturate(1.2);
@@ -312,5 +359,16 @@
 
   .ctx-label {
     flex: 1;
+  }
+
+  /* v0.4.4 hotfix (Bug 4): empty-state row when every action filters
+     out. Visually muted + not interactive (aria-disabled) but still
+     present so users see the menu opened. */
+  .ctx-empty {
+    padding: 7px 10px;
+    font-size: 12px;
+    color: var(--text-faint, #8a8a90);
+    font-style: italic;
+    pointer-events: none;
   }
 </style>

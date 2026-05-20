@@ -629,12 +629,39 @@ export class MqttChatStore {
    * (#channelRowFromPayload-emitted rows from join events).
    */
   #prewarmNotificationPolicies() {
+    // v0.4.4 hotfix (Bug 3): getNotificationPolicy is now pure, so
+    // the pre-warm uses the pure decoder + an explicit $state write
+    // instead of relying on the accessor's old lazy-cache-write side
+    // effect. Mirrors the v0.4.3 #prewarmChannelRoles pattern exactly.
+    const next = { ...this.notificationPolicies };
     for (const ch of Object.values(this.channelsById)) {
       if (ch && typeof ch.id === 'string' && ch.id.length > 0) {
-        // Side-effect: populates this.notificationPolicies[ch.id].
-        this.getNotificationPolicy(ch.id);
+        if (!next[ch.id]) {
+          next[ch.id] = this.#decodeNotificationPolicyForChannel(ch.id);
+        }
       }
     }
+    this.notificationPolicies = next;
+  }
+
+  /**
+   * Pre-warm the notification policy cache for a SINGLE channel id.
+   * v0.4.4 hotfix (Bug 3): used by every channel-add site
+   * (createChannel, joinChannel, conversation_created system event,
+   * #handleMeta first-insert) so a channel that lands AFTER bootstrap
+   * still has its policy in the cache before any consumer reads it
+   * from a $derived context. Mirrors v0.4.3's per-channel role
+   * pre-warm (``this.channelRoles[id] = this.#inferChannelRole(id)``).
+   *
+   * @param {string} channelId
+   */
+  #prewarmNotificationPolicyForChannel(channelId) {
+    if (typeof channelId !== 'string' || !channelId) return;
+    if (this.notificationPolicies[channelId]) return;
+    this.notificationPolicies = {
+      ...this.notificationPolicies,
+      [channelId]: this.#decodeNotificationPolicyForChannel(channelId),
+    };
   }
 
   /**
@@ -1874,6 +1901,14 @@ export class MqttChatStore {
     // role would return null until the next bootstrap.
     this.channelRoles[id] = this.#inferChannelRole(id);
 
+    // v0.4.4 hotfix (Bug 3): pre-warm the notification-policy cache
+    // for the just-created channel so the (now pure)
+    // ``getNotificationPolicy`` returns a populated entry on first
+    // read from any $derived context. Without this, the Sidebar's
+    // ``getChannelNotificationPolicy`` $derived would trip
+    // ``state_unsafe_mutation`` on the first render after create.
+    this.#prewarmNotificationPolicyForChannel(id);
+
     this.switchChannel(id);
   }
 
@@ -2308,6 +2343,12 @@ export class MqttChatStore {
     // post-bootstrap is reflected in ``channelRoles`` without forcing
     // the (now pure) ``getChannelRole`` accessor to do a lazy write.
     this.channelRoles[id] = this.#inferChannelRole(id);
+    // v0.4.4 hotfix (Bug 3): same rationale for the notification-
+    // policy cache. A joined-after-bootstrap channel hits the
+    // ``getNotificationPolicy`` accessor from a $derived context the
+    // moment the sidebar re-renders; pre-warming here keeps that read
+    // pure.
+    this.#prewarmNotificationPolicyForChannel(id);
     return { success: true };
   }
 
@@ -3580,11 +3621,36 @@ export class MqttChatStore {
   /**
    * Get the per-channel notification policy + highlight-words pair.
    *
-   * Lazy localStorage read: if the in-memory cache entry doesn't exist,
-   * decode it from localStorage and populate the cache so consumers
-   * subscribed via ``$derived`` re-render on subsequent ``setNotificationPolicy``
-   * writes without a second round-trip. Missing / malformed entries
-   * fall back to ``{policy: 'All', highlightWords: []}``.
+   * v0.4.4 hotfix (Bug 3): this accessor is now a PURE READ of the
+   * reactive ``notificationPolicies`` $state cache. The pre-v0.4.4
+   * implementation did a lazy cache write
+   * (``this.notificationPolicies = {..., [channelId]: entry}``) when
+   * the entry was missing - exactly the same anti-pattern class that
+   * v0.4.3 fixed for ``getChannelRole``. Phil's Layer B catch of
+   * ``state_unsafe_mutation`` on new-channel-creation traced to
+   * Sidebar's ``getChannelNotificationPolicy`` -> SidebarChannelSection's
+   * ``notificationPolicy`` $derived -> this method -> lazy $state write.
+   * A new channel that landed AFTER bootstrap (createChannel /
+   * joinChannel / ``conversation_created`` event / meta-broadcast)
+   * exercised the lazy-write path because the bootstrap pre-warm
+   * (Wave G's ``#prewarmNotificationPolicies``) only iterates channels
+   * present at bootstrap time.
+   *
+   * Pure-read contract:
+   *   1. ``#decodeNotificationPolicyForChannel(channelId)`` - pure
+   *      decoder; reads localStorage but performs NO $state writes.
+   *   2. ``#prewarmNotificationPolicies()`` - bulk-warms the cache;
+   *      called from bootstrap + every channel-add site
+   *      (createChannel, joinChannel success, conversation_created
+   *      system event, #handleMeta first-insert).
+   *   3. ``getNotificationPolicy(channelId)`` - pure read of
+   *      ``notificationPolicies[channelId]`` with a localStorage
+   *      fallback for the rare case the cache wasn't pre-warmed (the
+   *      fallback still does NOT write back to the cache; safe inside
+   *      any $derived context).
+   *
+   * Missing / malformed entries fall back to
+   * ``{policy: 'All', highlightWords: []}``.
    *
    * @param {string} channelId
    * @returns {{policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}}
@@ -3595,30 +3661,42 @@ export class MqttChatStore {
     }
     const cached = this.notificationPolicies[channelId];
     if (cached) return cached;
+    // Cache miss: decode from localStorage WITHOUT writing back to
+    // the reactive cache. Callers that need the populated cache rely
+    // on the canonical pre-warm sites (bootstrap + create + join +
+    // realtime row insert) to land the entry; the localStorage
+    // fallback below is just a defensive read so a missed pre-warm
+    // doesn't surface as wrong-default behavior to the UI.
+    return this.#decodeNotificationPolicyForChannel(channelId);
+  }
 
+  /**
+   * Pure decoder for a single channel's notification policy. Reads
+   * localStorage; returns the defaults on missing / malformed entries.
+   * Performs NO $state mutations - safe to invoke from any context
+   * including ``$derived`` expressions.
+   *
+   * @param {string} channelId
+   * @returns {{policy: 'All' | 'Mentions' | 'Off', highlightWords: string[]}}
+   */
+  #decodeNotificationPolicyForChannel(channelId) {
     const raw = safeStorage.getItem(NOTIF_POLICY_STORAGE_PREFIX + channelId);
-    let decoded = null;
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
-          const policy = NOTIF_POLICIES.includes(parsed.policy) ? parsed.policy : 'All';
-          const words = Array.isArray(parsed.highlightWords)
-            ? parsed.highlightWords
-                .filter((w) => typeof w === 'string' && w.length > 0)
-                .map((w) => w.toLowerCase())
-            : [];
-          decoded = { policy, highlightWords: words };
-        }
-      } catch {
-        // Malformed JSON in localStorage — fall through to defaults.
+    if (!raw) return { policy: 'All', highlightWords: [] };
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const policy = NOTIF_POLICIES.includes(parsed.policy) ? parsed.policy : 'All';
+        const words = Array.isArray(parsed.highlightWords)
+          ? parsed.highlightWords
+              .filter((w) => typeof w === 'string' && w.length > 0)
+              .map((w) => w.toLowerCase())
+          : [];
+        return { policy, highlightWords: words };
       }
+    } catch {
+      // Malformed JSON in localStorage — fall through to defaults.
     }
-    const entry = decoded ?? { policy: 'All', highlightWords: [] };
-    // Populate the reactive cache so subsequent reads are O(1) and
-    // writes flow through the $state mutation.
-    this.notificationPolicies = { ...this.notificationPolicies, [channelId]: entry };
-    return entry;
+    return { policy: 'All', highlightWords: [] };
   }
 
   /**
@@ -4096,6 +4174,13 @@ export class MqttChatStore {
           // channels so the (now pure) ``getChannelRole`` returns a
           // populated value on first read.
           this.channelRoles[id] = this.#inferChannelRole(id);
+          // v0.4.4 hotfix (Bug 3): pre-warm notification-policy cache
+          // for the realtime-inserted channel. Without this, when a
+          // peer creates a channel that this client wasn't previously
+          // aware of, the first read of the policy from the sidebar's
+          // $derived would trip ``state_unsafe_mutation`` via the
+          // pre-v0.4.4 lazy-write path.
+          this.#prewarmNotificationPolicyForChannel(id);
         }
         break;
       }
@@ -4593,6 +4678,8 @@ export class MqttChatStore {
       // channels (mirrors the pre-warm at the conversation_created
       // case in #handleSystemConversation).
       this.channelRoles[channelId] = this.#inferChannelRole(channelId);
+      // v0.4.4 hotfix (Bug 3): pre-warm notification-policy cache.
+      this.#prewarmNotificationPolicyForChannel(channelId);
     } else if (msg.topic) {
       existing.topic = msg.topic;
     }

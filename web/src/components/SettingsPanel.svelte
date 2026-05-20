@@ -310,7 +310,13 @@
 <style>
   .settings-panel {
     position: absolute;
-    top: 82px;
+    /* v0.4.4 hotfix (Bug 6): align with the chat container's top edge
+       so the panel sits flush against the ChatHeader instead of
+       leaving an 82px gap. Same fix + same rationale as SearchPanel
+       (pre-v0.4.2 inline chat header lived OUTSIDE the chat
+       container; v0.4.2 moved it INSIDE ChatView, making this
+       82px offset vestigial). Pattern reference: ArtifactPanel. */
+    top: 0;
     right: 0;
     bottom: 0;
     width: 380px;
