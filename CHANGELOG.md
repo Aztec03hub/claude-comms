@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] -- 2026-05-20
+
+**Hotfix + comprehensive Playwright E2E suite + ThreadPanel drag-resize + new orchestration framework rule.** Phil's v0.4.2 Layer B real-browser smoke surfaced 5 user-visible regressions: a `state_unsafe_mutation` cascade originating from a lazy-cache write in `getChannelRole` (which aborted App.svelte's render tree mid-flight + cascaded to 4 visible symptoms), plus 2 production bugs discovered DURING the v0.4.3 E2E build (ChannelModal Create button swallowed under bits-ui focus-trap; ChannelAdminPanel topic-Enter double-fire wiping the topic), plus 1 unread-cursor persistence bug found by Phase 2 Agent C's spec-vs-code freshness audit (`#restoreUnreadMarkers` ran before `channelsById` was populated → dead code → unread cursor didn't survive tab close+reopen). All 5 fixed with regression-pin tests. ThreadPanel gained drag-resize (Phil's mid-Layer-B feature request, mirroring ArtifactPanel pattern). Comprehensive Playwright E2E suite covers all 12 of Phil's Layer B exercise scenarios (183 tests, screenshot baselines).
+
+Also includes a NEW orchestration framework rule (§I.19 refine-as-you-go) that emerged directly from this hotfix's discipline: orchestrator must be hands-on with every subagent output, maintain a permanent per-phase iteration log, mutation-test test-writing agents' work, and refine each subsequent brief based on prior findings. Iteration log compounds patterns across the dispatch chain instead of rediscovering them each agent.
+
+### Fixed (5 user-visible regressions)
+
+- **`state_unsafe_mutation` cascade in `getChannelRole`** (`mqtt-store.svelte.js`). The accessor did a lazy-cache write (`this.channelRoles[channelId] = role`) that fired from a `$derived` evaluation context. Svelte 5 forbids `$state` mutations inside `$derived`; the throw aborted App.svelte's render tree mid-flight. Visible symptoms cascaded: (a) console error storm, (b) ChannelModal create + cancel buttons appeared broken (App didn't reach the modal mount cleanly), (c) ChatHeader 6 buttons appeared invisible (markup never reached DOM), (d) right-click on own username in MemberList threw + no menu appeared. **Fix**: make `getChannelRole` a pure read; move cache population to bootstrap (mirror of Wave G's `#prewarmNotificationPolicies` pattern). One root cause, four symptoms resolved.
+- **ChannelModal Create button intermittently swallowed under bits-ui Dialog focus-trap** (`ChannelModal.svelte`). The focus-trap intercepts synthetic `click` events whose target element flips `disabled` in the same microtask. Every Playwright synthetic-click path was affected, and Phil's real-browser sessions saw it intermittently. **Fix**: wire `onpointerdown` alongside `onclick`; pointerdown fires before the focus-trap's interception. `submitting = $state(false)` latch dedupes the double-path; `e.button !== 0` rejects right-click.
+- **ChannelAdminPanel topic-input fires `commitEditTopic` twice on Enter, wiping the topic** (`ChannelAdminPanel.svelte`). `onkeydown=Enter` set `editingTopic=false` (unmounting the input) and the unmount's `onblur` re-entered `commitEditTopic` with already-reset `topicDraft=''` → called `store.setTopic(id, '')`. **Fix**: `if (!editingTopic) return;` at the top of `commitEditTopic`. Same guard preventively applied to `commitRename` (sibling function with identical wire shape) per the §I.19 sibling-function bug shape scan.
+- **Unread cursor doesn't survive tab close + reopen** (`mqtt-store.svelte.js`). `#restoreUnreadMarkers` USED to be called from `connect()` BEFORE `#bootstrapChannels` populated `channelsById`. The rehydration loop walked an empty map; localStorage cursor was effectively dead on cold load. **Fix**: move the call into the tail of `#bootstrapChannels`, after `channelsById` is populated. Surfaced by Phase 2 E2E Agent C's source-vs-code freshness audit.
+- **App.svelte toast handler suppressed in-app toasts on muted channels regardless of mention** (v0.4.2 follow-through). Now policy-aware decision tree mirrors the browser-Notification gate (this fix actually shipped in v0.4.2 commit `942761d`; re-listed here for emphasis since Layer B confirmed the v0.4.2 behavior is correct).
+
+### Added (UX features)
+
+- **ThreadPanel drag-resize handle** (`ThreadPanel.svelte`). Mirrors ArtifactPanel's existing pattern: PointerEvents API + ARIA window-splitter (`role="separator"`, `tabindex`, `aria-valuenow/min/max`) + `setPointerCapture` + viewport-aware clamp + safeStorage wrapper + window-resize `$effect`. Three panel-tuned constants: `MIN_PANEL_WIDTH=280`, `MAX_PANEL_WIDTH=720`, `DEFAULT_PANEL_WIDTH=360`. Storage key `claude-comms:thread-panel-width` mirrors ArtifactPanel's naming convention. Keyboard a11y: ArrowLeft/Right nudges (`KEY_STEP=16`), Home/End jump to clamp extremes. Phil's mid-Layer-B feature request.
+
+### Added (E2E test infrastructure)
+
+- **Playwright E2E suite from scratch** at `web/e2e/`. Comprehensive coverage of all 12 of Phil's Layer B exercise items. 10 scenario specs:
+  - `01-join-and-history.spec.ts` — Phil's #1 (`#general` history visible without explicit join; confirmed intentional lobby feature)
+  - `02-create-channel.spec.ts` — Phil's #4 (ChannelModal create + cancel + sanitize-name)
+  - `03-admin-actions.spec.ts` — Phil's #3 (cascade prevent) + admin actions (rename + visibility + mode + archive + delete + transferOwnership)
+  - `04-member-context-menu.spec.ts` — Phil's #5 (right-click own username no error) + kick + mute-globally + DM
+  - `05-invite-participant.spec.ts` — Phil's #6 (InviteParticipantDialog + 4xx error paths via `page.route()` intercept)
+  - `06-status-editor.spec.ts` — Phil's #7 (StatusEditor popover + 4 expiry presets + clear)
+  - `07-chat-header-buttons.spec.ts` — Phil's #8 (6 buttons visible + each toggles its panel)
+  - `08-notification-policy.spec.ts` — Phil's #9 + #10 (kebab quickview cycle + highlight-words + browser-Notification gate)
+  - `09-unread-divider.spec.ts` — Phil's #11 (UnreadDivider + IntersectionObserver 1s-dwell unread-clear)
+  - `10-thread-panel.spec.ts` — Phil's #12 (close button + scrollbar overflow + drag-resize)
+- **183 Playwright tests** (182 passing + 1 intentional skip due to sub-pixel screenshot flake documented as W-7 anti-pattern in iteration log; behavior fully covered by surrounding STATE assertions).
+- **~25 screenshot baselines** committed to `web/e2e/__screenshots__/`. Visual regression detection via `expect(page).toHaveScreenshot()` with masked timestamps.
+- **Per-test daemon fixture** with isolated `HOME=/tmp/cc-e2e-<random>` + port slots (MCP 9930+N*10, web 9931+N*10) + `node:sqlite` direct `registry.db` seeding + Playwright `consoleErrors` spy assertion (no `state_unsafe_mutation` across the full suite).
+- **`web/e2e/README.md`** with run/regen/troubleshoot protocol.
+
+### Added (orchestration framework)
+
+- **§I.19 refine-as-you-go** (Phil-locked 2026-05-20, codified at `.worklogs/architecture-and-orchestration-plan.md` §I.19 + memory `feedback_refine_as_you_go.md`). For every multi-agent dispatch sequence, orchestrator must: (a) be hands-on with every subagent output (read worklog + skim diff + run gates), (b) maintain a permanent `.worklogs/<phase>-iteration-log.md`, (c) refine each subsequent brief based on prior agent findings, (d) mutation-test test-writing agents' work to confirm tests would actually catch the bug they were written to prevent. Composes with §I.16/§I.16.5/§I.17/§I.18 standing rules.
+- **Pattern catalog** in `.worklogs/v043-iteration-log.md`: 11 ENFORCE patterns (P-1..P-9 + P-2a + P-3a covering source-level regex pins, cross-component invariant pins, dual-coverage, localStorage round-trip, console.error spy, cold-start verification, daemon filesystem reads, pre-click state assertions, sibling-function bug shape scan, triple-side prop-drill pins, `page.route()` capture-then-fulfill) and 7 AVOID patterns (W-1..W-7 covering unrestored window mutations, DOM-presence vs computed-visibility, tautological tests, `git add .` family, self-report without cold-start, workaround tests, cumulative test-file state without between-test reset). Available for future projects beyond claude-comms.
+
+### Changed
+
+- `web/playwright.config.js`: `testDir` changed from `./e2e` to `./e2e/scenarios`; removed Vite `webServer` (E2E daemons serve their own static bundle). `--workers=1` MANDATORY per [VERIFY-PHASE2B-1] (UI hardcodes MQTT WS port `9001` → all test daemons share the broker → can't run concurrently). Bake into config in v0.4.4.
+
+### Known issues (deferred to v0.4.4)
+
+- `--workers=1` mandate for E2E. Resolution: lift UI's hardcoded MQTT WS port + make it configurable so each test daemon binds distinct broker ports.
+- `transfer-picker-open` screenshot intentionally skipped due to sub-pixel font rendering flake under cumulative test-file state (W-7). Behavior fully covered by surrounding state assertions.
+- `apiPost` throws `Error('HTTP <status>')`; bleeds through to user-facing toasts via App.svelte's `msg = msg || 'fallback'` truthy-keep. UX cleanup.
+- ArtifactPanel overlay intercepts pointer events on chat-header-artifacts-btn at 1280px+ viewports. Click-again-to-toggle fragile; close-via-own-X is canonical.
+- `data-testid="artifact-panel-close"` duplicated in `ArtifactDetailHeader.svelte` and `ArtifactPanel.svelte`. Rename one.
+- IntersectionObserver viewed-set state persists across channel switches. Production fix: reset `#viewedMessageIdsByChannel[id]` on channel-switch-out.
+
+### Verified
+
+- Pytest **1347 unchanged** (no Python regressions; v0.4.3 is frontend + test-infra only).
+- vitest **1103 → 1107** (+4 from the unread-marker bugfix's regression-pin tests; +16 from bug-fix-mini's modal+topic Enter regression-pin tests = 1123 cumulative; the snapshot above is post-final-integration).
+- Playwright e2e: 182 passing + 1 intentional skip out of 183 cold-start.
+- ruff clean, build green, svelte-autofixer clean on every component touched.
+- Manual two-layer smoke (per §I.10): Layer A install smoke runs after PyPI propagation; Layer B real-browser pass by Phil.
+
+### Notes for upgraders
+
+- No schema migrations; no data migration required.
+- No MCP tool count change (stays at 30; v0.4.3 is bug fixes + UX feature + test infra).
+- ThreadPanel will appear with a drag-resize affordance on the leading edge — drag to resize, or use ArrowLeft/Right when the handle is focused, or Home/End to clamp.
+- If you were on v0.4.2 and hit any of the 5 fixed regressions, just upgrade + hard-refresh the browser (`Ctrl+Shift+R`) to load the new bundle.
+
 ## [0.4.2] -- 2026-05-19
 
 **Admin actions + notifications + status presence + IntersectionObserver unread.** The originally-planned v0.4.1 admin-actions phase that the hotfix bumped here, expanded by Phil's Q6/Q7/Q8 + Archive UX lock-ins at decision gate G1. Largest functional release since v0.4.0: 28 commits, 5 new MCP tools, 2 new schema versions on participants, a new REST endpoint, end-to-end persistence for every admin button surfaced in v0.4.0's UI, and a Slack/Discord-style IntersectionObserver-based unread model that replaces the v0.4.0 "switch-clears-unread" semantics. Also includes a real bug fix for a live-MQTT mention-derivation gap that affected mention-dot rendering in v0.4.0/v0.4.1.
