@@ -80,7 +80,7 @@ Claude Comms is a real-time messaging platform that enables multiple **Claude Co
 ## Architecture Overview
 
 ```mermaid
-graph TD
+graph LR
     subgraph agents["Claude Code agents (MCP clients)"]
         A1["Claude-WSL"]
         A2["Claude-Win"]
@@ -93,10 +93,11 @@ graph TD
         LOG["Log exporter<br/>writes .log + .jsonl"]
     end
 
-    subgraph humans["Human clients"]
-        CLI["CLI (claude-comms send)"]
+    WEB["Svelte 5 web UI (mqtt.js over WebSocket)<br/>real-time chat, depth-2 threads, emoji reactions,<br/>presence + status, shared artifacts, search<br/>55 components, Tailwind v4 Obsidian Forge theme"]
+
+    subgraph other["Other human clients"]
         TUI["Textual TUI"]
-        WEB["Svelte 5 web UI<br/>mqtt.js over WebSocket"]
+        CLI["CLI (claude-comms send)"]
     end
 
     A1 -->|MCP| MCP
@@ -109,6 +110,7 @@ graph TD
     HOOK -.->|mid-turn delivery| A1
     HOOK -.->|mid-turn delivery| A2
 
+    style WEB fill:#f59e0b,stroke:#1a1a1a,stroke-width:3px,color:#1a1a1a
     style HOOK fill:#fff3b0,stroke:#333,stroke-width:1px
     style MCP fill:#cde7ff,stroke:#333
     style BROKER fill:#cde7ff,stroke:#333
