@@ -51,3 +51,16 @@ web/playwright-report/
 # OS
 Thumbs.db
 .DS_Store
+
+# Internal scratch: agent work logs and leftover agent worktrees
+# (kept on local disk, intentionally out of the public repo)
+.worklogs/
+.claude/worktrees/
+
+# Design mockups: keep only the gallery assets the README links;
+# concept HTML drafts and stale screenshot iterations stay local
+mockups/*
+!mockups/gallery-*.png
+
+# Internal recruiter-facing demo guide: kept on local disk, not published
+docs/dev/DEMOS.md
