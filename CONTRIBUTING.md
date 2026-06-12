@@ -149,7 +149,7 @@ npx playwright test e2e/chat.spec.js
 npx playwright test --headed
 ```
 
-See `.testing-context.md` for the full `data-testid` inventory, test template, and known infrastructure issues.
+See `docs/dev/testing-context.md` for the full `data-testid` inventory, test template, and known infrastructure issues.
 
 ---
 
@@ -180,14 +180,14 @@ A failing check exits non-zero and prints which chunk(s) exceeded.
 If `vendor-markdown` exceeds its ceiling, apply this ladder (documented in the plan at §"Version pinning & CI size check"):
 
 1. **Drop eager-loaded Shiki langs one at a time**, starting with the least-used. Order: `python`, then `json`, then `bash`. Move the dropped lang to a dynamic `import()` inside the `markedHighlight()` `highlight` callback in `src/lib/markdown.js`, so it only loads when a code fence with that language is actually encountered.
-2. **Drop `typescript` or `javascript`** if truly necessary. Chat UX would suffer — consider this a last resort before (3).
+2. **Drop `typescript` or `javascript`** if truly necessary. Chat UX would suffer; consider this a last resort before (3).
 3. **Swap Shiki for `highlight.js` common bundle** (~40 KB gzipped) and accept reduced theme fidelity. Set the runtime fallback flag `web.use_legacy_codeblock_highlighter: true` in config so operators can opt in without redeploying.
 
 Raising a ceiling requires explicit review. Document the rationale in the PR description and link to the measurement output.
 
 ### Related kill switches
 
-If the Shiki pipeline breaks in production, `getHighlighter()` in `src/lib/markdown.js` already falls back to escaped plain text automatically — no outage, just no colors. The `web.use_legacy_codeblock_highlighter` flag exists as a harder revert path. For markdown rendering problems that DOMPurify config changes cannot resolve, the escape hatch `web.markdown_render_enabled: false` causes `renderMarkdown()` to return escaped plain text (users see raw markdown source).
+If the Shiki pipeline breaks in production, `getHighlighter()` in `src/lib/markdown.js` already falls back to escaped plain text automatically, with no outage, just no colors. The `web.use_legacy_codeblock_highlighter` flag exists as a harder revert path. For markdown rendering problems that DOMPurify config changes cannot resolve, the escape hatch `web.markdown_render_enabled: false` causes `renderMarkdown()` to return escaped plain text (users see raw markdown source).
 
 CI gate override: in rare hotfix cases where the ship-critical work is orthogonal to bundle size, the check can be overridden by including an `allow-oversized-bundle` git-commit-trailer on the merge commit. Use sparingly and document why.
 
@@ -202,7 +202,7 @@ Every interactive element in the web UI must have a `data-testid` attribute. Thi
 - Static IDs: `data-testid="message-input"`, `data-testid="send-button"`
 - Dynamic IDs: `data-testid="channel-item-{channel.id}"`, `data-testid="message-{message.id}"`
 
-See `.testing-context.md` section 2 for the complete inventory.
+See `docs/dev/testing-context.md` section 2 for the complete inventory.
 
 ### Overlay components
 
@@ -228,7 +228,7 @@ The design follows the **Carbon Ember** palette:
 
 ### mqtt.js blocks the event loop in Playwright
 
-The mqtt.js library's WebSocket reconnection cycle (every ~3 seconds) blocks the browser event loop, causing Playwright's `page.click()`, `page.fill()`, and `page.evaluate()` to hang indefinitely. **Always use the WebSocket mock** in test setup via `page.addInitScript()` before `page.goto()`. See `.testing-context.md` Issue A for the full mock implementation.
+The mqtt.js library's WebSocket reconnection cycle (every ~3 seconds) blocks the browser event loop, causing Playwright's `page.click()`, `page.fill()`, and `page.evaluate()` to hang indefinitely. **Always use the WebSocket mock** in test setup via `page.addInitScript()` before `page.goto()`. See `docs/dev/testing-context.md` Issue A for the full mock implementation.
 
 ### ConnectionStatus $effect must use untrack()
 
@@ -240,7 +240,7 @@ When MQTT message callbacks update Svelte state, the DOM may not reflect changes
 
 ### WSL2 slow page loads
 
-Vite dev server under WSL2 can have intermittent slow page loads (10-40 seconds). Playwright tests use extended timeouts (60 seconds per test) and `waitUntil: 'domcontentloaded'` to mitigate this. See `.testing-context.md` Issue B.
+Vite dev server under WSL2 can have intermittent slow page loads (10-40 seconds). Playwright tests use extended timeouts (60 seconds per test) and `waitUntil: 'domcontentloaded'` to mitigate this. See `docs/dev/testing-context.md` Issue B.
 
 ### Port allocation
 
