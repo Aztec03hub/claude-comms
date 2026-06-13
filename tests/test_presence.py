@@ -427,31 +427,41 @@ class TestRun:
 class TestIntegration:
     @pytest.mark.asyncio
     async def test_full_cycle_expire_and_offline_publish(self):
+        """Sweep removes a stale connection and triggers an offline publish.
+
+        Rather than sleeping until TTL elapses (which adds wall-clock flake
+        risk), we backdate ``last_seen`` to a past timestamp and invoke
+        ``_sweep_once()`` directly.  The PresenceManager's background loop
+        calls ``_publish_offline`` after each removed connection; we replicate
+        that here so the full removal cycle is exercised without a timer.
+
+        Production path:
+            presence._sweep_once() → age > ttl_seconds → p.connections.pop()
+            → caller calls _publish_offline(key, conn_key) → publish_fn(topic, b"", retain=True)
+        """
         reg = ParticipantRegistry()
         p = reg.join("alice", "general", key="abcd1234", participant_type="human")
-        ts = _now_iso()
+        # Backdate last_seen far enough to exceed any reasonable TTL.
+        stale = _stale_iso(3600)
         p.connections["mcp"] = ConnectionInfo(
-            client="mcp", instance_id=None, since=ts, last_seen=ts
+            client="mcp", instance_id=None, since=stale, last_seen=stale
         )
 
         publish_fn = AsyncMock()
         mgr = PresenceManager(
             reg,
             publish_fn=publish_fn,
-            ttl_seconds=1,
-            sweep_interval_seconds=0.2,  # type: ignore[arg-type]
+            ttl_seconds=60,  # shorter than the 3600-s staleness above
         )
 
-        mgr.start()
-        try:
-            # Wait long enough for connection to go stale AND for at least one
-            # sweep to fire after staleness. TTL=1s, so wait ~2s total.
-            await asyncio.sleep(2.0)
+        # Drive the sweep directly — no background task, no wall-clock wait.
+        removed = await mgr._sweep_once()  # noqa: SLF001
+        # Replicate what _run() does after the sweep.
+        for key, conn_key in removed:
+            await mgr._publish_offline(key, conn_key)  # noqa: SLF001
 
-            assert "mcp" not in p.connections
-            # At least one offline publish should have been sent
-            publish_fn.assert_any_await(
-                "claude-comms/presence/abcd1234/mcp", b"", retain=True
-            )
-        finally:
-            await mgr.stop()
+        assert "mcp" not in p.connections
+        assert ("abcd1234", "mcp") in removed
+        publish_fn.assert_any_await(
+            "claude-comms/presence/abcd1234/mcp", b"", retain=True
+        )

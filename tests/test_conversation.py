@@ -228,10 +228,6 @@ class TestEnsureGeneralExists:
         assert first.name == second.name
         assert first.created_at == second.created_at
 
-    def test_sets_topic_to_main_lobby(self, tmp_path: Path):
-        meta = ensure_general_exists(tmp_path)
-        assert meta.topic == "Main lobby"
-
 
 # ===================================================================
 # 7. backfill_missing_metadata

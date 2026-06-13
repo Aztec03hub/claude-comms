@@ -95,12 +95,13 @@ def test_role_table_exists_after_init(store: RegistryStore) -> None:
     assert cols == {"conversation", "participant_key", "role", "granted_at"}
 
 
-def test_schema_version_bumped_to_2(store: RegistryStore) -> None:
+def test_schema_version_matches_constant(store: RegistryStore) -> None:
     """schema_meta records the current ``SCHEMA_VERSION`` after init.
 
-    Test name kept verbatim from 3.0a so historical traceability holds;
-    the literal assertion was widened in v0.4.2 Step 3.14 when
-    ``SCHEMA_VERSION`` bumped 2 -> 3 (profile_status_* triplet).
+    Originally named test_schema_version_bumped_to_2 (Step 3.0a); renamed
+    in the P2/P3 cleanup pass because the literal "2" in the name was
+    actively misleading after Step 3.14 bumped SCHEMA_VERSION to 3. The
+    assertion body is unchanged — it compares against str(SCHEMA_VERSION).
     """
     row = store._conn.execute(  # noqa: SLF001
         "SELECT value FROM schema_meta WHERE key='schema_version'"

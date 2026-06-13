@@ -356,6 +356,21 @@ class TestEmbeddedBroker:
         assert broker.auth_username == "user"
         assert broker.max_replay == 500
 
+    def test_from_config_partial_broker(self):
+        """Partial broker config should use defaults for missing keys."""
+        config = {"broker": {"port": 9999}}
+        broker = EmbeddedBroker.from_config(config)
+        assert broker.port == 9999
+        assert broker.host == DEFAULT_HOST  # default
+        assert broker.ws_port == DEFAULT_WS_PORT  # default
+
+    def test_from_config_auth_without_credentials(self):
+        """Auth enabled but no credentials — should still create broker."""
+        config = {"broker": {"auth": {"enabled": True}}}
+        broker = EmbeddedBroker.from_config(config)
+        assert broker.auth_enabled is True
+        assert broker.auth_username is None
+
     def test_is_running_initially_false(self):
         broker = EmbeddedBroker()
         assert broker.is_running is False
@@ -524,6 +539,66 @@ class TestGenerateClientId:
     def test_uniqueness(self):
         ids = {generate_client_id("tui", "deadbeef") for _ in range(100)}
         assert len(ids) == 100
+
+
+# =========================================================================
+# Thread safety (extracted from test_integration.py)
+# =========================================================================
+
+
+class TestMessageDeduplicatorThreadSafety:
+    """Concurrent access to MessageDeduplicator must not corrupt state."""
+
+    def test_concurrent_access_thread_safe(self):
+        import threading
+
+        dedup = MessageDeduplicator(max_size=1000)
+        errors: list[Exception] = []
+
+        def writer(start: int) -> None:
+            try:
+                for i in range(100):
+                    dedup.is_duplicate(f"thread-{start}-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(t,)) for t in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        assert dedup.size == 1000  # 10 threads * 100 unique IDs
+
+
+class TestMessageStoreThreadSafety:
+    """Concurrent adds to MessageStore must not corrupt state."""
+
+    def test_thread_safety(self):
+        import threading
+
+        store = MessageStore(max_per_conv=1000)
+        errors: list[Exception] = []
+
+        def writer(conv: str) -> None:
+            try:
+                for i in range(100):
+                    store.add(conv, {"id": f"{conv}-{i}"})
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=writer, args=(f"conv-{t}",)) for t in range(5)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        for t in range(5):
+            assert len(store.get(f"conv-{t}")) == 100
 
 
 # os imported at top of file for getpid in tests
