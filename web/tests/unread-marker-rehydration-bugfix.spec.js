@@ -94,14 +94,17 @@ describe('Unread marker rehydration — v0.4.3 [VERIFY-PHASE2C-1] bugfix', () =>
     const lines = src.split('\n');
     // Find the #bootstrapChannels method definition line + the line that
     // ACTUALLY calls #restoreUnreadMarkers. Then assert the call line is
-    // between #bootstrapChannels's start and its closing brace (column-2
-    // `  }` is the consistent class-member end-of-method marker).
+    // between #bootstrapChannels's start and its closing brace.
+    // Class-method closing braces in mqtt-store.svelte.js use exactly
+    // 2-space indent (`  }`). We use `trimEnd()` to tolerate trailing
+    // whitespace differences from formatters while preserving specificity
+    // over inner braces (which use deeper indentation).
+    const isMethodClose = (l) => l.trimEnd() === '  }';
     const bootstrapLineIdx = lines.findIndex((l) => l.includes('async #bootstrapChannels()'));
     expect(bootstrapLineIdx).toBeGreaterThan(0);
-    // Find the closing brace at column-2 after bootstrapLineIdx
     let bootstrapEndIdx = -1;
     for (let i = bootstrapLineIdx + 1; i < lines.length; i++) {
-      if (lines[i] === '  }') {
+      if (isMethodClose(lines[i])) {
         bootstrapEndIdx = i;
         break;
       }
@@ -118,7 +121,7 @@ describe('Unread marker rehydration — v0.4.3 [VERIFY-PHASE2C-1] bugfix', () =>
     expect(connectLineIdx).toBeGreaterThan(0);
     let connectEndIdx = -1;
     for (let i = connectLineIdx + 1; i < lines.length; i++) {
-      if (lines[i] === '  }') {
+      if (isMethodClose(lines[i])) {
         connectEndIdx = i;
         break;
       }

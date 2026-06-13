@@ -192,25 +192,9 @@ describe('KeyboardRegistry - v0.4.4 hotfix browserIntercept', () => {
     expect(blockFor('Ctrl+Shift+W')).toMatch(/browserIntercept:\s*true/);
   });
 
-  it('source-level pin: dispatch path calls preventDefault() on the editable-target branch when the binding opted in', () => {
-    // Belt-and-suspenders pin: ensure the dispatch() body contains a
-    // preventDefault() call inside the editable-target branch, gated
-    // by the intercept set. Without this, the unit tests above would
-    // still pass for the test target but a future refactor of
-    // dispatch() could silently lose the preventDefault behaviour.
-    const HERE = dirname(fileURLToPath(import.meta.url));
-    const KB_SRC = resolve(HERE, '..', 'src', 'lib', 'keyboard.svelte.js');
-    const src = readFileSync(KB_SRC, 'utf8');
-    const dispatchStart = src.indexOf('  dispatch(event) {');
-    expect(dispatchStart).toBeGreaterThan(0);
-    const dispatchEnd = src.indexOf('\n  }\n', dispatchStart);
-    expect(dispatchEnd).toBeGreaterThan(dispatchStart);
-    const body = src.slice(dispatchStart, dispatchEnd);
-    // Must reference the browserIntercepts map AND call preventDefault.
-    expect(body).toMatch(/#browserIntercepts/);
-    expect(body).toMatch(/event\.preventDefault\(\)/);
-    // The editable-target branch must contain the conditional
-    // preventDefault gated by isBrowserIntercept.
-    expect(body).toMatch(/isBrowserIntercept[\s\S]*event\.preventDefault\(\)/);
-  });
+  // NOTE: a source-level pin for the dispatch path's preventDefault
+  // behaviour was removed (2026-06-12 test-cleanup). Tests 1-4 above
+  // behaviorally verify that dispatch() calls event.preventDefault()
+  // when browserIntercept=true, making the source regex redundant and
+  // less robust than the runtime assertions.
 });

@@ -21,7 +21,7 @@
 //      count is 0.
 
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { render, cleanup, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 // ── safe rAF + IntersectionObserver spy double ─────────────────────────
@@ -33,16 +33,19 @@ import { tick } from 'svelte';
 // JSDOM global handler. Install a safe rAF wrapper at module top level
 // (same pattern as prop-drilling.spec.js).
 {
-  const realRAF =
-    globalThis.requestAnimationFrame ?? ((cb) => setTimeout(cb, 16));
+  // In jsdom, requestAnimationFrame is unavailable. We install a safeRAF
+  // wrapper that (a) swallows teardown-race throws and (b) uses a dynamic
+  // globalThis.setTimeout lookup so vi.useFakeTimers() can intercept it
+  // when flush() is called — instead of calling a captured real-setTimeout
+  // reference that ignores fake-timer patches.
   const safeRAF = (cb) =>
-    realRAF((ts) => {
+    globalThis.setTimeout((ts) => {
       try {
         cb(ts);
       } catch {
         /* swallow teardown-race throws */
       }
-    });
+    }, 16);
   globalThis.requestAnimationFrame = safeRAF;
   if (typeof window !== 'undefined') window.requestAnimationFrame = safeRAF;
 }
@@ -126,19 +129,24 @@ function makeProps(overrides = {}) {
 async function flush() {
   await Promise.resolve();
   await tick();
-  // The observer is wired inside a requestAnimationFrame callback; jsdom
-  // schedules rAF on the next macrotask, so we drain that too.
-  await new Promise((r) => setTimeout(r, 20));
+  // The observer is wired inside a requestAnimationFrame callback. In jsdom,
+  // rAF is safeRAF which calls globalThis.setTimeout(cb, 16). Advance fake
+  // timers to fire that callback. beforeEach/afterEach manage fake timer state.
+  await vi.advanceTimersByTimeAsync(50);
   await tick();
 }
 
 beforeEach(() => {
   observedTargets = [];
   observerInstances = [];
+  // Enable fake timers so flush() can drive rAF (safeRAF → globalThis.setTimeout(cb,16))
+  // deterministically without a hard wall-clock wait.
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 // ── 1. IntersectionObserver preservation ───────────────────────────────

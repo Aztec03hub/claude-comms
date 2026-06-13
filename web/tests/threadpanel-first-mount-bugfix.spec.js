@@ -59,9 +59,14 @@ describe('handleOpenThread - v0.4.4 hotfix Bug 7 deferred markThreadSeen', () =>
 
     const start = src.indexOf('function handleOpenThread(message) {');
     expect(start).toBeGreaterThan(0);
-    // Slice the function body - handleOpenThread is small (~25 LOC
-    // post-fix). 1500 char slice is generous.
-    const body = src.slice(start, start + 1500);
+    // Find the function's closing brace by scanning for the next
+    // top-level `}` that closes the function. We look for a `\n}`
+    // pattern after the opening brace to locate the end robustly,
+    // rather than using a fixed-length slice that could silently
+    // truncate if the function grows.
+    const afterStart = src.indexOf('\n}', start);
+    const bodyEnd = afterStart > start ? afterStart + 2 : start + 1500;
+    const body = src.slice(start, bodyEnd);
     // The body must contain a tick().then( call.
     expect(body).toMatch(/tick\(\)\.then\(/);
     // And the markThreadSeen CALL (not a comment reference) must be

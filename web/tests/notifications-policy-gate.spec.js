@@ -45,26 +45,23 @@ beforeEach(() => {
 // ── 1. Policy decision tree (shouldNotifyForPolicy) ───────────────────
 
 describe('Wave G follow-up - shouldNotifyForPolicy decision tree', () => {
-  it('policy=Off: never notifies, even for an @mention', () => {
-    const policy = { policy: 'Off', highlightWords: [] };
-    const result = shouldNotifyForPolicy(policy, {
+  it('policy=Off: never notifies regardless of mentions, highlight-words, or muted flag', () => {
+    // @mention case — explicit Off must override mention presence.
+    const policyOff = { policy: 'Off', highlightWords: [] };
+    expect(shouldNotifyForPolicy(policyOff, {
       mentions: [SELF_KEY],
       userKey: SELF_KEY,
       muted: false,
       body: 'hey @phil',
-    });
-    expect(result).toBe(false);
-  });
-
-  it('policy=Off: never notifies, even when muted=false and policy was set explicitly silent', () => {
-    const policy = { policy: 'Off', highlightWords: ['ship'] };
-    const result = shouldNotifyForPolicy(policy, {
+    })).toBe(false);
+    // Highlight-word hit case — Off means Off even when a word matches.
+    const policyOffWords = { policy: 'Off', highlightWords: ['ship'] };
+    expect(shouldNotifyForPolicy(policyOffWords, {
       mentions: null,
       userKey: SELF_KEY,
       muted: false,
       body: 'we ship today',
-    });
-    expect(result).toBe(false);
+    })).toBe(false);
   });
 
   it('policy=Mentions: notifies on an @mention, suppresses ordinary messages', () => {

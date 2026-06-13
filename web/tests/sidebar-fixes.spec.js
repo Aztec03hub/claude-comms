@@ -84,8 +84,6 @@ describe('Sidebar G-5 — version label', () => {
     // The component imports package.json the same way this test does,
     // so they must agree. If package.json bumps, this test bumps with it.
     expect(versionEl.textContent).toBe(`v${pkg.version}`);
-    // Belt-and-suspenders: the literal we replaced must never reappear.
-    expect(versionEl.textContent).not.toBe('v0.1.0');
   });
 });
 

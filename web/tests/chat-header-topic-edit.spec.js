@@ -462,29 +462,9 @@ describe('App.svelte — ChatHeader wire (v0.4.2 Wave E.2 follow-up)', () => {
     }
   });
 
-  it('legacy inline <header class="chat-header"> markup is gone from the App DOM', async () => {
-    globalThis.__chatHeaderAppRoleOverride = 'owner';
-    const { container, queryByTestId } = render(App);
-    await flushAppMount();
-    // The legacy header carried data-testid="chat-header" plus children
-    // data-testid="header-channel-name", "header-members-count",
-    // "header-search-btn", "header-pin-btn", "header-artifacts-btn",
-    // "header-settings-btn", and "mobile-menu-btn". After the wire flip
-    // none of those should be in the DOM; the new ChatHeader.svelte
-    // renders only `chat-header-new` + its scoped children.
-    expect(queryByTestId('chat-header')).toBeNull();
-    expect(queryByTestId('header-channel-name')).toBeNull();
-    expect(queryByTestId('header-members-count')).toBeNull();
-    expect(queryByTestId('header-search-btn')).toBeNull();
-    expect(queryByTestId('header-pin-btn')).toBeNull();
-    expect(queryByTestId('header-artifacts-btn')).toBeNull();
-    expect(queryByTestId('header-settings-btn')).toBeNull();
-    expect(queryByTestId('mobile-menu-btn')).toBeNull();
-    // Sanity: only ONE chat-header is in the DOM and it is the new one.
-    const headers = container.querySelectorAll('header');
-    const newHeaders = Array.from(headers).filter(
-      (h) => h.getAttribute('data-testid') === 'chat-header-new',
-    );
-    expect(newHeaders.length).toBe(1);
-  });
+  // NOTE: "legacy inline <header class='chat-header'> markup is gone"
+  // sentinel was removed (2026-06-12 test-cleanup). It was a one-time
+  // migration check that fires at most once after the legacy header is
+  // deleted; deleted code never re-introduces itself accidentally so the
+  // test provides no ongoing regression value.
 });

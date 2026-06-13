@@ -207,20 +207,9 @@ describe('MessageInput backtick overlay', () => {
     expect(overlay.querySelector('.overlay-code-tick')).toBeNull();
   });
 
-  it('TEXTAREA_MAX_HEIGHT alignment: textarea CSS max-height matches JS cap (180px)', () => {
-    const store = makeStore();
-    const { container } = render(MessageInput, {
-      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
-    });
-    const ta = container.querySelector('textarea');
-    // Note: jsdom returns the CSS rule's value via getComputedStyle for
-    // max-height when the rule is declared in a <style> block on the
-    // component. We just sanity-check the textarea has SOME max-height
-    // constraint, since vendored stylesheet handling in jsdom is partial.
-    // The actual numeric assertion lives in the Playwright e2e (real
-    // layout engine).
-    expect(ta).toBeTruthy();
-  });
+  // DELETED: "TEXTAREA_MAX_HEIGHT alignment" test (only asserted expect(ta).toBeTruthy(),
+  // which is guaranteed by every other test in the file). The 180px px-level contract
+  // cannot be verified in jsdom (no layout engine) — it lives in the Playwright e2e suite.
 });
 
 // ── v2 (plan §5.1 / §5.1.1 / §5.4) ────────────────────────────────────
@@ -589,36 +578,13 @@ describe('MessageInput backtick block-entry (v2)', () => {
     expect(getBlockTextarea(container)).toBeNull();
   });
 
-  it('Already in block mode, Shift+Enter inside block inserts newline (no nested gesture)', async () => {
-    const { container, ta } = setup();
-    await setValue(ta, '```');
-    await fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true });
-    await tick();
-    await Promise.resolve();
-    await tick();
-
-    const block = getBlockTextarea(container);
-    expect(block).toBeTruthy();
-    // Simulate typing inside the block — Shift+Enter must NOT re-trigger the
-    // gesture handler from the inline textarea (different element). The
-    // block textarea handler doesn't intercept Shift+Enter, so default
-    // newline behavior applies. We verify by confirming block is still open.
-    block.value = '```';
-    await fireEvent.input(block, { target: block });
-    await tick();
-    // Body is exactly ``` but on its own line in the body — actually our
-    // close-fence detector treats this as the close. So this case actually
-    // SHOULD close. The "no nested gesture" property is implicit in the
-    // fact that the inline-textarea Shift+Enter handler isn't called when
-    // the block textarea has focus.
-    // Verify a cleaner case: type a non-fence char + shift-enter would yield
-    // a newline inside body without triggering inline gesture.
-    // We can directly confirm via the post-condition that blockMode tracks
-    // body changes via input events on the block textarea. The element
-    // identity check (block has focus, not inline) is the real proof and is
-    // covered structurally by Svelte's event-handler binding.
-    expect(true).toBe(true);
-  });
+  // DELETED: "Already in block mode, Shift+Enter inside block inserts newline (no nested gesture)"
+  // The only assertion was expect(true).toBe(true) — the stated scenario was never exercised.
+  // The "no nested gesture" property is structurally guaranteed by Svelte's event-handler
+  // binding (the block textarea's keydown handler never handles Shift+Enter). No production
+  // code was called by this test.
+  // TODO: implement correctly by typing a non-fence char + Shift+Enter inside the block
+  // textarea and asserting the block stays open (block textarea still in DOM).
 });
 
 // ---------------------------------------------------------------------------

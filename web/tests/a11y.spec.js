@@ -25,7 +25,7 @@
 // asserts the WCAG AA ratios.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { render, cleanup, waitFor } from '@testing-library/svelte';
 import axe from 'axe-core';
 
 import ArtifactList from '../src/components/ArtifactList.svelte';
@@ -341,8 +341,13 @@ describe('a11y — detail view (content mode, plan type)', () => {
         compareVersion: null,
       },
     });
-    // Let the async renderMarkdown $effect resolve.
-    await new Promise((r) => setTimeout(r, 30));
+    // Wait for the async renderMarkdown $effect to resolve and update the DOM,
+    // without a hard wall-clock timer. The md-body element gets populated once
+    // the Shiki+marked pipeline completes and Svelte flushes the reactive update.
+    await waitFor(() => {
+      const body = container.querySelector('[data-testid="artifact-md-body"]');
+      if (!body || !body.textContent.trim()) throw new Error('markdown not rendered yet');
+    });
     const violations = await runAxe(container);
     expect(violations, formatViolations(violations)).toEqual([]);
   });
