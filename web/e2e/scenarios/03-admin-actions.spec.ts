@@ -303,8 +303,10 @@ test.describe('Scenario 03: admin actions on owned channels', () => {
   // STATE assertions (other tests in scenario 03 cover transfer-picker
   // open behavior + role table effects). Flake source: font anti-aliasing
   // jitter under headless Chromium with cumulative-state in the same test
-  // file. Phase 3 / Agent C will address with either maxDiffPixelRatio
-  // tuning or test-file state-isolation. Skipped to ship v0.4.3.
+  // file. Skipped to ship v0.4.3.
+  // TODO(test-debt, opened 2026-06-12): re-enable via maxDiffPixelRatio tuning
+  // or per-test state-isolation. The STATE assertions above already cover the
+  // transfer-picker open behavior; only the pixel screenshot is skipped.
   test.skip('screenshot: transfer-picker-open', async ({ appPage }) => {
     const row = await openAdminTabFor(appPage, 'dev-chat');
     await row.locator('[data-testid="channel-admin-action-transfer"]').click();

@@ -146,7 +146,7 @@ def publish_spy() -> PublishSpy:
 class FailingPublish:
     """Async publish callable that always raises ConnectionError."""
 
-    async def __call__(self, topic: str, payload: bytes) -> None:
+    async def __call__(self, topic: str, payload: bytes, retain: bool = False) -> None:
         raise ConnectionError("Broker unavailable (test)")
 
 
