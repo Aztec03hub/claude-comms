@@ -331,12 +331,11 @@ def _seed_v2_db(tmp_path: Path) -> Path:
 
 def test_schema_migration_v2_to_v3_adds_columns_on_first_open(tmp_path: Path):
     data_dir = _seed_v2_db(tmp_path)
-    # Pre-migration: confirm profile_status_* are absent.
+    # Pre-migration: confirm profile_status_* are absent and capture column count.
     pre_conn = sqlite3.connect(str(data_dir / "registry.db"))
     try:
-        cols_pre = {
-            row[1] for row in pre_conn.execute("PRAGMA table_info(participants)")
-        }
+        pre_rows = list(pre_conn.execute("PRAGMA table_info(participants)"))
+        cols_pre = {row[1] for row in pre_rows}
     finally:
         pre_conn.close()
     assert "profile_status_emoji" not in cols_pre
@@ -346,18 +345,25 @@ def test_schema_migration_v2_to_v3_adds_columns_on_first_open(tmp_path: Path):
     # Open the store — runs migration.
     s = RegistryStore.open(data_dir)
     try:
-        cols_post = {
-            row[1]
-            for row in s._conn.execute(  # noqa: SLF001
+        post_rows = list(
+            s._conn.execute(  # noqa: SLF001
                 "PRAGMA table_info(participants)"
             )
-        }
+        )
+        cols_post = {row[1] for row in post_rows}
     finally:
         s.close()
     assert "profile_status_emoji" in cols_post
     assert "profile_status_text" in cols_post
     assert "profile_status_expires_at" in cols_post
     assert SCHEMA_VERSION == 3
+    # Absorbed from test_schema_migration_pragma_before_after: exactly 3 new columns.
+    assert len(post_rows) - len(pre_rows) == 3
+    assert cols_post - cols_pre == {
+        "profile_status_emoji",
+        "profile_status_text",
+        "profile_status_expires_at",
+    }
 
 
 def test_schema_migration_v2_to_v3_idempotent_on_populated_db(tmp_path: Path):
@@ -374,35 +380,6 @@ def test_schema_migration_v2_to_v3_idempotent_on_populated_db(tmp_path: Path):
         assert row[0] == "3"
     finally:
         s2.close()
-
-
-def test_schema_migration_pragma_before_after(tmp_path: Path):
-    """End-to-end PRAGMA snapshot useful for worklog §3 smoke."""
-    data_dir = _seed_v2_db(tmp_path)
-    pre_conn = sqlite3.connect(str(data_dir / "registry.db"))
-    try:
-        pre_cols = [
-            row[1] for row in pre_conn.execute("PRAGMA table_info(participants)")
-        ]
-    finally:
-        pre_conn.close()
-    s = RegistryStore.open(data_dir)
-    try:
-        post_cols = [
-            row[1]
-            for row in s._conn.execute(  # noqa: SLF001
-                "PRAGMA table_info(participants)"
-            )
-        ]
-    finally:
-        s.close()
-    # v2 had 5 cols; v3 adds 3.
-    assert len(post_cols) - len(pre_cols) == 3
-    assert set(post_cols) - set(pre_cols) == {
-        "profile_status_emoji",
-        "profile_status_text",
-        "profile_status_expires_at",
-    }
 
 
 # ---------------------------------------------------------------------------

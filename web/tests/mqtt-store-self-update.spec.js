@@ -87,13 +87,13 @@ describe('MqttChatStore — self-update tracking', () => {
     expect(store.isOurRecentUpdate('artifact-one', 1)).toBe(true);
   });
 
-  it('treats numeric and string versions as different keys', () => {
-    // This is a defensive check — callers should be consistent with their
-    // version representation, and the composite key honors that.
+  it('numeric and string versions that stringify identically are treated as the same key', () => {
+    // Callers should be consistent with their version representation.
+    // The composite key stringifies both representations identically
+    // (e.g. 3 and '3' both become "artifact-one:3"), so either form
+    // returns true for the same mark call.
     store.markSelfUpdate('artifact-one', 3);
     expect(store.isOurRecentUpdate('artifact-one', 3)).toBe(true);
-    // Same stringification, same key — works with either representation
-    // as long as the caller is consistent.
     expect(store.isOurRecentUpdate('artifact-one', '3')).toBe(true);
   });
 });
@@ -110,14 +110,9 @@ describe('MqttChatStore — artifactsDirty counter', () => {
     expect(store.artifactsDirty).toBe(0);
   });
 
-  // We can't easily trigger the private #handleChatMessage without mocking
-  // the whole MQTT client, but we can assert the counter is at least
-  // reachable and incrementable — the integration is exercised by the
-  // Playwright e2e tests.
-  it('is publicly mutable (no accidental read-only guard)', () => {
-    store.artifactsDirty++;
-    expect(store.artifactsDirty).toBe(1);
-    store.artifactsDirty++;
-    expect(store.artifactsDirty).toBe(2);
-  });
+  // NOTE: the "is publicly mutable" test (manually incrementing store.artifactsDirty++)
+  // was deleted — it exercised no production path; the real increment happens inside
+  // #handleChatMessage (private). The integration is covered by Playwright e2e tests.
+  // TODO: promote to a real test by driving _handleChatMessageForTest with a
+  // system-message and asserting the counter increments.
 });

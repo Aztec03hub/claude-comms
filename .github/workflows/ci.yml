@@ -30,6 +30,86 @@ jobs:
       - name: Run ruff format check
         run: ruff format --check src/ tests/
 
+  test-web:
+    name: Web unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "11"
+
+      - name: Install web deps
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Run vitest
+        working-directory: web
+        run: pnpm test
+
+  test-e2e:
+    name: E2E (Playwright scenarios)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "11"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install web deps
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web UI
+        working-directory: web
+        run: pnpm build
+
+      # Editable install puts the `claude-comms` console script on PATH; the
+      # Playwright daemon fixture spawns it (CC_E2E_DAEMON_CMD defaults to it).
+      - name: Install package
+        run: pip install -e ".[all]"
+
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Behavioral e2e gates CI. Screenshot/snapshot assertions are skipped
+      # here because pixel baselines are Chromium-version sensitive across
+      # environments (audit W-6/W-7). Follow-up: regenerate baselines on CI's
+      # Chromium and drop --ignore-snapshots to gate visuals too.
+      - name: Run Playwright scenarios (behavioral; snapshots non-blocking)
+        working-directory: web
+        # The editable install already exposes claude_comms + all deps via the
+        # runner's site-packages. Pin the daemon's PYTHONPATH to just the repo
+        # src; the fixture's default prepends /usr/lib/python3/dist-packages,
+        # whose old typing_extensions otherwise shadows the pip-installed one and
+        # crashes the daemon on startup (pydantic-core needs Sentinel).
+        env:
+          CC_E2E_PYTHONPATH: ${{ github.workspace }}/src
+        run: pnpm exec playwright test --ignore-snapshots
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 30
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

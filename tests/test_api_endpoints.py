@@ -2,18 +2,27 @@
 
 Covers:
 1. Message history REST API — get_channel_messages()
-2. Identity REST API — config identity loading
+2. Identity REST API — GET /api/identity
 3. Participants REST API — get_channel_participants()
-4. Broker crash resilience — _run_broker_with_retry retry loop
-5. MCP presence publishing on join — comms_join presence payloads
-6. Client type display in presence — participant "client" field
+4. MCP presence publishing on join — comms_join presence payloads
+5. Client type display in presence — participant "client" field
+
+NOTE (Identity API): The GET /api/identity handler (_api_identity) is defined
+as a closure inside cli._run() capturing the ``config`` dict from the daemon
+startup context. There is no standalone build_identity_route(config) helper
+(unlike build_capabilities_route), making it genuinely infeasible to mount the
+handler in a Starlette TestClient without modifying cli.py. The four tautological
+tests that previously existed here were asserting dict.get() on literals they
+constructed themselves — they exercised no production code.
+TODO: extract a build_identity_route(config) from cli._run() (same pattern as
+build_capabilities_route) and replace this comment with a TestClient integration
+test that hits GET /api/identity and verifies key/name/type in the JSON response.
+Real identity contract is covered by the e2e daemon fixture and scenario tests.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-from typing import Any
 
 import pytest
 
@@ -116,58 +125,8 @@ class TestGetChannelMessages:
 
 
 # =========================================================================
-# 2. Identity REST API — config identity loading
+# 2. Identity REST API — see module docstring for why tests were deleted
 # =========================================================================
-
-
-class TestIdentityApi:
-    """Tests for the identity config extraction used by /api/identity."""
-
-    def test_identity_fields_from_config(self):
-        """Identity dict should contain key, name, type."""
-        config = {
-            "identity": {
-                "key": "aabbccdd",
-                "name": "test-user",
-                "type": "human",
-            }
-        }
-        identity = config.get("identity", {})
-        assert identity.get("key") == "aabbccdd"
-        assert identity.get("name") == "test-user"
-        assert identity.get("type") == "human"
-
-    def test_identity_defaults_when_missing(self):
-        """Missing identity fields should fall back to defaults."""
-        config: dict[str, Any] = {}
-        identity = config.get("identity", {})
-        assert identity.get("key", "") == ""
-        assert identity.get("name", "") == ""
-        assert identity.get("type", "human") == "human"
-
-    def test_identity_type_default_is_human(self):
-        """When type is not specified, default is 'human'."""
-        config = {
-            "identity": {
-                "key": "11223344",
-                "name": "phil",
-            }
-        }
-        identity = config.get("identity", {})
-        assert identity.get("type", "human") == "human"
-
-    def test_identity_with_claude_type(self):
-        """Claude identity type is preserved."""
-        config = {
-            "identity": {
-                "key": "deadbeef",
-                "name": "agent-alpha",
-                "type": "claude",
-            }
-        }
-        identity = config.get("identity", {})
-        assert identity.get("type") == "claude"
-
 
 # =========================================================================
 # 3. Participants REST API — get_channel_participants()
@@ -193,7 +152,8 @@ class TestGetChannelParticipants:
 
     @pytest.mark.asyncio
     async def test_returns_participants_with_client_field(self):
-        """Participants should include 'client' field."""
+        """Participants should include 'client' field (canonical test; absorbs
+        the isinstance(str) check from the deleted test_client_field_is_string)."""
         import claude_comms.mcp_server as mod
 
         registry = ParticipantRegistry()
@@ -212,6 +172,7 @@ class TestGetChannelParticipants:
             # _ensure_mcp_connection so the participant has client=mcp and
             # status=online even before any explicit MQTT presence.
             assert p["client"] == "mcp"
+            assert isinstance(p["client"], str) and len(p["client"]) > 0
             assert p["status"] == "online"
             assert "connections" in p
             assert "online" in p
@@ -260,104 +221,15 @@ class TestGetChannelParticipants:
             mod._registry = original
 
 
-# =========================================================================
-# 4. Broker crash resilience — retry loop
-# =========================================================================
-
-
-class TestBrokerRetryLoop:
-    """Tests for the _run_broker_with_retry logic in cli.py.
-
-    We test the retry pattern by simulating the broker crash/restart
-    behaviour using the same logic structure.
-    """
-
-    @pytest.mark.asyncio
-    async def test_retry_increments_counter(self):
-        """Retry counter increments on each failure."""
-        retries = 0
-        max_retries = 3
-        shutdown = asyncio.Event()
-
-        async def fake_broker_cycle():
-            nonlocal retries
-            retries += 1
-            raise RuntimeError("Broker crash")
-
-        with pytest.raises(RuntimeError, match="Broker crash"):
-            while retries < max_retries and not shutdown.is_set():
-                try:
-                    await fake_broker_cycle()
-                    await shutdown.wait()
-                    break
-                except asyncio.CancelledError:
-                    break
-                except Exception:
-                    if retries >= max_retries:
-                        raise
-
-        assert retries == max_retries
-
-    @pytest.mark.asyncio
-    async def test_retry_succeeds_on_second_attempt(self):
-        """Broker starts successfully after one failure."""
-        attempts = 0
-        max_retries = 5
-        shutdown = asyncio.Event()
-
-        async def fake_broker_cycle():
-            nonlocal attempts
-            attempts += 1
-            if attempts < 2:
-                raise RuntimeError("Transient crash")
-            # Success — set shutdown so we exit the loop
-            shutdown.set()
-
-        while attempts < max_retries and not shutdown.is_set():
-            try:
-                await fake_broker_cycle()
-                await shutdown.wait()
-                break
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                if attempts >= max_retries:
-                    raise
-
-        assert attempts == 2
-        assert shutdown.is_set()
-
-    @pytest.mark.asyncio
-    async def test_retry_respects_shutdown_event(self):
-        """If shutdown_event is set during retries, stop retrying."""
-        attempts = 0
-        max_retries = 10
-        shutdown = asyncio.Event()
-
-        async def fake_broker_cycle():
-            nonlocal attempts
-            attempts += 1
-            if attempts == 2:
-                shutdown.set()
-            raise RuntimeError("crash")
-
-        while attempts < max_retries and not shutdown.is_set():
-            try:
-                await fake_broker_cycle()
-                await shutdown.wait()
-                break
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                if attempts >= max_retries and not shutdown.is_set():
-                    raise
-
-        # Should have stopped after 2 attempts due to shutdown
-        assert attempts == 2
-
+# TestBrokerRetryLoop (3 tests) — DELETED (P2 #2).
+# The class reimplemented the retry loop inline in each test; the real
+# cli._run_broker_with_retry function was never imported or invoked. Deleting
+# so we don't maintain a test that validates Python while-loop semantics.
+# TODO: add one test that imports _run_broker_with_retry from cli and drives
+# it directly, or gate it as integration-only behind a real MQTT broker stub.
 
 # =========================================================================
-# 5. MCP presence publishing on join
+# 4. MCP presence publishing on join
 # =========================================================================
 
 
@@ -396,158 +268,33 @@ class TestPresencePublishingOnJoin:
         assert data["client"] == "mcp"
         assert "ts" in data
 
-    @pytest.mark.asyncio
-    async def test_presence_topics(self):
-        """Presence is published to both conv-scoped and system-scoped topics."""
-        registry = ParticipantRegistry()
-        result = await tool_comms_join(registry, name="agent-y", conversation="dev")
+    # test_presence_topics — DELETED (P2 #3).
+    # Built two f-strings then asserted each one equaled itself; no production
+    # presence-publish code was called.
 
-        key = result["key"]
-        conversation = "dev"
-
-        conv_topic = f"claude-comms/conv/{conversation}/presence/{key}"
-        system_topic = f"claude-comms/system/participants/{key}-mcp"
-
-        assert conv_topic == f"claude-comms/conv/dev/presence/{key}"
-        assert system_topic == f"claude-comms/system/participants/{key}-mcp"
-        assert "-mcp" in system_topic  # client type suffix
-
-    @pytest.mark.asyncio
-    async def test_presence_publish_called_on_join(self):
-        """When _publish_fn is set, comms_join publishes presence."""
-        import claude_comms.mcp_server as mod
-
-        # Set up module state
-        registry = ParticipantRegistry()
-        original_registry = mod._registry
-        original_publish = mod._publish_fn
-
-        publish_calls: list[tuple[str, bytes]] = []
-
-        async def mock_publish(topic: str, payload: bytes) -> None:
-            publish_calls.append((topic, payload))
-
-        try:
-            mod._registry = registry
-            mod._publish_fn = mock_publish
-
-            # Call create_server to set up, then use the registry directly
-            # We need to call comms_join from the MCP server wrapper
-            # which triggers the presence publish. Let's test via the
-            # tool_comms_join + manual presence simulation instead.
-            result = await tool_comms_join(
-                registry, name="test-pub", conversation="general"
-            )
-            assert "error" not in result
-
-            # Simulate the presence publish that comms_join does
-            key = result["key"]
-            presence_payload = json.dumps(
-                {
-                    "key": key,
-                    "name": result["name"],
-                    "type": result["type"],
-                    "status": "online",
-                    "client": "mcp",
-                }
-            ).encode()
-
-            conv_topic = f"claude-comms/conv/general/presence/{key}"
-            system_topic = f"claude-comms/system/participants/{key}-mcp"
-
-            await mock_publish(conv_topic, presence_payload)
-            await mock_publish(system_topic, presence_payload)
-
-            assert len(publish_calls) == 2
-            # Verify conv-scoped topic
-            assert "conv/general/presence/" in publish_calls[0][0]
-            # Verify system-scoped topic
-            assert "system/participants/" in publish_calls[1][0]
-            assert publish_calls[1][0].endswith("-mcp")
-
-            # Verify payload contents
-            data = json.loads(publish_calls[0][1])
-            assert data["client"] == "mcp"
-            assert data["status"] == "online"
-        finally:
-            mod._registry = original_registry
-            mod._publish_fn = original_publish
+    # test_presence_publish_called_on_join — DELETED (P2 #3).
+    # Manually called mock_publish() inside the test body then asserted
+    # publish_calls length. Counted the test's own direct calls to the spy,
+    # not any calls made by production code. Validated PublishSpy, not the
+    # MCP presence-publish path.
 
 
 # =========================================================================
-# 6. Client type display in presence
+# 5. Client type display in presence (canonical test kept here; duplicates
+#    that were in TestClientTypeInPresence deleted per P3.c)
 # =========================================================================
 
-
-class TestClientTypeInPresence:
-    """Tests for the 'client' field in participant/presence data."""
-
-    @pytest.mark.asyncio
-    async def test_participant_response_includes_client_mcp(self):
-        """get_channel_participants returns the participant's client field."""
-        import claude_comms.mcp_server as mod
-
-        registry = ParticipantRegistry()
-        await tool_comms_join(registry, name="test-client", conversation="general")
-
-        original = mod._registry
-        try:
-            mod._registry = registry
-            from claude_comms.mcp_server import get_channel_participants
-
-            result = get_channel_participants("general")
-            assert len(result) == 1
-            # Claude-typed join synthesizes an `mcp` ConnectionInfo via
-            # _ensure_mcp_connection, so `client` resolves to "mcp" (the
-            # synthesized connection's client_type) -- matching this test's
-            # name "..._includes_client_mcp".
-            assert result[0]["client"] == "mcp"
-        finally:
-            mod._registry = original
-
-    @pytest.mark.asyncio
-    async def test_client_field_is_string(self):
-        """Client field is always a string, not None or missing."""
-        import claude_comms.mcp_server as mod
-
-        registry = ParticipantRegistry()
-        await tool_comms_join(registry, name="check-type", conversation="general")
-
-        original = mod._registry
-        try:
-            mod._registry = registry
-            from claude_comms.mcp_server import get_channel_participants
-
-            result = get_channel_participants("general")
-            for p in result:
-                assert isinstance(p["client"], str)
-                assert len(p["client"]) > 0
-        finally:
-            mod._registry = original
-
-    def test_presence_payload_client_field(self):
-        """Presence payload JSON includes 'client' key."""
-        # This tests the format of presence payloads
-        presence = {
-            "key": "aabbccdd",
-            "name": "test",
-            "type": "claude",
-            "status": "online",
-            "client": "mcp",
-            "ts": "2026-01-01T00:00:00Z",
-        }
-        payload = json.dumps(presence)
-        decoded = json.loads(payload)
-        assert "client" in decoded
-        assert decoded["client"] == "mcp"
-
-    def test_system_topic_includes_client_suffix(self):
-        """System presence topic includes -mcp suffix to distinguish clients."""
-        key = "aabbccdd"
-        system_topic = f"claude-comms/system/participants/{key}-mcp"
-        assert system_topic.endswith("-mcp")
-        # A TUI client would use -tui, web would use -web
-        assert key in system_topic
+# Canonical client-field test lives in TestGetChannelParticipants above
+# (test_returns_participants_with_client_field). The two duplicates that
+# were in TestClientTypeInPresence have been removed:
+#   - test_participant_response_includes_client_mcp (P3.c — identical to
+#     TestGetChannelParticipants.test_returns_participants_with_client_field)
+#   - test_client_field_is_string (P3.c — isinstance(str) check folded into
+#     the canonical test above)
+#   - test_presence_payload_client_field (P2 #4 — serialized a literal dict
+#     and deserialized it; no production code ran)
+#   - test_system_topic_includes_client_suffix (P2 #4 — asserted an f-string
+#     containing "-mcp" ends with "-mcp")
 
 
 # =========================================================================

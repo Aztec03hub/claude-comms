@@ -13,10 +13,11 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
+
+from pydantic import ValidationError
 
 from claude_comms import mcp_tools
 from claude_comms.mcp_tools import (
@@ -76,9 +77,11 @@ def test_activity_round_trip():
 
 
 def test_activity_label_length_validation():
-    with pytest.raises(Exception):
+    # Production: Activity uses Pydantic Field(min_length=1, max_length=32).
+    # Violations raise pydantic.ValidationError, not a generic Exception.
+    with pytest.raises(ValidationError):
         Activity(label="", set_at="t", expires_at="t")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Activity(label="x" * 33, set_at="t", expires_at="t")
 
 
@@ -348,24 +351,29 @@ async def test_status_set_throttled_does_not_publish():
 
 @pytest.mark.asyncio
 async def test_sweep_clears_expired_activity_but_keeps_connection():
+    from datetime import datetime, timedelta, timezone
+
     reg = ParticipantRegistry()
     key = await _join_claude(reg)
-    # Set a very short activity TTL
+    # Set an activity (any TTL — we'll backdate expires_at directly).
     await tool_comms_status_set(
-        reg, key=key, conversation="general", label="thinking", ttl_seconds=1
+        reg, key=key, conversation="general", label="thinking", ttl_seconds=60
     )
     p = reg.get(key)
     assert p.connections["mcp"].activity is not None
 
-    # Wait past the activity expiry
-    await asyncio.sleep(1.5)
+    # Backdate expires_at so the sweep sees it as already expired.
+    # Production path: presence._sweep_once() calls
+    #   datetime.fromisoformat(activity.expires_at) and checks expires_at <= now.
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).astimezone().isoformat()
+    p.connections["mcp"].activity.expires_at = past  # noqa: SLF001
 
-    # Sweep with a generous connection TTL so the connection itself stays
+    # Sweep with a generous connection TTL so the connection itself stays.
     pm = PresenceManager(reg, ttl_seconds=3600)
-    removed = await pm._sweep_once()
+    removed = await pm._sweep_once()  # noqa: SLF001
     assert removed == []
     assert "mcp" in p.connections  # connection still alive
-    assert p.connections["mcp"].activity is None  # activity cleared
+    assert p.connections["mcp"].activity is None  # activity cleared by sweep
 
 
 @pytest.mark.asyncio

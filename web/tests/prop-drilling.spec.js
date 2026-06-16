@@ -386,35 +386,20 @@ describe('App.svelte — end-to-end prop drilling for retry chain', () => {
     await flushChatViewScrollRAF();
   });
 
-  it('passes onRetry to ConnectionStatus so the failure banner has a working retry path', async () => {
-    // The mocked store reports `connected: false, error: 'broker unreachable'`,
-    // so the failure banner renders. We assert that the banner is
-    // present and that App passed onRetry through (proven by clicking
-    // the retry button after the threshold and observing store.connect
-    // being invoked).
-    const { queryByTestId } = render(App);
-    await tick();
-    await flushChatViewScrollRAF();
-    const store = globalThis.__mockStoreInstances.at(-1);
-    expect(store).toBeDefined();
-    const banner = queryByTestId('connection-status');
-    expect(banner).not.toBeNull();
-    // store.connect is called by App.svelte's onMount $effect on every
-    // render — that's expected. Snapshot the call count before clicking
-    // so the retry-specific assertion is unambiguous.
-    const beforeConnectCalls = store.connect.mock.calls.length;
-    // The failure-state Retry button only renders after failureThreshold
-    // (default 5) failed transitions. ConnectionStatus is exercised
-    // standalone above; here we only need to verify the prop wiring
-    // reached ConnectionStatus, which we can prove by re-rendering App
-    // with the failure-threshold reduced via the ConnectionStatus prop
-    // chain. But App doesn't expose that knob today, so the per-hop
-    // test (ConnectionStatus suite above) is the source of truth for
-    // the click→callback wiring. Here we assert the banner mounted
-    // without an undefined-callback crash, which would have happened
-    // if App was passing `onRetry={undefined}` and ConnectionStatus's
-    // handler had been written to call it unconditionally.
-    expect(beforeConnectCalls).toBeGreaterThanOrEqual(1);
-    await flushChatViewScrollRAF();
-  });
+  // DELETED: "passes onRetry to ConnectionStatus so the failure banner has a working retry path"
+  //
+  // The test only asserted that the ConnectionStatus banner mounted and that
+  // store.connect was called by onMount — it never verified the onRetry prop
+  // was actually wired (the Retry button only appears after `failureThreshold`
+  // failed transitions, which defaults to 5, and App does not expose that knob).
+  // The name claimed "working retry path" but the body proved only that the
+  // banner rendered without crashing.
+  //
+  // The REAL per-hop wiring test is the standalone ConnectionStatus suite above
+  // (describe 'ConnectionStatus — onRetry is invoked...'). That suite passes
+  // failureThreshold: 1 directly to ConnectionStatus, clicks the button, and
+  // asserts onRetry was called — that IS the authoritative source of truth.
+  //
+  // TODO: expose failureThreshold as an App.svelte prop (or via a test shim)
+  // so an end-to-end App→ConnectionStatus retry click can be verified here.
 });

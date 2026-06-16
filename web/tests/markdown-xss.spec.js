@@ -96,10 +96,13 @@ describe('renderMarkdown — XSS corpus', () => {
   it('strips file:// image src', async () => {
     const out = await renderMarkdown('<img src="file:///etc/passwd">');
     const img = parseHtml(out).querySelector('img');
-    if (img) {
-      // Either no img element at all (DOMPurify dropped it) or src removed.
-      expect(img.getAttribute('src') || '').not.toMatch(/^file:/i);
-    }
+    // DOMPurify removes the src attribute via the afterSanitizeAttributes hook
+    // (or drops the img element entirely). Assert deterministically — no optional
+    // guard that silently skips the assertion when the element is absent.
+    // src is '' (empty attr) or null (attr removed or no element). Either way
+    // it must not begin with file:.
+    const src = img?.getAttribute('src') ?? '';
+    expect(/^file:/i.test(src)).toBe(false);
     expect(out.toLowerCase()).not.toContain('file:///etc/passwd');
   });
 
@@ -108,9 +111,8 @@ describe('renderMarkdown — XSS corpus', () => {
       '<img src="blob:https://evil.example/abc">',
     );
     const img = parseHtml(out).querySelector('img');
-    if (img) {
-      expect(img.getAttribute('src') || '').not.toMatch(/^blob:/i);
-    }
+    const src = img?.getAttribute('src') ?? '';
+    expect(/^blob:/i.test(src)).toBe(false);
     expect(out.toLowerCase()).not.toContain('blob:https://evil.example');
   });
 
@@ -119,9 +121,8 @@ describe('renderMarkdown — XSS corpus', () => {
       '<img src="data:image/svg+xml,%3Csvg%3E%3Cscript%3Ealert(1)%3C/script%3E%3C/svg%3E">',
     );
     const img = parseHtml(out).querySelector('img');
-    if (img) {
-      expect(img.getAttribute('src') || '').not.toMatch(/^data:/i);
-    }
+    const src = img?.getAttribute('src') ?? '';
+    expect(/^data:/i.test(src)).toBe(false);
     expect(out.toLowerCase()).not.toContain('data:image/svg');
   });
 

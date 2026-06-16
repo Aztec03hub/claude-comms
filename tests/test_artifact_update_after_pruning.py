@@ -85,6 +85,10 @@ async def test_version_counter_after_pruning(tmp_path: Path) -> None:
     assert max(v.version for v in artifact.versions) == 55
     # The oldest kept version should be 55 - 50 + 1 == 6
     assert min(v.version for v in artifact.versions) == 55 - MAX_VERSIONS + 1
+    # Versions must be contiguous — pruning must not drop or duplicate any
+    # version in the retained window (P4.d tighten; min/max alone passes
+    # if e.g. v20 is dropped and v21 appears twice).
+    assert [v.version for v in artifact.versions] == list(range(6, 56))
 
     # base_version check: v55 should succeed (correct current), v50 (the old
     # buggy "current == len") should fail as stale.

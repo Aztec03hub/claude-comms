@@ -494,13 +494,21 @@ class TestApiConversationsRoute:
         self,
         module_state: ParticipantRegistry,
     ) -> None:
-        """Round-trip: collector output is the handler's response payload."""
+        """Collector output matches the ChannelRow shape the handler wraps.
+
+        Note: the real /api/conversations HTTP route is defined as a closure
+        inside cli._run() and cannot be mounted via TestClient without
+        modifying cli.py (same constraint as /api/identity — see
+        test_api_endpoints.py module docstring). The tautological
+        ``assert payload["count"] == len(rows)`` (where count was literally
+        assigned as len(rows)) has been removed; the genuine field-presence
+        check below is the real guard.
+        TODO: extract build_conversations_route(config) from cli._run() and
+        add a TestClient integration test for the full HTTP path.
+        """
         rows = get_all_conversations_full(caller_key="aabbccdd")
-        # Mirrors handler's JSONResponse({"conversations": rows, "count": N})
-        payload = {"conversations": rows, "count": len(rows)}
-        assert payload["count"] == len(rows)
-        assert payload["count"] >= 1
-        first = payload["conversations"][0]
+        assert len(rows) >= 1
+        first = rows[0]
         for field in (
             "id",
             "name",

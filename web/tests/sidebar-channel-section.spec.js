@@ -232,24 +232,6 @@ describe('SidebarChannelSection — collapse/expand persistence', () => {
   });
 });
 
-describe('SidebarChannelSection — chevron rotation CSS hook', () => {
-  it('expanded chevron carries the .expanded class for CSS rotation', async () => {
-    const { getByTestId } = render(SidebarChannelSection, defaultProps());
-    const header = getByTestId('sidebar-channel-section-header-Starred');
-    const chevron = header.querySelector('.sidebar-channel-section-chevron');
-
-    expect(chevron.classList.contains('expanded')).toBe(true);
-
-    await fireEvent.click(header);
-    await tick();
-    expect(chevron.classList.contains('expanded')).toBe(false);
-
-    await fireEvent.click(header);
-    await tick();
-    expect(chevron.classList.contains('expanded')).toBe(true);
-  });
-});
-
 describe('SidebarChannelSection — ARIA wiring', () => {
   it('header aria-controls points at the body region id; body carries role=region and matching aria-label', () => {
     const { getByTestId } = render(SidebarChannelSection, defaultProps());

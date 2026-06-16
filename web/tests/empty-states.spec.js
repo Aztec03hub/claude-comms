@@ -222,10 +222,12 @@ describe('ChannelDirectoryModal — adopts EMPTY_STATES.noTopicSet', () => {
     });
 
     const topicEl = getByTestId('channel-admin-topic');
-    // Either the existing EMPTY_STATES copy or the panel's own
-    // "No topic set" wording is acceptable; both convey the same
-    // empty state to the user.
+    // Assert against the canonical EMPTY_STATES constant so any drift
+    // between the module and the component is caught immediately.
+    // If ChannelAdminPanel ever uses its own hard-coded string instead
+    // of importing this constant, this test will fail and require the
+    // discrepancy to be resolved (not silently accepted).
     const text = topicEl.textContent.trim();
-    expect(text === EMPTY_STATES.noTopicSet || text === 'No topic set').toBe(true);
+    expect(text).toBe(EMPTY_STATES.noTopicSet);
   });
 });

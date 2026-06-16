@@ -100,21 +100,18 @@ class TestCorruptYaml:
         assert config["default_conversation"] == "general"
 
     def test_load_yaml_with_non_dict_content(self, tmp_config_path):
-        """YAML file with a list should be handled (safe_load returns list)."""
+        """YAML file with a list raises AttributeError from _deep_merge.
+
+        load_config does ``yaml.safe_load(f) or {}``; a YAML list is truthy so
+        it bypasses the ``or {}`` fallback and reaches ``_deep_merge(_DEFAULT_CONFIG,
+        <list>)``.  _deep_merge calls ``overlay.items()`` which lists do not
+        have, so an ``AttributeError`` is raised immediately.
+        """
         tmp_config_path.write_text("- item1\n- item2\n")
-        # This will try _deep_merge with a list as overlay which will fail
-        # The function should handle gracefully or raise
-        # Actually, load_config does `yaml.safe_load(f) or {}` which returns
-        # the list (truthy), then _deep_merge will get a list
-        # Let's verify behavior
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("CLAUDE_COMMS_PASSWORD", None)
-            # This should raise or return something usable
-            try:
+            with pytest.raises(AttributeError):
                 load_config(tmp_config_path)
-                # If it doesn't raise, it should still have defaults
-            except (TypeError, AttributeError):
-                pass  # Expected - list can't be merged with dict
 
 
 # --- _deep_merge edge cases ---

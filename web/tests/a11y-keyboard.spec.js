@@ -2,256 +2,273 @@
 //
 // Focus of this suite: things that axe-core CANNOT detect because they're
 // behavioural, not structural — the version dropdown's WAI-ARIA listbox
-// keyboard nav (ArrowUp/Down/Enter/Esc), the star button's space/enter
-// activation, and the remote-update banner's Esc-to-dismiss path.
+// keyboard nav (ArrowUp/Down/Enter/Esc), the star button's aria-pressed
+// toggle, and the remote-update banner's Esc-to-dismiss path.
 //
-// We exercise the handlers directly (mirroring the shapes used in the
-// component) rather than mounting full Svelte trees — this keeps the
-// suite fast and deterministic, and matches the established pattern in
-// edit-flow.spec.js and detail-view.spec.js.
+// REWRITE NOTE (test-suite-cleanup): the original file tested local
+// handler reimplementations (makeListboxHandler, makeStarToggle, labelFor)
+// rather than the real components. This version mounts the real components
+// and fires keyboard/click events against the live DOM, asserting real
+// aria-* attributes. See .worklogs/test-audit/impl/VT-REWRITE.md for
+// the change rationale.
 //
 // Plan refs: R2-5 (Accessibility), R4-3 (Esc precedence).
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, cleanup, fireEvent } from '@testing-library/svelte';
+import { tick } from 'svelte';
+
+import ArtifactDetailHeader from '../src/components/ArtifactDetailHeader.svelte';
+import ArtifactList from '../src/components/ArtifactList.svelte';
+
+// ── Shared fixture data ───────────────────────────────────────────────────
+
+const ARTIFACT = {
+  name: 'migration-plan',
+  type: 'plan',
+  title: 'Migration plan',
+  channel: 'general',
+  version: 2,
+  content: '# Migration plan\n\nSteps here.',
+  versions: [
+    {
+      version: 3,
+      author: { key: 'phil-key', name: 'phil', type: 'human' },
+      timestamp: Date.now() / 1000 - 60,
+      summary: 'third revision',
+    },
+    {
+      version: 2,
+      author: { key: 'phil-key', name: 'phil', type: 'human' },
+      timestamp: Date.now() / 1000 - 120,
+      summary: 'second revision',
+    },
+    {
+      version: 1,
+      author: { key: 'phil-key', name: 'phil', type: 'human' },
+      timestamp: Date.now() / 1000 - 360,
+      summary: 'initial draft',
+    },
+  ],
+};
+
+function makeHeaderProps(overrides = {}) {
+  return {
+    artifact: ARTIFACT,
+    selectedVersion: 2,
+    showVersionDropdown: true, // dropdown open so listbox is in the DOM
+    viewMode: 'content',
+    compareVersion: null,
+    capabilities: { writable: true },
+    onBack: vi.fn(),
+    onVersionSelect: vi.fn(),
+    onToggleVersionDropdown: vi.fn(),
+    onSetViewMode: vi.fn(),
+    onSetCompareVersion: vi.fn(),
+    onCopy: vi.fn(),
+    onDownload: vi.fn(),
+    onEdit: vi.fn(),
+    onClose: vi.fn(),
+    ...overrides,
+  };
+}
+
+const ARTIFACTS_LIST = [
+  {
+    name: 'plan-x',
+    type: 'plan',
+    title: 'Plan X',
+    version_count: 1,
+    author: { key: 'phil-key', name: 'phil', type: 'human' },
+    timestamp: Date.now() / 1000 - 120,
+  },
+  {
+    name: 'plan-y',
+    type: 'plan',
+    title: 'Plan Y',
+    version_count: 2,
+    author: { key: 'claude-key', name: 'claude', type: 'agent' },
+    timestamp: Date.now() / 1000 - 600,
+  },
+];
+
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 // ── Version dropdown listbox keyboard nav ────────────────────────────────
+//
+// Mounts ArtifactDetailHeader with showVersionDropdown=true so the real
+// listbox div (role="listbox") is in the DOM. Keyboard events are fired
+// directly on the listbox element and aria-activedescendant is asserted.
+//
+// Real import: ArtifactDetailHeader from '../src/components/ArtifactDetailHeader.svelte'
+// Real call:   fireEvent.keyDown(listbox, { key: ... }) on the mounted listbox div
 
 describe('version-dropdown listbox keyboard nav (R2-5)', () => {
-  // Mirror the `handleListboxKeydown` shape from ArtifactDetailHeader.svelte.
-  // If the component drifts from this shape, the spec should be updated in
-  // lockstep — same convention as edit-flow.spec.js.
-  function makeListboxHandler({ options, getActiveIdx, setActiveIdx, commit, close }) {
-    return (e) => {
-      if (options.length === 0) return;
-      const activeIdx = getActiveIdx();
-      switch (e.key) {
-        case 'ArrowDown': {
-          e.preventDefault();
-          const next = activeIdx < 0 ? 0 : Math.min(options.length - 1, activeIdx + 1);
-          setActiveIdx(next);
-          return;
-        }
-        case 'ArrowUp': {
-          e.preventDefault();
-          const next = activeIdx < 0 ? options.length - 1 : Math.max(0, activeIdx - 1);
-          setActiveIdx(next);
-          return;
-        }
-        case 'Home': {
-          e.preventDefault();
-          setActiveIdx(0);
-          return;
-        }
-        case 'End': {
-          e.preventDefault();
-          setActiveIdx(options.length - 1);
-          return;
-        }
-        case 'Enter':
-        case ' ': {
-          e.preventDefault();
-          if (activeIdx >= 0 && activeIdx < options.length) {
-            commit(options[activeIdx].version);
-          }
-          return;
-        }
-        case 'Escape': {
-          e.preventDefault();
-          e.stopPropagation();
-          close();
-          return;
-        }
-      }
-    };
+  function getListbox(container) {
+    return container.querySelector('[role="listbox"]');
   }
 
-  function makeEvent(key) {
-    return new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+  function getOptions(container) {
+    return Array.from(container.querySelectorAll('[role="option"]'));
   }
 
-  function makeOptions() {
-    // Newest-first, matching the server's sort order.
-    return [
-      { version: 3 },
-      { version: 2 },
-      { version: 1 },
-    ];
-  }
+  it('ArrowDown advances aria-activedescendant to the next option', async () => {
+    const { container } = render(ArtifactDetailHeader, { props: makeHeaderProps() });
+    // Two ticks: one for initial render, one for the $effect that seeds primaryActiveIdx.
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+    expect(listbox).not.toBeNull();
 
-  it('ArrowDown advances the active descendant by one', () => {
-    let idx = 0;
-    const setActiveIdx = vi.fn((i) => { idx = i; });
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx,
-      commit: vi.fn(),
-      close: vi.fn(),
-    });
-    handler(makeEvent('ArrowDown'));
-    expect(setActiveIdx).toHaveBeenCalledWith(1);
-    expect(idx).toBe(1);
+    // On open, the active descendant is seeded to the selected version (v2 = index 1).
+    // Fire ArrowDown to move to index 2 (v1).
+    await fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    await tick();
+    const activeId = listbox.getAttribute('aria-activedescendant');
+    expect(activeId).toBeTruthy();
+    // The active-descendant id encodes the version; after one ArrowDown from v2
+    // we should be on v1 (the next option in the sorted list).
+    const activeOption = container.querySelector(`[id="${activeId}"]`);
+    expect(activeOption).not.toBeNull();
+    // Confirm the active option is not v2 (we moved down from it).
+    expect(activeOption.textContent).not.toContain('v2');
   });
 
-  it('ArrowDown clamps at the last option', () => {
-    let idx = 2; // Last entry of a 3-item list.
-    const setActiveIdx = vi.fn((i) => { idx = i; });
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx,
-      commit: vi.fn(),
-      close: vi.fn(),
-    });
-    handler(makeEvent('ArrowDown'));
-    expect(idx).toBe(2);
+  it('ArrowUp moves aria-activedescendant to the previous option', async () => {
+    const { container } = render(ArtifactDetailHeader, { props: makeHeaderProps() });
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+
+    // Seed position: active is on v2 (index 1). Fire ArrowUp to go to v3 (index 0).
+    await fireEvent.keyDown(listbox, { key: 'ArrowUp' });
+    await tick();
+    const activeId = listbox.getAttribute('aria-activedescendant');
+    const activeOption = container.querySelector(`[id="${activeId}"]`);
+    expect(activeOption).not.toBeNull();
+    expect(activeOption.textContent).toContain('v3');
   });
 
-  it('ArrowUp from -1 wraps to the last option (so the listbox is immediately useful)', () => {
-    let idx = -1;
-    const setActiveIdx = vi.fn((i) => { idx = i; });
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx,
-      commit: vi.fn(),
-      close: vi.fn(),
-    });
-    handler(makeEvent('ArrowUp'));
-    expect(idx).toBe(2);
+  it('Home jumps aria-activedescendant to the first option (v3)', async () => {
+    const { container } = render(ArtifactDetailHeader, { props: makeHeaderProps() });
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+
+    await fireEvent.keyDown(listbox, { key: 'Home' });
+    await tick();
+    const activeId = listbox.getAttribute('aria-activedescendant');
+    const activeOption = container.querySelector(`[id="${activeId}"]`);
+    expect(activeOption).not.toBeNull();
+    const options = getOptions(container);
+    // First option should be the first in the DOM order (v3, newest-first).
+    expect(activeOption).toBe(options[0]);
   });
 
-  it('ArrowUp clamps at index 0', () => {
-    let idx = 0;
-    const setActiveIdx = vi.fn((i) => { idx = i; });
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx,
-      commit: vi.fn(),
-      close: vi.fn(),
-    });
-    handler(makeEvent('ArrowUp'));
-    expect(idx).toBe(0);
+  it('End jumps aria-activedescendant to the last option (v1)', async () => {
+    const { container } = render(ArtifactDetailHeader, { props: makeHeaderProps() });
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+
+    await fireEvent.keyDown(listbox, { key: 'End' });
+    await tick();
+    const activeId = listbox.getAttribute('aria-activedescendant');
+    const activeOption = container.querySelector(`[id="${activeId}"]`);
+    expect(activeOption).not.toBeNull();
+    const options = getOptions(container);
+    expect(activeOption).toBe(options[options.length - 1]);
   });
 
-  it('Home jumps to the first option, End jumps to the last', () => {
-    let idx = 1;
-    const setActiveIdx = vi.fn((i) => { idx = i; });
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx,
-      commit: vi.fn(),
-      close: vi.fn(),
+  it('Enter commits the active option (calls onVersionSelect)', async () => {
+    const onVersionSelect = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ onVersionSelect }),
     });
-    handler(makeEvent('Home'));
-    expect(idx).toBe(0);
-    handler(makeEvent('End'));
-    expect(idx).toBe(2);
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+
+    // Move to v3 (first option, index 0) then commit.
+    await fireEvent.keyDown(listbox, { key: 'Home' });
+    await tick();
+    await fireEvent.keyDown(listbox, { key: 'Enter' });
+    await tick();
+    expect(onVersionSelect).toHaveBeenCalledTimes(1);
+    expect(onVersionSelect).toHaveBeenCalledWith(3); // v3 is the first option
   });
 
-  it('Enter commits the active descendant', () => {
-    let idx = 1;
-    const commit = vi.fn();
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx: () => {},
-      commit,
-      close: vi.fn(),
+  it('Space also commits the active option', async () => {
+    const onVersionSelect = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ onVersionSelect }),
     });
-    handler(makeEvent('Enter'));
-    expect(commit).toHaveBeenCalledWith(2); // option[1].version === 2
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+
+    await fireEvent.keyDown(listbox, { key: 'Home' });
+    await tick();
+    await fireEvent.keyDown(listbox, { key: ' ' });
+    await tick();
+    expect(onVersionSelect).toHaveBeenCalledWith(3);
   });
 
-  it('Space also commits the active descendant', () => {
-    let idx = 0;
-    const commit = vi.fn();
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx: () => {},
-      commit,
-      close: vi.fn(),
+  it('Escape closes the dropdown (calls onToggleVersionDropdown) and stops propagation (R4-3)', async () => {
+    const onToggleVersionDropdown = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ onToggleVersionDropdown }),
     });
-    handler(makeEvent(' '));
-    expect(commit).toHaveBeenCalledWith(3); // option[0].version === 3
-  });
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
 
-  it('Enter with no active descendant (idx === -1) is a no-op', () => {
-    let idx = -1;
-    const commit = vi.fn();
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => idx,
-      setActiveIdx: () => {},
-      commit,
-      close: vi.fn(),
-    });
-    handler(makeEvent('Enter'));
-    expect(commit).not.toHaveBeenCalled();
-  });
+    const escEvent = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    const stopSpy = vi.spyOn(escEvent, 'stopPropagation');
+    listbox.dispatchEvent(escEvent);
+    await tick();
 
-  it('Escape closes the listbox and stops propagation (R4-3 precedence)', () => {
-    const close = vi.fn();
-    const commit = vi.fn();
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => 1,
-      setActiveIdx: () => {},
-      commit,
-      close,
-    });
-    const e = makeEvent('Escape');
-    const stopSpy = vi.spyOn(e, 'stopPropagation');
-    handler(e);
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(commit).not.toHaveBeenCalled();
+    expect(onToggleVersionDropdown).toHaveBeenCalledTimes(1);
     expect(stopSpy).toHaveBeenCalled();
-    expect(e.defaultPrevented).toBe(true);
+    expect(escEvent.defaultPrevented).toBe(true);
   });
 
-  it('unrelated keys are ignored', () => {
-    const setActiveIdx = vi.fn();
-    const commit = vi.fn();
-    const close = vi.fn();
-    const handler = makeListboxHandler({
-      options: makeOptions(),
-      getActiveIdx: () => 0,
-      setActiveIdx,
-      commit,
-      close,
+  it('unrelated keys do not change aria-activedescendant or call onVersionSelect', async () => {
+    const onVersionSelect = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ onVersionSelect }),
     });
-    handler(makeEvent('a'));
-    handler(makeEvent('Tab'));
-    handler(makeEvent('Shift'));
-    expect(setActiveIdx).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
-  });
+    await tick();
+    await Promise.resolve();
+    await tick();
+    const listbox = getListbox(container);
+    const idBefore = listbox.getAttribute('aria-activedescendant');
 
-  it('keys are no-ops when there are zero options', () => {
-    const setActiveIdx = vi.fn();
-    const commit = vi.fn();
-    const close = vi.fn();
-    const handler = makeListboxHandler({
-      options: [],
-      getActiveIdx: () => -1,
-      setActiveIdx,
-      commit,
-      close,
-    });
-    handler(makeEvent('ArrowDown'));
-    handler(makeEvent('Enter'));
-    handler(makeEvent('Escape'));
-    expect(setActiveIdx).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    await fireEvent.keyDown(listbox, { key: 'a' });
+    await fireEvent.keyDown(listbox, { key: 'Tab' });
+    await tick();
+
+    expect(listbox.getAttribute('aria-activedescendant')).toBe(idBefore);
+    expect(onVersionSelect).not.toHaveBeenCalled();
   });
 });
 
 // ── Trigger-button keyboard activation ───────────────────────────────────
+//
+// NOTE: this describe still uses a local handler mirror (makeTriggerHandler)
+// from the original file. It was not listed in the cleanup plan as a
+// priority — the trigger shape is simple and the behavioral surface is thin.
+// Flagged for future improvement in VT-REWRITE.md.
 
 describe('version-dropdown trigger keyboard open (R2-5)', () => {
   // Mirrors `handleTriggerKeydown` from ArtifactDetailHeader.svelte.
@@ -314,47 +331,93 @@ describe('version-dropdown trigger keyboard open (R2-5)', () => {
 });
 
 // ── Star button keyboard activation ──────────────────────────────────────
+//
+// Mounts ArtifactList with real artifacts and asserts that clicking the
+// star button toggles aria-pressed on the real DOM element and flips
+// aria-label between "Star artifact {name}" and "Unstar artifact {name}".
+//
+// Real import: ArtifactList from '../src/components/ArtifactList.svelte'
+// Real call:   fireEvent.click(starBtn) on the mounted star button element
 
 describe('star button keyboard activation (R2-5)', () => {
-  // Star buttons are <button type="button"> — native browsers fire `click`
-  // on Space/Enter automatically. The component's contract is the
-  // `aria-pressed` toggle, so we exercise the toggle helper directly.
-  //
-  // Mirrors the toggle logic in ArtifactList.svelte > handleStarClick.
-  function makeStarToggle(initial) {
-    let starred = initial;
-    return {
-      get pressed() { return starred; },
-      toggle() { starred = !starred; return starred; },
-    };
-  }
+  it('clicking the star button toggles aria-pressed on the real DOM element', async () => {
+    const { container } = render(ArtifactList, {
+      props: {
+        artifacts: ARTIFACTS_LIST,
+        artifactCount: ARTIFACTS_LIST.length,
+        loading: false,
+        error: null,
+        onSelectArtifact: vi.fn(),
+        currentIdentityKey: 'identity-test',
+        conversation: 'general',
+      },
+    });
+    await tick();
 
-  it('toggling flips the aria-pressed state', () => {
-    const star = makeStarToggle(false);
-    expect(star.pressed).toBe(false);
-    star.toggle();
-    expect(star.pressed).toBe(true);
-    star.toggle();
-    expect(star.pressed).toBe(false);
+    let starBtn = container.querySelector('[data-testid="artifact-star-plan-x"]');
+    expect(starBtn).not.toBeNull();
+
+    // Initially unstarred: aria-pressed must be false.
+    expect(starBtn.getAttribute('aria-pressed')).toBe('false');
+    expect(starBtn.getAttribute('aria-label')).toBe('Star artifact plan-x');
+
+    // Click to star. The {#each} may reconstruct the DOM when the artifact
+    // moves into the STARRED section, so re-query the button after the update.
+    await fireEvent.click(starBtn);
+    await Promise.resolve();
+    await tick();
+    starBtn = container.querySelector('[data-testid="artifact-star-plan-x"]');
+
+    expect(starBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(starBtn.getAttribute('aria-label')).toBe('Unstar artifact plan-x');
+
+    // Click again to unstar.
+    await fireEvent.click(starBtn);
+    await Promise.resolve();
+    await tick();
+    starBtn = container.querySelector('[data-testid="artifact-star-plan-x"]');
+
+    expect(starBtn.getAttribute('aria-pressed')).toBe('false');
+    expect(starBtn.getAttribute('aria-label')).toBe('Star artifact plan-x');
   });
 
-  it('renders a dynamic aria-label that flips with state', () => {
-    function labelFor(starred, name) {
-      return starred
-        ? `Unstar artifact ${name}`
-        : `Star artifact ${name}`;
-    }
-    expect(labelFor(false, 'plan-x')).toBe('Star artifact plan-x');
-    expect(labelFor(true, 'plan-x')).toBe('Unstar artifact plan-x');
+  it('starring moves the artifact into the STARRED section', async () => {
+    const { container, queryByTestId } = render(ArtifactList, {
+      props: {
+        artifacts: ARTIFACTS_LIST,
+        artifactCount: ARTIFACTS_LIST.length,
+        loading: false,
+        error: null,
+        onSelectArtifact: vi.fn(),
+        currentIdentityKey: 'identity-test',
+        conversation: 'general',
+      },
+    });
+    await tick();
+
+    // STARRED section should not exist initially.
+    expect(queryByTestId('artifact-starred-section')).toBeNull();
+
+    const starBtn = container.querySelector('[data-testid="artifact-star-plan-x"]');
+    await fireEvent.click(starBtn);
+    await Promise.resolve();
+    await tick();
+
+    // STARRED section should now be visible.
+    expect(queryByTestId('artifact-starred-section')).not.toBeNull();
   });
 });
 
 // ── Remote-update banner Esc dismissal ───────────────────────────────────
+//
+// NOTE: this describe still uses a local handler mirror (makeBannerKeydownHandler)
+// from the original file. It was not listed as a priority in the cleanup plan.
+// Flagged for future improvement in VT-REWRITE.md.
 
 describe('remote-update banner Esc dismissal (R4-3)', () => {
   // Mirrors `handleInteractiveKeydown` in RemoteUpdateBanner.svelte. Esc
   // anywhere inside the banner dismisses it AND stops propagation so the
-  // App-global Esc handler does not fire.
+  // App-global Esc handler does not also fire.
   function makeBannerKeydownHandler(onDismiss) {
     return (e) => {
       if (e.key === 'Escape') {
@@ -391,50 +454,9 @@ describe('remote-update banner Esc dismissal (R4-3)', () => {
 });
 
 // ── Esc precedence (R4-3) ────────────────────────────────────────────────
-
-describe('Esc precedence — only one layer handles each press (R4-3)', () => {
-  // The plan defines a 5-layer precedence chain; each handler that responds
-  // calls `event.stopPropagation()`. We simulate the chain by attaching
-  // listeners in capture order and asserting that the inner-most one wins.
-  it('inner-layer stopPropagation prevents outer-layer handler from firing', () => {
-    const inner = vi.fn((e) => { e.stopPropagation(); });
-    const outer = vi.fn();
-
-    const innerEl = document.createElement('div');
-    const outerEl = document.createElement('div');
-    outerEl.appendChild(innerEl);
-    document.body.appendChild(outerEl);
-
-    innerEl.addEventListener('keydown', inner);
-    outerEl.addEventListener('keydown', outer);
-
-    const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
-    innerEl.dispatchEvent(e);
-
-    expect(inner).toHaveBeenCalledTimes(1);
-    expect(outer).not.toHaveBeenCalled();
-
-    outerEl.remove();
-  });
-
-  it('without stopPropagation, both layers fire — confirms our handlers MUST stop it', () => {
-    // Sanity-check the inverse so the test above isn't a tautology.
-    const inner = vi.fn(); // No stopPropagation.
-    const outer = vi.fn();
-
-    const innerEl = document.createElement('div');
-    const outerEl = document.createElement('div');
-    outerEl.appendChild(innerEl);
-    document.body.appendChild(outerEl);
-
-    innerEl.addEventListener('keydown', inner);
-    outerEl.addEventListener('keydown', outer);
-
-    innerEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-
-    expect(inner).toHaveBeenCalledTimes(1);
-    expect(outer).toHaveBeenCalledTimes(1);
-
-    outerEl.remove();
-  });
-});
+//
+// DELETED: the two "Esc precedence" tests that exercised raw browser
+// stopPropagation semantics on vanilla divs. Both tests were tautological —
+// they verified that the DOM's own event propagation model works (which it
+// always does regardless of any production code). Neither test exercised a
+// production handler. Removed per cleanup plan §5 P2 #8.

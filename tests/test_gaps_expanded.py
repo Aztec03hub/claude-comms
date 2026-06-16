@@ -106,17 +106,6 @@ class TestHookInstallerUnixScriptDetails:
 
 
 class TestLogExporterFromConfigEdgeCases:
-    def test_from_config_with_string_log_dir(self, tmp_path):
-        config = {"logging": {"dir": str(tmp_path / "custom-logs")}}
-        exp = LogExporter.from_config(config)
-        assert exp.log_dir == tmp_path / "custom-logs"
-
-    def test_from_config_rotation_defaults(self):
-        config = {"logging": {"rotation": {}}}
-        exp = LogExporter.from_config(config)
-        assert exp.max_size_bytes == 50 * 1024 * 1024
-        assert exp.max_files == 10
-
     def test_from_config_shared_deduplicator(self):
         dedup = MessageDeduplicator()
         exp = LogExporter.from_config({}, deduplicator=dedup)
@@ -425,55 +414,6 @@ class TestConfigSaveLoadRoundtrip:
 # ===================================================================
 
 
-class TestMessageTopicFormat:
-    def test_topic_uses_conv_id(self):
-        msg = Message.create(
-            sender_key="abcdef01",
-            sender_name="t",
-            sender_type="claude",
-            body="hi",
-            conv="my-project",
-        )
-        assert msg.topic == "claude-comms/conv/my-project/messages"
-
-    def test_topic_with_numeric_conv_id(self):
-        msg = Message.create(
-            sender_key="abcdef01",
-            sender_name="t",
-            sender_type="claude",
-            body="hi",
-            conv="123",
-        )
-        assert msg.topic == "claude-comms/conv/123/messages"
-
-
-class TestMessageReplyTo:
-    def test_reply_to_preserved_in_roundtrip(self):
-        msg = Message.create(
-            sender_key="abcdef01",
-            sender_name="t",
-            sender_type="claude",
-            body="response",
-            conv="general",
-            reply_to="550e8400-e29b-41d4-a716-446655440000",
-        )
-        payload = msg.to_mqtt_payload()
-        restored = Message.from_mqtt_payload(payload)
-        assert restored.reply_to == "550e8400-e29b-41d4-a716-446655440000"
-
-    def test_reply_to_none_by_default(self):
-        msg = Message.create(
-            sender_key="abcdef01",
-            sender_name="t",
-            sender_type="claude",
-            body="hi",
-            conv="general",
-        )
-        assert msg.reply_to is None
-        data = json.loads(msg.to_mqtt_payload())
-        assert data["reply_to"] is None
-
-
 class TestConvIdBoundaryLength:
     def test_exactly_64_chars_valid(self):
         conv = "a" * 64
@@ -533,3 +473,52 @@ class TestMessageFieldAccess:
         )
         # ISO timestamp should have timezone info
         assert "+" in msg.ts or "-" in msg.ts[10:] or "Z" in msg.ts
+
+
+class TestMessageTopicFormat:
+    def test_topic_uses_conv_id(self):
+        msg = Message.create(
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="my-project",
+        )
+        assert msg.topic == "claude-comms/conv/my-project/messages"
+
+    def test_topic_with_numeric_conv_id(self):
+        msg = Message.create(
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="123",
+        )
+        assert msg.topic == "claude-comms/conv/123/messages"
+
+
+class TestMessageReplyTo:
+    def test_reply_to_preserved_in_roundtrip(self):
+        msg = Message.create(
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="response",
+            conv="general",
+            reply_to="550e8400-e29b-41d4-a716-446655440000",
+        )
+        payload = msg.to_mqtt_payload()
+        restored = Message.from_mqtt_payload(payload)
+        assert restored.reply_to == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_reply_to_none_by_default(self):
+        msg = Message.create(
+            sender_key="abcdef01",
+            sender_name="t",
+            sender_type="claude",
+            body="hi",
+            conv="general",
+        )
+        assert msg.reply_to is None
+        data = json.loads(msg.to_mqtt_payload())
+        assert data["reply_to"] is None

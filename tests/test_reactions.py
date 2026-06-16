@@ -219,14 +219,6 @@ def published_capture():
     return published, publish
 
 
-def _run(coro):
-    return (
-        asyncio.get_event_loop().run_until_complete(coro)
-        if asyncio.get_event_loop().is_running()
-        else asyncio.run(coro)
-    )
-
-
 class TestCommsReactValidation:
     def test_unknown_key_errors(
         self, store_factory, published_capture, registry_and_alice

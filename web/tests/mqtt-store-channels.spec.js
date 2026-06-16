@@ -414,13 +414,22 @@ describe('MqttChatStore — archiveChannel (15s undo)', () => {
     expect(store.channelsById.gen.member).toBe(true);
   });
 
-  it('closeChannel delegates to archiveChannel (Q1 lock)', () => {
+  it('closeChannel produces the same optimistic archive state as archiveChannel (Q1 lock)', () => {
+    // Replace the spy-on-archiveChannel delegation check with an observable
+    // state assertion: after closeChannel(), the channel must be optimistically
+    // marked archived and removed from membership — the same invariant that
+    // archiveChannel's own happy-path test above asserts. This checks the
+    // end-state contract rather than the internal delegation mechanism.
     const store = new MqttChatStore();
     store.channelsById = { gen: { id: 'gen', member: true, archived: false } };
-    // Spy on archiveChannel — closeChannel must produce the same shape.
-    const archiveSpy = vi.spyOn(store, 'archiveChannel');
-    store.closeChannel('gen');
-    expect(archiveSpy).toHaveBeenCalledWith('gen');
+    // closeChannel returns { done, cancel } just like archiveChannel.
+    const result = store.closeChannel('gen');
+    // Optimistic state: channel is archived, membership revoked.
+    expect(store.channelsById.gen.archived).toBe(true);
+    expect(store.channelsById.gen.member).toBe(false);
+    // Result shape mirrors archiveChannel: has done + cancel.
+    expect(typeof result.done?.then).toBe('function');
+    expect(typeof result.cancel).toBe('function');
   });
 });
 

@@ -196,18 +196,9 @@ describe('MemberList — M-FIX always-three-sections', () => {
     expect(localStorage.getItem(LEGACY_OFFLINE_KEY)).toBeNull();
   });
 
-  it('expanded chevron carries the .expanded class for CSS rotation', async () => {
-    const { getByTestId, container } = render(MemberList, defaultProps());
-    const activeBtn = getByTestId('members-active-section');
-    const chevron = activeBtn.querySelector('.members-section-chevron');
-
-    // Default-expanded → .expanded class on chevron.
-    expect(chevron.classList.contains('expanded')).toBe(true);
-
-    await fireEvent.click(activeBtn);
-    await tick();
-    expect(chevron.classList.contains('expanded')).toBe(false);
-  });
+  // NOTE: the CSS `.expanded` chevron-class test was removed (2026-06-12
+  // test-cleanup). The aria-expanded assertions in 'rehydrates collapse
+  // state from localStorage on mount' are the canonical semantic contract.
 
   it('uses aria-controls to link each header to its body region id', () => {
     localStorage.setItem(OFFLINE_KEY, '1'); // expand Offline so body renders

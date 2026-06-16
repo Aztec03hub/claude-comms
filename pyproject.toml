@@ -31,6 +31,11 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0",
     "pydantic>=2.0",
+    # pydantic-core imports typing_extensions.Sentinel (PEP 661), added in
+    # 4.12.0. Without this floor a clean install can resolve an older
+    # typing_extensions and the daemon fails to start with ImportError.
+    # Surfaced by the e2e CI gate (daemon spawn in a fresh environment).
+    "typing_extensions>=4.12.0",
 ]
 
 [project.optional-dependencies]

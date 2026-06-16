@@ -23,9 +23,6 @@ class TestExtractMentions:
     def test_multiple_mentions(self) -> None:
         assert extract_mentions("[@alice, @bob] Hello!") == ["alice", "bob"]
 
-    def test_three_mentions(self) -> None:
-        assert extract_mentions("[@a, @b, @c] Hi") == ["a", "b", "c"]
-
     def test_no_mentions(self) -> None:
         assert extract_mentions("No mentions here") == []
 

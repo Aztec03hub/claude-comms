@@ -16,7 +16,7 @@
 // double-fire is impossible. pointerdown fires BEFORE the focus-trap's
 // synthetic-event interception, so the create wire reliably runs.
 //
-// What this suite pins (≥4 tests, P-3 + P-8 patterns):
+// What this suite pins (≥5 behavioral tests):
 //
 //   1. (P-8 pre-click state assertion) Create button is enabled,
 //      visible, has data-testid='channel-modal-create' BEFORE we
@@ -32,13 +32,7 @@
 //      against a regression that drops the latch).
 //   5. pointerdown with a non-primary button (right-click) does
 //      NOT fire onCreate.
-//   6. (P-1 source-level regex pin) ChannelModal source carries
-//      both onpointerdown AND onclick on the create button so a
-//      future "simplification" that drops one or the other gets
-//      caught at edit time.
-//   7. (P-1 source-level regex pin) ChannelModal source declares
-//      the `submitting` latch so a future refactor that removes
-//      the dedup gets caught at edit time.
+//   6. pointerdown is ignored when name is invalid (button disabled gate).
 //
 // Mutation-test invariants each protects:
 //   - Test 1 fails if the Create button's testid is renamed.
@@ -47,22 +41,13 @@
 //   - Test 4 fails if the `submitting` latch is removed (double-fire).
 //   - Test 5 fails if `e.button !== 0` guard is removed (right-click
 //     would create a channel).
-//   - Tests 6 + 7 fail at edit time if the surface shape regresses.
+//   - Test 6 fails if the nameIsValid guard is removed from the handler.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 
 import ChannelModal from '../src/components/ChannelModal.svelte';
-
-// Source-level regex pin helper (P-1). Mirrors getchannelrole-pure-bugfix
-// to stay compatible with vitest's import.meta.url resolution.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const CHANNEL_MODAL_SRC = resolve(HERE, '..', 'src', 'components', 'ChannelModal.svelte');
-const CHANNEL_MODAL_SOURCE = readFileSync(CHANNEL_MODAL_SRC, 'utf8');
 
 afterEach(() => {
   cleanup();
@@ -200,36 +185,4 @@ describe('ChannelModal: BUG-PHASE2A-1 Create button activation (v0.4.3)', () => 
     expect(onCreate).not.toHaveBeenCalled();
   });
 
-  it('P-1 source pin: Create button wires BOTH onpointerdown AND onclick (and the submitting latch is declared)', () => {
-    // Single source-level regex pin that catches three regressions
-    // simultaneously:
-    //   (a) Removing `onpointerdown=` from the Create button.
-    //   (b) Removing `onclick=` from the Create button.
-    //   (c) Removing the `submitting` latch declaration.
-    // Mutation-tested 2026-05-20: removing any of the three flips this
-    // test red.
-    expect(CHANNEL_MODAL_SOURCE).toMatch(
-      /onpointerdown=\{handlePrimaryPointerDown\}[^>]*onclick=\{handleCreate\}[^>]*data-testid="channel-modal-create"/,
-    );
-    expect(CHANNEL_MODAL_SOURCE).toMatch(/let submitting = \$state\(false\);/);
-    // Latch must be CHECKED in handleCreate (the actual dedupe site).
-    expect(CHANNEL_MODAL_SOURCE).toMatch(/if \(!nameIsValid \|\| submitting\) return;/);
-    // Primary-button gate must be present so right-click can't submit.
-    expect(CHANNEL_MODAL_SOURCE).toMatch(/if \(e\.button !== 0\) return;/);
-  });
-
-  it('P-1 source pin: handlePrimaryPointerDown stays a pure activation handler (no state writes other than via handleCreate)', () => {
-    // Mutation-test invariant: the pointerdown handler must NOT mutate
-    // `submitting` directly or anywhere outside handleCreate. If a
-    // future refactor inlines the latch flip into handlePrimaryPointerDown
-    // (bypassing handleCreate's nameIsValid gate), this pin trips.
-    const handlerMatch = CHANNEL_MODAL_SOURCE.match(
-      /function handlePrimaryPointerDown\(e\) \{[\s\S]*?\n  \}/,
-    );
-    expect(handlerMatch).not.toBeNull();
-    const body = handlerMatch[0];
-    // Body must call handleCreate and not assign to submitting directly.
-    expect(body).toMatch(/handleCreate\(\);/);
-    expect(body).not.toMatch(/submitting\s*=/);
-  });
 });

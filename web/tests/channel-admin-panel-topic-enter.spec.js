@@ -26,7 +26,7 @@
 // blur fires, so the blur-driven second call short-circuits immediately
 // without touching store.setTopic.
 //
-// What this suite pins (≥4 tests, P-1 + P-3 patterns):
+// What this suite pins (≥5 behavioral tests):
 //
 //   1. Enter on the topic input fires store.setTopic EXACTLY ONCE
 //      with the typed value (no empty-string overwrite).
@@ -37,12 +37,9 @@
 //      break it while fixing the Enter double-fire).
 //   4. Empty-string blur (i.e. blur after the input was already
 //      committed) is a no-op.
-//   5. (P-1 source-level regex pin) commitEditTopic's body starts
-//      with `if (!editingTopic) return;` so a future refactor that
-//      drops the guard gets caught at edit time.
-//   6. (P-1 source-level regex pin) commitRename has the same
-//      guard pattern (both inline-edit functions share the same
-//      Enter+blur double-fire shape; both must be protected).
+//   5. Enter on the rename input fires store.renameChannel EXACTLY ONCE
+//      (commitRename shares the same Enter+blur guard shape as
+//      commitEditTopic and must be protected against double-fire).
 //
 // Mutation-test invariants each protects:
 //   - Test 1 fails if commitEditTopic is removed from the Enter path.
@@ -51,22 +48,13 @@
 //   - Test 3 fails if the blur path is broken / no longer commits.
 //   - Test 4 fails if the guard is INVERTED (i.e. `if (editingTopic)
 //     return;` would no-op the actual commit).
-//   - Tests 5 + 6 fail at edit time if the guard line is removed.
+//   - Test 5 fails if the Enter+blur guard is removed from commitRename.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 
 import ChannelAdminPanel from '../src/components/ChannelAdminPanel.svelte';
-
-// Source-level regex pin helper (P-1). Mirrors getchannelrole-pure-bugfix
-// to stay compatible with vitest's import.meta.url resolution.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ADMIN_PANEL_SRC = resolve(HERE, '..', 'src', 'components', 'ChannelAdminPanel.svelte');
-const ADMIN_PANEL_SOURCE = readFileSync(ADMIN_PANEL_SRC, 'utf8');
 
 afterEach(() => {
   cleanup();
@@ -259,44 +247,38 @@ describe('ChannelAdminPanel: BUG-PHASE2A-2 topic Enter double-fire (v0.4.3)', ()
     expect(queryByTestId('channel-admin-topic-input')).toBeNull();
   });
 
-  it('P-1 source pin: commitEditTopic body starts with `if (!editingTopic) return;` guard', () => {
-    // Mutation-tested 2026-05-20: removing the guard line flips this
-    // test red AND flips the runtime tests (2, 4) red. Dual coverage.
-    const fnMatch = ADMIN_PANEL_SOURCE.match(
-      /async function commitEditTopic\(\) \{[\s\S]*?\n  \}/,
-    );
-    expect(fnMatch).not.toBeNull();
-    const body = fnMatch[0];
-    expect(body).toMatch(/if \(!editingTopic\) return;/);
-    // The guard must appear BEFORE any state writes / store calls,
-    // otherwise the blur-after-Enter would still wipe.
-    const guardIdx = body.indexOf('if (!editingTopic) return;');
-    const stateWriteIdx = body.indexOf('editingTopic = false;');
-    const storeCallIdx = body.indexOf('store.setTopic');
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(stateWriteIdx).toBeGreaterThan(guardIdx);
-    expect(storeCallIdx).toBeGreaterThan(guardIdx);
-  });
+  it('Enter on the rename input fires store.renameChannel EXACTLY ONCE (commitRename guard prevents double-fire on Enter+blur)', async () => {
+    // commitRename shares the IDENTICAL Enter+blur wiring as commitEditTopic.
+    // Both must carry the `if (!editingName) return;` guard to prevent
+    // the unmounting-input blur from firing a second (empty) rename call.
+    // Behavioral coverage for the rename path (which was NOT covered by
+    // the deleted P-1 source pin — that pin only checked source text,
+    // not runtime behavior).
+    const renameChannel = vi.fn().mockResolvedValue({ success: true });
+    const store = makeStore({ renameChannel });
+    const props = makeProps({ store, currentChannelRole: 'owner' });
+    const { getByTestId } = render(ChannelAdminPanel, { props });
 
-  it('P-1 source pin: commitRename carries the same `if (!editingName) return;` guard (same Enter+blur double-fire shape)', () => {
-    // commitRename has the IDENTICAL Enter+blur wiring as commitEditTopic
-    // (see ChannelAdminPanel.svelte lines wiring `onkeydown=Enter` and
-    // `onblur=commitRename`). Both must carry the same guard.
-    const fnMatch = ADMIN_PANEL_SOURCE.match(
-      /async function commitRename\(\) \{[\s\S]*?\n  \}/,
-    );
-    expect(fnMatch).not.toBeNull();
-    const body = fnMatch[0];
-    expect(body).toMatch(/if \(!editingName\) return;/);
-  });
+    // Open the rename editor.
+    await fireEvent.click(getByTestId('channel-admin-action-rename'));
+    await flush();
 
-  it('P-3 dual-coverage: topic input still wires BOTH onkeydown AND onblur to their respective commit/handler functions', () => {
-    // Defends the wire shape. If someone "simplifies" by removing the
-    // onblur path entirely (a tempting fix to the double-fire bug),
-    // this pin catches it because the blur-commit UX is real (test 3
-    // above exercises it functionally).
-    expect(ADMIN_PANEL_SOURCE).toMatch(
-      /onkeydown=\{handleTopicKeydown\}[^>]*onblur=\{commitEditTopic\}/,
-    );
+    const input = getByTestId('channel-admin-name-input');
+    expect(input).not.toBeNull();
+
+    // User types a new name.
+    await fireEvent.input(input, { target: { value: 'new-name' } });
+    await flush();
+
+    // User presses Enter — the keydown handler commits the rename.
+    // The unmounting input fires blur AFTER Enter; the guard must
+    // short-circuit that second call so renameChannel runs exactly once.
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    await fireEvent.blur(input);
+    await flush();
+
+    expect(renameChannel).toHaveBeenCalledTimes(1);
+    expect(renameChannel).toHaveBeenCalledWith('ch-1', 'new-name');
+    expect(renameChannel).not.toHaveBeenCalledWith('ch-1', '');
   });
 });

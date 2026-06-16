@@ -305,12 +305,12 @@ class TestRound3MessageSending:
 
     @pytest.mark.asyncio
     async def test_enter_submits_and_clears(self):
-        """Enter inserts a newline in TextArea (TextArea consumes the event).
+        """Enter submits the message and clears the input.
 
-        With the TextArea widget, Enter is handled by TextArea._on_key which
-        stops the event before it can bubble to MessageInput.on_key. The
-        message submission path goes through MessageInput.on_key, so Enter
-        currently inserts a newline rather than submitting.
+        MessageInput._SubmittableTextArea overrides the Enter key so that it
+        posts a MessageSubmitted event instead of inserting a newline.  The app
+        receives the event via _send_message, which is monkey-patched here to
+        capture the submitted body.
         """
         app = _make_app()
         sent_bodies: list[str] = []
@@ -519,19 +519,19 @@ class TestRound4KeyboardShortcuts:
 
     @pytest.mark.asyncio
     async def test_tab_moves_focus(self):
-        """Tab should move focus between widgets."""
+        """Shift+Tab moves focus away from the message input widget."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             input_widget = pilot.app.query_one("#message-input", TextArea)
             assert input_widget.has_focus
 
-            # Tab should move focus away from input (unless @mention completing)
-            # In the TUI, Tab in MessageInput triggers @mention logic,
-            # so let's test Shift+Tab for reverse navigation
+            # Tab in MessageInput triggers @mention completion, so use
+            # Shift+Tab for standard reverse-cycle focus navigation.
             await pilot.press("shift+tab")
             await pilot.pause()
-            # Focus should have moved somewhere else
-            # (exact target depends on focus order)
+
+            # After Shift+Tab, focus must have moved to a different widget.
+            assert not input_widget.has_focus
 
 
 # ============================================================================
@@ -670,7 +670,13 @@ class TestRound5EdgeCases:
 
     @pytest.mark.asyncio
     async def test_at_mention_tab_cycles(self):
-        """Tab should cycle through multiple @mention completions."""
+        """Tab completes @mention to a real candidate name.
+
+        After typing ``@al`` and pressing Tab, the input must contain one of the
+        two matching names ("@alice" or "@alex") — NOT the raw typed prefix
+        "@al".  A second Tab press (with the completion already applied) must
+        also leave the text as a valid name without crashing.
+        """
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             participant_list = pilot.app.query_one(
@@ -698,19 +704,22 @@ class TestRound5EdgeCases:
 
             await pilot.press(*list("@al"))
             await pilot.pause()
-            # First tab — should complete to one of alice/alex
+
+            # First Tab: must complete to a real candidate, not leave the raw prefix.
             await pilot.press("tab")
             await pilot.pause()
             first_value = input_widget.text
+            assert first_value in ("@alice", "@alex"), (
+                f"Expected '@alice' or '@alex' after first Tab, got {first_value!r}"
+            )
 
-            # Note: tab cycling re-uses _last_partial, but typing resets it
-            # The next tab should cycle to the other match
-            # However, the completion replaces the text, so _last_partial
-            # might change. This test verifies no crash at minimum.
-            assert (
-                "@al" in first_value.lower()
-                or "@alice" in first_value
-                or "@alex" in first_value
+            # Second Tab: completion is now applied; Tab again must not crash
+            # and must leave a valid name in the box.
+            await pilot.press("tab")
+            await pilot.pause()
+            second_value = input_widget.text
+            assert second_value in ("@alice", "@alex"), (
+                f"Expected '@alice' or '@alex' after second Tab, got {second_value!r}"
             )
 
     @pytest.mark.asyncio

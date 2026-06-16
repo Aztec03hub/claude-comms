@@ -453,6 +453,9 @@ class TestToolCommsArtifactGet:
         assert result["has_more"] is True
         assert result["next_offset"] == DEFAULT_GET_CHUNK_SIZE
         assert len(result["content"]) == DEFAULT_GET_CHUNK_SIZE
+        # Verify the returned slice is the correct leading chunk — catches
+        # off-by-one errors in the offset logic (P4.d tighten).
+        assert result["content"] == large_content[:DEFAULT_GET_CHUNK_SIZE]
 
     def test_read_with_offset(self, tmp_path: Path):
         registry = ParticipantRegistry()

@@ -106,6 +106,7 @@ describe('NotificationToast — G-13 clickable card', () => {
   });
 
   it('clicking the close-X dismisses without firing onActivate (stopPropagation)', async () => {
+    vi.useFakeTimers();
     const onActivate = vi.fn();
     const onDismiss = vi.fn();
     const { getByTestId } = render(NotificationToast, {
@@ -120,9 +121,10 @@ describe('NotificationToast — G-13 clickable card', () => {
     });
     const close = getByTestId('toast-close');
     await fireEvent.click(close);
-    // The close handler waits 300ms (exit animation) before calling onDismiss,
-    // so we wait it out with fake timers.
-    await new Promise((r) => setTimeout(r, 350));
+    // The close handler waits 300ms (exit animation) before calling onDismiss.
+    // Drive the timer deterministically with fake timers instead of a real wait.
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
     expect(onActivate).not.toHaveBeenCalled();
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
@@ -247,14 +249,17 @@ async function mountAppForToasts() {
   return result;
 }
 
-describe('App.svelte — G-14 toast cap and coalesce', () => {
-  // We test the toast rendering integration end-to-end: render App with the
-  // mocked store, then push messages into store.messages and let App's
-  // notification $effect fire its addToast logic. We can't mutate
-  // store.messages from the test (the store instance is private to App),
-  // so instead we exercise the rendered NotificationToast list and assert
-  // on the DOM that the cap and coalesce rules hold under simulated
-  // sequential calls.
+describe('NotificationToast — G-14 toast cap and coalesce rendering contract', () => {
+  // SCOPE NOTE: these tests exercise NotificationToast component rendering
+  // directly (pill/card variants, text formatting, click routing). They do NOT
+  // drive App.svelte's addToast / coalesce algorithm (which decides when to
+  // coalesce and caps at 3 cards). The App-level coalesce algorithm is the
+  // real G-14 behavior and requires a store-mutation integration path that is
+  // not yet wired here. The describe is titled to reflect what is actually
+  // tested, not what was originally claimed.
+  //
+  // TODO: wire a real coalesce test by seeding store.messages via the mock
+  // module's instance and driving the $effect through MqttChatStore._handleChatMessageForTest.
 
   it('renders no toasts on initial mount (clean slate)', async () => {
     const { queryAllByTestId } = render(App);
