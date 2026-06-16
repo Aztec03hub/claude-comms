@@ -100,15 +100,15 @@ jobs:
         # crashes the daemon on startup (pydantic-core needs Sentinel).
         env:
           CC_E2E_PYTHONPATH: ${{ github.workspace }}/src
-        run: pnpm exec playwright test --ignore-snapshots
+        run: pnpm exec playwright test --update-snapshots
 
-      - name: Upload Playwright report
+      - name: Upload regenerated baselines
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
-          path: web/playwright-report/
-          retention-days: 30
+          name: e2e-baselines
+          path: web/e2e/__screenshots__/
+          retention-days: 7
 
   test:
     name: Test (Python ${{ matrix.python-version }})
