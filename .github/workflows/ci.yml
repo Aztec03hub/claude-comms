@@ -93,6 +93,13 @@ jobs:
       # Chromium and drop --ignore-snapshots to gate visuals too.
       - name: Run Playwright scenarios (behavioral; snapshots non-blocking)
         working-directory: web
+        # The editable install already exposes claude_comms + all deps via the
+        # runner's site-packages. Pin the daemon's PYTHONPATH to just the repo
+        # src; the fixture's default prepends /usr/lib/python3/dist-packages,
+        # whose old typing_extensions otherwise shadows the pip-installed one and
+        # crashes the daemon on startup (pydantic-core needs Sentinel).
+        env:
+          CC_E2E_PYTHONPATH: ${{ github.workspace }}/src
         run: pnpm exec playwright test --ignore-snapshots
 
       - name: Upload Playwright report
