@@ -93,7 +93,7 @@ jobs:
       # Chromium and drop --ignore-snapshots to gate visuals too.
       - name: Run Playwright scenarios (behavioral; snapshots non-blocking)
         working-directory: web
-        run: pnpm test:e2e -- --ignore-snapshots
+        run: pnpm exec playwright test --ignore-snapshots
 
       - name: Upload Playwright report
         if: always()
