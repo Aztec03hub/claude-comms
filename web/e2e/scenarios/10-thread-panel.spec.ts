@@ -112,6 +112,46 @@ async function openThreadOnFirstMessage(appPage: import('@playwright/test').Page
   return panel;
 }
 
+/**
+ * Drag the resize handle by deltaX px (positive = right = panel shrinks;
+ * negative = left = panel grows). Same mechanics that work reliably for
+ * the drag itself; flakiness lived in reading localStorage before the
+ * mouseup-time persist landed (see persistedWidth).
+ */
+async function dragResizeHandle(
+  appPage: import('@playwright/test').Page,
+  handle: import('@playwright/test').Locator,
+  deltaX: number,
+) {
+  const box = await handle.boundingBox();
+  expect(box).not.toBeNull();
+  const startX = box!.x + box!.width / 2;
+  const startY = box!.y + box!.height / 2;
+  await appPage.mouse.move(startX, startY);
+  await appPage.mouse.down();
+  await appPage.mouse.move(startX + deltaX, startY, { steps: 12 });
+  await appPage.mouse.up();
+}
+
+/**
+ * Read the persisted panel width, polling until the mouseup-time write has
+ * landed (persist is not synchronous with mouse.up(); a bare read races it
+ * on slower CI -> NaN).
+ */
+async function persistedWidth(appPage: import('@playwright/test').Page): Promise<number> {
+  await expect
+    .poll(
+      () => appPage.evaluate((key) => localStorage.getItem(key as string), STORAGE_KEY),
+      { timeout: 5000 },
+    )
+    .not.toBeNull();
+  const stored = await appPage.evaluate(
+    (key) => localStorage.getItem(key as string),
+    STORAGE_KEY,
+  );
+  return Number.parseInt(stored!, 10);
+}
+
 test.describe('Scenario 10: thread panel + drag-resize', () => {
   test('Opening a thread shows panel with parent + close button + composer + handle', async ({ appPage, consoleErrors }) => {
     // Clean width state so default 360 anchors.
@@ -170,26 +210,10 @@ test.describe('Scenario 10: thread panel + drag-resize', () => {
     const panel = await openThreadOnFirstMessage(appPage);
     const handle = panel.locator('[data-testid="thread-panel-resize-handle"]');
 
-    const handleBox = await handle.boundingBox();
-    expect(handleBox).not.toBeNull();
-    const startX = handleBox!.x + handleBox!.width / 2;
-    const startY = handleBox!.y + handleBox!.height / 2;
-    // Drag 120px to the LEFT (panel grows because the handle is on the
-    // LEFT edge of the panel and the panel is anchored RIGHT). The
-    // clampWidth ceiling further constrains the upper bound; we picked
-    // 120 because 360 + 120 = 480 which is well under MAX (720).
-    await appPage.mouse.move(startX, startY);
-    await appPage.mouse.down();
-    await appPage.mouse.move(startX - 120, startY, { steps: 10 });
-    await appPage.mouse.up();
-
-    // The new width is persisted.
-    const stored = await appPage.evaluate(
-      (key) => localStorage.getItem(key as string),
-      STORAGE_KEY,
-    );
-    expect(stored).not.toBeNull();
-    const storedWidth = Number.parseInt(stored!, 10);
+    // Drag 120px LEFT (panel grows; handle is on the LEFT edge, panel
+    // anchored RIGHT). 360 + 120 = 480, well under MAX (720).
+    await dragResizeHandle(appPage, handle, -120);
+    const storedWidth = await persistedWidth(appPage);
     expect(storedWidth).toBeGreaterThanOrEqual(DEFAULT_PANEL_WIDTH + 100);
     expect(storedWidth).toBeLessThanOrEqual(MAX_PANEL_WIDTH);
 
@@ -210,21 +234,10 @@ test.describe('Scenario 10: thread panel + drag-resize', () => {
     const panel = await openThreadOnFirstMessage(appPage);
     const handle = panel.locator('[data-testid="thread-panel-resize-handle"]');
 
-    const handleBox = await handle.boundingBox();
-    const startX = handleBox!.x + handleBox!.width / 2;
-    const startY = handleBox!.y + handleBox!.height / 2;
-    // Drag 600px to the RIGHT (panel shrinks). Default 360 - 600 = -240
-    // which is well below MIN; clamp must stop at 280.
-    await appPage.mouse.move(startX, startY);
-    await appPage.mouse.down();
-    await appPage.mouse.move(startX + 600, startY, { steps: 12 });
-    await appPage.mouse.up();
-
-    const stored = await appPage.evaluate(
-      (key) => localStorage.getItem(key as string),
-      STORAGE_KEY,
-    );
-    const storedWidth = Number.parseInt(stored!, 10);
+    // Drag 600px RIGHT (panel shrinks). 360 - 600 = -240, well below MIN;
+    // clamp must stop at 280.
+    await dragResizeHandle(appPage, handle, 600);
+    const storedWidth = await persistedWidth(appPage);
     expect(storedWidth).toBe(MIN_PANEL_WIDTH);
 
     assertNoConsoleErrors(consoleErrors);
@@ -236,22 +249,10 @@ test.describe('Scenario 10: thread panel + drag-resize', () => {
     const panel = await openThreadOnFirstMessage(appPage);
     const handle = panel.locator('[data-testid="thread-panel-resize-handle"]');
 
-    const handleBox = await handle.boundingBox();
-    const startX = handleBox!.x + handleBox!.width / 2;
-    const startY = handleBox!.y + handleBox!.height / 2;
-    // Drag 800px LEFT (panel grows). Default 360 + 800 = 1160 which
-    // exceeds MAX. The viewport-derived upper bound also kicks in
-    // (1600 - 200 chat-reserve = 1400 -> Math.min(720, 1400) = 720).
-    await appPage.mouse.move(startX, startY);
-    await appPage.mouse.down();
-    await appPage.mouse.move(startX - 800, startY, { steps: 15 });
-    await appPage.mouse.up();
-
-    const stored = await appPage.evaluate(
-      (key) => localStorage.getItem(key as string),
-      STORAGE_KEY,
-    );
-    const storedWidth = Number.parseInt(stored!, 10);
+    // Drag 800px LEFT (panel grows). 360 + 800 = 1160 exceeds MAX; the
+    // viewport-derived ceiling also caps at 720.
+    await dragResizeHandle(appPage, handle, -800);
+    const storedWidth = await persistedWidth(appPage);
     expect(storedWidth).toBe(MAX_PANEL_WIDTH);
 
     assertNoConsoleErrors(consoleErrors);
