@@ -87,9 +87,13 @@ jobs:
         working-directory: web
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run Playwright scenarios
+      # Behavioral e2e gates CI. Screenshot/snapshot assertions are skipped
+      # here because pixel baselines are Chromium-version sensitive across
+      # environments (audit W-6/W-7). Follow-up: regenerate baselines on CI's
+      # Chromium and drop --ignore-snapshots to gate visuals too.
+      - name: Run Playwright scenarios (behavioral; snapshots non-blocking)
         working-directory: web
-        run: pnpm test:e2e
+        run: pnpm test:e2e -- --ignore-snapshots
 
       - name: Upload Playwright report
         if: always()
