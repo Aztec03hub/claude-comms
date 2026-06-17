@@ -87,11 +87,14 @@ jobs:
         working-directory: web
         run: pnpm exec playwright install --with-deps chromium
 
-      # Full e2e gate: behavior + visual regression. The baselines in
-      # web/e2e/__screenshots__ are generated on this same CI Chromium, so
-      # screenshot assertions are deterministic here. If a UI change is
-      # intentional, regenerate with `playwright test --update-snapshots`.
-      - name: Run Playwright scenarios
+      # e2e gates on BEHAVIOR (real daemon + testid assertions + console-error
+      # spies). Screenshots are skipped (--ignore-snapshots): on this CI they
+      # flake run-to-run -- icon/font anti-aliasing plus larger nondeterministic
+      # redraws (audit W-6/W-7; observed ~1% and ~4% diffs on identical code
+      # across consecutive runs). Baselines stay committed for local visual
+      # checks (`playwright test --update-snapshots`); blocking on visuals needs
+      # deterministic-render work first.
+      - name: Run Playwright scenarios (behavioral; snapshots non-blocking)
         working-directory: web
         # The editable install already exposes claude_comms + all deps via the
         # runner's site-packages. Pin the daemon's PYTHONPATH to just the repo
@@ -100,7 +103,7 @@ jobs:
         # crashes the daemon on startup (pydantic-core needs Sentinel).
         env:
           CC_E2E_PYTHONPATH: ${{ github.workspace }}/src
-        run: pnpm exec playwright test
+        run: pnpm exec playwright test --ignore-snapshots
 
       - name: Upload e2e results on failure
         if: failure()
