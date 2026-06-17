@@ -20,6 +20,7 @@ import { tick } from 'svelte';
 
 import ArtifactDetailHeader from '../src/components/ArtifactDetailHeader.svelte';
 import ArtifactList from '../src/components/ArtifactList.svelte';
+import RemoteUpdateBanner from '../src/components/RemoteUpdateBanner.svelte';
 
 // ── Shared fixture data ───────────────────────────────────────────────────
 
@@ -264,69 +265,69 @@ describe('version-dropdown listbox keyboard nav (R2-5)', () => {
 });
 
 // ── Trigger-button keyboard activation ───────────────────────────────────
-//
-// NOTE: this describe still uses a local handler mirror (makeTriggerHandler)
-// from the original file. It was not listed in the cleanup plan as a
-// priority — the trigger shape is simple and the behavioral surface is thin.
-// Flagged for future improvement in VT-REWRITE.md.
 
+// Mounts the real ArtifactDetailHeader and fires keys on the live version
+// trigger button. When closed, activation keys must call
+// onToggleVersionDropdown + preventDefault; when open, they must not.
 describe('version-dropdown trigger keyboard open (R2-5)', () => {
-  // Mirrors `handleTriggerKeydown` from ArtifactDetailHeader.svelte.
-  function makeTriggerHandler({ openFn, getIsOpen }) {
-    return (e) => {
-      if (getIsOpen()) return;
-      if (
-        e.key === 'ArrowDown'
-        || e.key === 'ArrowUp'
-        || e.key === 'Enter'
-        || e.key === ' '
-      ) {
-        e.preventDefault();
-        openFn();
-      }
-    };
+  function triggerBtn(container) {
+    return container.querySelector('[data-testid="primary-version-selector"] button');
   }
 
-  function makeEvent(key) {
-    return new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
-  }
+  it('ArrowDown on the closed trigger opens the dropdown (calls onToggleVersionDropdown)', async () => {
+    const onToggleVersionDropdown = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ showVersionDropdown: false, onToggleVersionDropdown }),
+    });
+    await tick();
+    const btn = triggerBtn(container);
+    expect(btn).not.toBeNull();
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
 
-  it('ArrowDown opens the listbox when closed', () => {
-    let isOpen = false;
-    const openFn = vi.fn(() => { isOpen = true; });
-    const handler = makeTriggerHandler({ openFn, getIsOpen: () => isOpen });
-    const e = makeEvent('ArrowDown');
-    handler(e);
-    expect(openFn).toHaveBeenCalledTimes(1);
-    expect(e.defaultPrevented).toBe(true);
+    // fireEvent returns false when a handler called preventDefault.
+    const notPrevented = await fireEvent.keyDown(btn, { key: 'ArrowDown' });
+    expect(onToggleVersionDropdown).toHaveBeenCalledTimes(1);
+    expect(notPrevented).toBe(false);
   });
 
-  it('Enter and Space also open the listbox', () => {
-    let isOpen = false;
-    const openFn = vi.fn(() => { isOpen = true; });
-    const handler = makeTriggerHandler({ openFn, getIsOpen: () => isOpen });
-    handler(makeEvent('Enter'));
-    expect(openFn).toHaveBeenCalledTimes(1);
-    isOpen = false;
-    handler(makeEvent(' '));
-    expect(openFn).toHaveBeenCalledTimes(2);
+  it('Enter and Space also open the dropdown', async () => {
+    const onToggleVersionDropdown = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ showVersionDropdown: false, onToggleVersionDropdown }),
+    });
+    await tick();
+    const btn = triggerBtn(container);
+    // showVersionDropdown is a controlled prop and stays false here, so each
+    // activation key re-triggers the open callback.
+    await fireEvent.keyDown(btn, { key: 'Enter' });
+    await fireEvent.keyDown(btn, { key: ' ' });
+    expect(onToggleVersionDropdown).toHaveBeenCalledTimes(2);
   });
 
-  it('does nothing when the listbox is already open', () => {
-    const openFn = vi.fn();
-    const handler = makeTriggerHandler({ openFn, getIsOpen: () => true });
-    handler(makeEvent('ArrowDown'));
-    handler(makeEvent('Enter'));
-    expect(openFn).not.toHaveBeenCalled();
+  it('does nothing when the dropdown is already open', async () => {
+    const onToggleVersionDropdown = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ showVersionDropdown: true, onToggleVersionDropdown }),
+    });
+    await tick();
+    const btn = triggerBtn(container);
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    await fireEvent.keyDown(btn, { key: 'ArrowDown' });
+    await fireEvent.keyDown(btn, { key: 'Enter' });
+    expect(onToggleVersionDropdown).not.toHaveBeenCalled();
   });
 
-  it('non-activation keys do not open the listbox', () => {
-    const openFn = vi.fn();
-    const handler = makeTriggerHandler({ openFn, getIsOpen: () => false });
-    handler(makeEvent('Tab'));
-    handler(makeEvent('a'));
-    handler(makeEvent('Escape'));
-    expect(openFn).not.toHaveBeenCalled();
+  it('non-activation keys do not open the dropdown', async () => {
+    const onToggleVersionDropdown = vi.fn();
+    const { container } = render(ArtifactDetailHeader, {
+      props: makeHeaderProps({ showVersionDropdown: false, onToggleVersionDropdown }),
+    });
+    await tick();
+    const btn = triggerBtn(container);
+    await fireEvent.keyDown(btn, { key: 'Tab' });
+    await fireEvent.keyDown(btn, { key: 'a' });
+    await fireEvent.keyDown(btn, { key: 'Escape' });
+    expect(onToggleVersionDropdown).not.toHaveBeenCalled();
   });
 });
 
@@ -410,45 +411,46 @@ describe('star button keyboard activation (R2-5)', () => {
 
 // ── Remote-update banner Esc dismissal ───────────────────────────────────
 //
-// NOTE: this describe still uses a local handler mirror (makeBannerKeydownHandler)
-// from the original file. It was not listed as a priority in the cleanup plan.
-// Flagged for future improvement in VT-REWRITE.md.
+// Mounts the real RemoteUpdateBanner and fires keys on a live banner
+// control. Esc must call onDismiss, preventDefault, and stopPropagation so
+// the App-global Esc handler does not also fire (plan §4 R4-3 precedence) —
+// proven by a parent keydown listener that must NOT receive the event.
 
 describe('remote-update banner Esc dismissal (R4-3)', () => {
-  // Mirrors `handleInteractiveKeydown` in RemoteUpdateBanner.svelte. Esc
-  // anywhere inside the banner dismisses it AND stops propagation so the
-  // App-global Esc handler does not also fire.
-  function makeBannerKeydownHandler(onDismiss) {
-    return (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        e.preventDefault();
-        onDismiss?.();
-      }
-    };
+  function bannerProps(overrides = {}) {
+    return { visible: true, senderName: 'claude', newVersion: 3, onDismiss: vi.fn(), ...overrides };
   }
 
-  function makeEvent(key) {
-    return new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
-  }
-
-  it('Esc fires onDismiss and stops propagation', () => {
+  it('Esc on a banner control fires onDismiss, prevents default, and stops propagation', async () => {
     const onDismiss = vi.fn();
-    const handler = makeBannerKeydownHandler(onDismiss);
-    const e = makeEvent('Escape');
+    const { container } = render(RemoteUpdateBanner, { props: bannerProps({ onDismiss }) });
+    await tick();
+    const btn = container.querySelector('[data-testid="remote-banner-view-changes"]');
+    expect(btn).not.toBeNull();
+
+    // Dispatch a real Esc through the mounted component and spy on the event.
+    // keydown is a Svelte-delegated event (the handler runs at the delegation
+    // root, after the event has already bubbled past intermediate DOM nodes),
+    // so we assert the handler called stopPropagation on the event itself --
+    // that is what keeps the App-global Esc handler from also firing -- rather
+    // than via a parent listener that delegation would bypass.
+    const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
     const stopSpy = vi.spyOn(e, 'stopPropagation');
-    handler(e);
+    btn.dispatchEvent(e);
+
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(stopSpy).toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(true);
   });
 
-  it('non-Esc keys are passed through (do not dismiss)', () => {
+  it('non-Esc keys are passed through (do not dismiss)', async () => {
     const onDismiss = vi.fn();
-    const handler = makeBannerKeydownHandler(onDismiss);
-    handler(makeEvent('Enter'));
-    handler(makeEvent('Tab'));
-    handler(makeEvent('a'));
+    const { container } = render(RemoteUpdateBanner, { props: bannerProps({ onDismiss }) });
+    await tick();
+    const btn = container.querySelector('[data-testid="remote-banner-view-changes"]');
+    await fireEvent.keyDown(btn, { key: 'Enter' });
+    await fireEvent.keyDown(btn, { key: 'Tab' });
+    await fireEvent.keyDown(btn, { key: 'a' });
     expect(onDismiss).not.toHaveBeenCalled();
   });
 });
