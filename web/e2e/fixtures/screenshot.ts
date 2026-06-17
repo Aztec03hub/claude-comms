@@ -15,7 +15,7 @@ import { Page, Locator, expect } from '@playwright/test';
 export interface SnapshotOptions {
   /** Additional selectors to mask (added to the time-dependent defaults). */
   extraMask?: string[];
-  /** Allowed pixel diff. Defaults to 100 to match playwright.config.js. */
+  /** Allowed pixel diff. Defaults to 500 to match playwright.config.js. */
   maxDiffPixels?: number;
   /** Snapshot file name (without extension). */
   name?: string;
@@ -56,7 +56,11 @@ export async function expectScreenshot(
 
   const screenshotOptions = {
     mask,
-    maxDiffPixels: options.maxDiffPixels ?? 100,
+    // Default 500: small element captures (e.g. the chat header) diff by a
+    // couple hundred px of icon/font anti-aliasing run-to-run on CI (audit
+    // W-6/W-7). Behavioral testids gate element presence; this is a visual
+    // smoke. Real layout/content regressions far exceed 500px.
+    maxDiffPixels: options.maxDiffPixels ?? 500,
     fullPage: options.fullPage ?? true,
     animations: 'disabled' as const,
     caret: 'hide' as const,

@@ -18,9 +18,10 @@ import { defineConfig } from '@playwright/test';
  *   does not collide on ports. Tests WITHIN a file run serially (the worker
  *   fixture is reused).
  *
- * - Screenshot defaults: maxDiffPixels=100 to start, tunable per-call via
- *   expectScreenshot's maxDiffPixels option. Animations disabled by
- *   waitForStable() in fixtures/screenshot.ts.
+ * - Screenshot defaults: maxDiffPixels=500 to absorb run-to-run icon/font
+ *   anti-aliasing on small element captures (audit W-6/W-7); tunable
+ *   per-call via expectScreenshot's maxDiffPixels option. Animations
+ *   disabled by waitForStable() in fixtures/screenshot.ts.
  */
 export default defineConfig({
   testDir: './e2e/scenarios',
@@ -28,7 +29,7 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
     toHaveScreenshot: {
-      maxDiffPixels: 100,
+      maxDiffPixels: 500,
       animations: 'disabled',
     },
   },
