@@ -341,6 +341,46 @@ def build_capabilities_route(config: dict):
     return Route("/api/capabilities", _handler, methods=["GET"])
 
 
+def build_identity_route(config: dict, cors=None):
+    """GET /api/identity — return the daemon's configured identity.
+
+    Extracted from the ``_run()`` closure so it can be exercised via a
+    Starlette TestClient. ``cors`` is the per-request CORS-header function
+    (``_run`` injects its ``_cors``); it defaults to a no-op so tests need no
+    CORS wiring.
+    """
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    cors_fn = cors or (lambda _request: {})
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        identity = config.get("identity", {}) or {}
+        return JSONResponse(
+            {
+                "key": identity.get("key", ""),
+                "name": identity.get("name", ""),
+                "type": identity.get("type", "human"),
+            },
+            headers=cors_fn(request),
+        )
+
+    return Route("/api/identity", _handler, methods=["GET"])
+
+
+def build_identity_options_route(config: dict, cors=None):
+    """OPTIONS preflight for CORS on /api/identity."""
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    cors_fn = cors or (lambda _request: {})
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        return JSONResponse({}, headers=cors_fn(request))
+
+    return Route("/api/identity", _handler, methods=["OPTIONS"])
+
+
 def build_web_token_route():
     """GET /api/web-token — loopback-only. Returns the in-memory bearer token.
 
@@ -1158,24 +1198,9 @@ def start(
                     headers=_cors(request),
                 )
 
-            async def _api_identity(request: Request) -> JSONResponse:
-                """GET /api/identity — return the daemon's configured identity."""
-                identity = config.get("identity", {})
-                return JSONResponse(
-                    {
-                        "key": identity.get("key", ""),
-                        "name": identity.get("name", ""),
-                        "type": identity.get("type", "human"),
-                    },
-                    headers=_cors(request),
-                )
-
-            async def _api_identity_options(request: Request) -> JSONResponse:
-                """OPTIONS preflight for CORS on /api/identity."""
-                return JSONResponse(
-                    {},
-                    headers=_cors(request),
-                )
+            # /api/identity GET + OPTIONS are built by the module-level
+            # build_identity_route / build_identity_options_route (extracted
+            # for TestClient coverage); _cors is injected at registration.
 
             async def _api_participants(request: Request) -> JSONResponse:
                 """GET /api/participants/{channel} — return participant list."""
@@ -1295,11 +1320,9 @@ def start(
                     methods=["OPTIONS"],
                 ),
             )
+            starlette_app.routes.insert(2, build_identity_route(config, cors=_cors))
             starlette_app.routes.insert(
-                2, Route("/api/identity", _api_identity, methods=["GET"])
-            )
-            starlette_app.routes.insert(
-                3, Route("/api/identity", _api_identity_options, methods=["OPTIONS"])
+                3, build_identity_options_route(config, cors=_cors)
             )
             starlette_app.routes.insert(
                 4,

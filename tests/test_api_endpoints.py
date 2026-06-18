@@ -7,17 +7,11 @@ Covers:
 4. MCP presence publishing on join — comms_join presence payloads
 5. Client type display in presence — participant "client" field
 
-NOTE (Identity API): The GET /api/identity handler (_api_identity) is defined
-as a closure inside cli._run() capturing the ``config`` dict from the daemon
-startup context. There is no standalone build_identity_route(config) helper
-(unlike build_capabilities_route), making it genuinely infeasible to mount the
-handler in a Starlette TestClient without modifying cli.py. The four tautological
-tests that previously existed here were asserting dict.get() on literals they
-constructed themselves — they exercised no production code.
-TODO: extract a build_identity_route(config) from cli._run() (same pattern as
-build_capabilities_route) and replace this comment with a TestClient integration
-test that hits GET /api/identity and verifies key/name/type in the JSON response.
-Real identity contract is covered by the e2e daemon fixture and scenario tests.
+Identity API: GET /api/identity is now built by the module-level
+cli.build_identity_route(config) (extracted from the _run() closure), so
+TestIdentityApi below mounts the REAL handler in a Starlette TestClient and
+verifies key/name/type + defaults. (The four tautological tests that used to
+live here asserted dict.get() on literals and exercised no production code.)
 """
 
 from __future__ import annotations
@@ -26,8 +20,56 @@ import json
 
 import pytest
 
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
 from claude_comms.broker import MessageDeduplicator, MessageStore
+from claude_comms.cli import build_identity_route
 from claude_comms.mcp_tools import ParticipantRegistry, tool_comms_join
+
+
+# =========================================================================
+# 2. Identity REST API — GET /api/identity (real route via TestClient)
+# =========================================================================
+
+
+class TestIdentityApi:
+    """GET /api/identity through the real cli.build_identity_route handler.
+
+    Mounts the extracted route in a Starlette TestClient — no daemon or CORS
+    wiring needed (cors defaults to a no-op), so this exercises the actual
+    production handler (config read + field defaults), not a re-implementation.
+    """
+
+    @staticmethod
+    def _client(config: dict) -> TestClient:
+        return TestClient(Starlette(routes=[build_identity_route(config)]))
+
+    def test_returns_configured_identity(self):
+        client = self._client(
+            {"identity": {"key": "abcd1234", "name": "phil", "type": "human"}}
+        )
+        resp = client.get("/api/identity")
+        assert resp.status_code == 200
+        assert resp.json() == {"key": "abcd1234", "name": "phil", "type": "human"}
+
+    def test_type_defaults_to_human_when_absent(self):
+        client = self._client({"identity": {"key": "abcd1234", "name": "phil"}})
+        assert client.get("/api/identity").json()["type"] == "human"
+
+    def test_empty_defaults_when_identity_missing(self):
+        client = self._client({})
+        assert client.get("/api/identity").json() == {
+            "key": "",
+            "name": "",
+            "type": "human",
+        }
+
+    def test_claude_type_preserved(self):
+        client = self._client(
+            {"identity": {"key": "bbbb2222", "name": "claude", "type": "claude"}}
+        )
+        assert client.get("/api/identity").json()["type"] == "claude"
 
 
 # =========================================================================
