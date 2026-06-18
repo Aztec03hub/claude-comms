@@ -30,6 +30,7 @@
   import NotificationPolicyMenu from './components/NotificationPolicyMenu.svelte';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import * as api from './lib/api.js';
+  import { applyToast } from './lib/toast-coalesce.js';
 
   const store = new MqttChatStore();
   const keyboard = getKeyboardRegistry();
@@ -659,58 +660,17 @@
   }
 
   function addToast(toast) {
-    // Look for an existing visible toast from the same channel.
-    const sameChannelIdx = toasts.findIndex(t => t.channel === toast.channel);
-
-    if (sameChannelIdx >= 0) {
-      // Coalesce path. The pre-existing toast in the stack absorbs the new
-      // event — we keep its id (so timers stay attached) but rewrite the
-      // body to reflect the new aggregate.
-      const existing = toasts[sameChannelIdx];
-      const coalescedCount = (existing.coalescedCount ?? 1) + 1;
-
-      if (coalescedCount >= COALESCE_TO_PILL_AT) {
-        // Promote to compact pill.
-        const updated = {
-          ...existing,
-          pill: true,
-          coalescedCount,
-          sender: existing.sender, // keep for color/initials fallback
-          text: `+${coalescedCount} new in #${toast.channel}`,
-          messageId: toast.messageId ?? existing.messageId,
-        };
-        toasts = toasts.map((t, i) => (i === sameChannelIdx ? updated : t));
-      } else {
-        // 2..4 coalesced: render as "<sender> and N others sent messages."
-        const others = coalescedCount - 1;
-        const updated = {
-          ...existing,
-          pill: false,
-          coalescedCount,
-          // Sender shown is the most-recent sender so users see fresh
-          // names; preserve the channel routing target.
-          sender: toast.sender,
-          text: `${toast.sender?.name ?? 'someone'} and ${others} other${others === 1 ? '' : 's'} sent messages`,
-          messageId: toast.messageId ?? existing.messageId,
-        };
-        toasts = toasts.map((t, i) => (i === sameChannelIdx ? updated : t));
-      }
-      // Reset the 5s window on coalesce so the merged toast stays visible.
-      scheduleToastExpiry(existing.id);
-      return;
-    }
-
-    // No same-channel match. If we're already at the cap, evict the
-    // oldest toast (index 0) FIFO.
-    let next = toasts;
-    if (next.length >= TOAST_CAP) {
-      const evicted = next[0];
-      clearToastTimer(evicted.id);
-      next = next.slice(1);
-    }
-    const fresh = { ...toast, coalescedCount: 1, pill: false };
-    toasts = [...next, fresh];
-    scheduleToastExpiry(fresh.id);
+    // Cap/coalesce logic lives in lib/toast-coalesce.js (pure + unit-tested,
+    // UX G-14). Here we own only the reactive state + expiry timers.
+    const { toasts: nextToasts, resetTimerId, evictedId } = applyToast(
+      toasts,
+      toast,
+      { cap: TOAST_CAP, pillAt: COALESCE_TO_PILL_AT },
+    );
+    if (evictedId) clearToastTimer(evictedId);
+    toasts = nextToasts;
+    // Reset the 5s window on the new/coalesced toast so it stays visible.
+    scheduleToastExpiry(resetTimerId);
   }
 
   function dismissToast(id) {
