@@ -114,23 +114,37 @@ async function openThreadOnFirstMessage(appPage: import('@playwright/test').Page
 
 /**
  * Drag the resize handle by deltaX px (positive = right = panel shrinks;
- * negative = left = panel grows). Same mechanics that work reliably for
- * the drag itself; flakiness lived in reading localStorage before the
- * mouseup-time persist landed (see persistedWidth).
+ * negative = left = panel grows). Drives the resize with SYNTHETIC POINTER
+ * events dispatched directly on the handle (it binds onpointerdown/move/up
+ * itself). Deterministic in headless CI: Playwright's mouse API relies on
+ * setPointerCapture routing the move/up after the cursor leaves the thin
+ * handle, which flakes headlessly -- the drag silently no-ops and never
+ * persists (-> NaN/null). _appPage is unused but kept for call-site symmetry.
  */
 async function dragResizeHandle(
-  appPage: import('@playwright/test').Page,
+  _appPage: import('@playwright/test').Page,
   handle: import('@playwright/test').Locator,
   deltaX: number,
 ) {
-  const box = await handle.boundingBox();
-  expect(box).not.toBeNull();
-  const startX = box!.x + box!.width / 2;
-  const startY = box!.y + box!.height / 2;
-  await appPage.mouse.move(startX, startY);
-  await appPage.mouse.down();
-  await appPage.mouse.move(startX + deltaX, startY, { steps: 12 });
-  await appPage.mouse.up();
+  await handle.evaluate((el, dx) => {
+    const r = el.getBoundingClientRect();
+    const startX = r.x + r.width / 2;
+    const y = r.y + r.height / 2;
+    const ev = (type: string, cx: number, buttons: number) =>
+      new PointerEvent(type, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        buttons,
+        clientX: cx,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      });
+    el.dispatchEvent(ev('pointerdown', startX, 1));
+    el.dispatchEvent(ev('pointermove', startX + dx, 1));
+    el.dispatchEvent(ev('pointerup', startX + dx, 0));
+  }, deltaX);
 }
 
 /**

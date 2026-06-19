@@ -31,6 +31,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
 import claude_comms.mcp_server as mcp_mod
 from claude_comms.broker import MessageStore
@@ -44,6 +46,53 @@ from claude_comms.mcp_server import (
     get_all_conversations_full,
 )
 from claude_comms.mcp_tools import ParticipantRegistry
+from claude_comms.cli import build_conversations_route
+
+
+class TestConversationsRoute:
+    """GET /api/conversations through the real cli.build_conversations_route.
+
+    Mounts the extracted route in a Starlette TestClient with an injected data
+    source (the real get_all_conversations_full is exercised by the serializer
+    tests below). Verifies the ROUTE wiring: caller_key sourced from config,
+    and the {conversations, count} response shape.
+    """
+
+    @staticmethod
+    def _client(config, conversations):
+        captured = {}
+
+        def fake_get(*, caller_key):
+            captured["caller_key"] = caller_key
+            return conversations
+
+        client = TestClient(
+            Starlette(routes=[build_conversations_route(config, fake_get)])
+        )
+        return client, captured
+
+    def test_wraps_conversations_with_count(self):
+        client, _ = self._client(
+            {"identity": {"key": "abcd1234"}},
+            [{"id": "general"}, {"id": "dev-chat"}],
+        )
+        resp = client.get("/api/conversations")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 2
+        assert body["conversations"] == [{"id": "general"}, {"id": "dev-chat"}]
+
+    def test_passes_configured_identity_as_caller_key(self):
+        client, captured = self._client({"identity": {"key": "deadbeef"}}, [])
+        client.get("/api/conversations")
+        assert captured["caller_key"] == "deadbeef"
+
+    def test_empty_set_yields_count_zero(self):
+        client, _ = self._client({}, [])
+        assert client.get("/api/conversations").json() == {
+            "conversations": [],
+            "count": 0,
+        }
 
 
 # ---------------------------------------------------------------------------

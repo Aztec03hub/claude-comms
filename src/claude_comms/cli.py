@@ -381,6 +381,47 @@ def build_identity_options_route(config: dict, cors=None):
     return Route("/api/identity", _handler, methods=["OPTIONS"])
 
 
+def build_conversations_route(config: dict, get_conversations, cors=None):
+    """GET /api/conversations — the daemon's full known conversation set,
+    visibility-filtered per the configured caller.
+
+    Extracted from the ``_run()`` closure for TestClient coverage. The data
+    source (mcp_server.get_all_conversations_full) is injected because it is
+    imported lazily inside ``_run``; ``cors`` defaults to a no-op for tests.
+    """
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    cors_fn = cors or (lambda _request: {})
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        # ``?all`` is accepted for back-compat but is a no-op — the endpoint
+        # always returns the full known set (visibility-filtered per caller).
+        _ = request.query_params.get("all", "false")
+        identity = config.get("identity", {}) or {}
+        identity_key = identity.get("key", "")
+        conversations = get_conversations(caller_key=identity_key)
+        return JSONResponse(
+            {"conversations": conversations, "count": len(conversations)},
+            headers=cors_fn(request),
+        )
+
+    return Route("/api/conversations", _handler, methods=["GET"])
+
+
+def build_conversations_options_route(config: dict, cors=None):
+    """OPTIONS preflight for CORS on /api/conversations."""
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    cors_fn = cors or (lambda _request: {})
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        return JSONResponse({}, headers=cors_fn(request))
+
+    return Route("/api/conversations", _handler, methods=["OPTIONS"])
+
+
 def build_web_token_route():
     """GET /api/web-token — loopback-only. Returns the in-memory bearer token.
 
@@ -1274,39 +1315,10 @@ def start(
                     headers=_cors(request),
                 )
 
-            async def _api_conversations(request: Request) -> JSONResponse:
-                """GET /api/conversations?all=true — list conversations.
-
-                v0.4.0 S-FIX backend: returns the daemon's full known
-                conversation set, each row shaped as a Design Spec §13.4
-                ChannelRow ({ id, name, topic, member, memberCount,
-                lastActivity, mode, visibility, createdAt, createdBy,
-                myUnread, myStarred, myMuted }). Listed channels appear
-                for everyone; unlisted channels appear only to members.
-
-                The legacy v0.3.x snake_case fields (``joined``,
-                ``member_count``, ``last_activity``, ``created_at``,
-                ``created_by``, ``message_count``) are preserved on every
-                row for backward compatibility — see Spec §13.4.
-                """
-                # The ``?all=true`` query param is accepted for back-compat
-                # but is now a no-op: the endpoint always returns the
-                # daemon's full known set (visibility-filtered per caller).
-                _ = request.query_params.get("all", "false")
-                identity = config.get("identity", {})
-                identity_key = identity.get("key", "")
-                conversations = get_all_conversations_full(caller_key=identity_key)
-                return JSONResponse(
-                    {"conversations": conversations, "count": len(conversations)},
-                    headers=_cors(request),
-                )
-
-            async def _api_conversations_options(request: Request) -> JSONResponse:
-                """OPTIONS preflight for /api/conversations."""
-                return JSONResponse(
-                    {},
-                    headers=_cors(request),
-                )
+            # /api/conversations GET + OPTIONS are built by the module-level
+            # build_conversations_route / build_conversations_options_route
+            # (extracted for TestClient coverage); get_all_conversations_full
+            # and _cors are injected at registration.
 
             # Prepend API routes so they take priority over MCP catch-all
             starlette_app.routes.insert(
@@ -1371,15 +1383,13 @@ def start(
                 ),
             )
             starlette_app.routes.insert(
-                10, Route("/api/conversations", _api_conversations, methods=["GET"])
+                10,
+                build_conversations_route(
+                    config, get_all_conversations_full, cors=_cors
+                ),
             )
             starlette_app.routes.insert(
-                11,
-                Route(
-                    "/api/conversations",
-                    _api_conversations_options,
-                    methods=["OPTIONS"],
-                ),
+                11, build_conversations_options_route(config, cors=_cors)
             )
 
             # ── v0.4.2 Step 3.4: POST /api/invite + preflight ──
