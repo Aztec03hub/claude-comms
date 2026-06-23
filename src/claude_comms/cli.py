@@ -508,7 +508,7 @@ def build_capabilities_route(config: dict):
 _NOTIF_KEY_RE = re.compile(r"^[0-9a-f]{8}$")
 
 
-def build_notifications_route(config: dict | None = None, cors=None):
+def build_notifications_route(_config: dict | None = None, cors=None):
     """GET /api/notifications/{key} — fetch-and-drain queued notification cues.
 
     Lets a REMOTE Claude Code host pull its pending cues over HTTP instead of
@@ -524,7 +524,7 @@ def build_notifications_route(config: dict | None = None, cors=None):
     - DRAINS the file (truncates) so cues are delivered exactly once. A missing
       file yields ``{"cues": [], "count": 0}``.
 
-    ``config`` is accepted for signature parity with the other route builders
+    ``_config`` is accepted for signature parity with the other route builders
     (unused). ``cors`` is the per-request CORS-header function injected by
     ``_run``; defaults to a no-op so tests need no CORS wiring.
     """
@@ -608,7 +608,7 @@ def build_identity_route(config: dict, cors=None):
     return Route("/api/identity", _handler, methods=["GET"])
 
 
-def build_identity_options_route(config: dict, cors=None):
+def build_identity_options_route(_config: dict, cors=None):
     """OPTIONS preflight for CORS on /api/identity."""
     from starlette.responses import JSONResponse
     from starlette.routing import Route
@@ -649,7 +649,7 @@ def build_conversations_route(config: dict, get_conversations, cors=None):
     return Route("/api/conversations", _handler, methods=["GET"])
 
 
-def build_conversations_options_route(config: dict, cors=None):
+def build_conversations_options_route(_config: dict, cors=None):
     """OPTIONS preflight for CORS on /api/conversations."""
     from starlette.responses import JSONResponse
     from starlette.routing import Route
@@ -1118,7 +1118,7 @@ app = typer.Typer(
 
 @app.callback()
 def _main(
-    version: bool = typer.Option(
+    _version: bool = typer.Option(
         False,
         "--version",
         "-V",
@@ -1216,7 +1216,6 @@ console = Console()
 
 _DATA_DIR = Path.home() / ".claude-comms"
 _PID_FILE = _DATA_DIR / "daemon.pid"
-_LOG_DIR = _DATA_DIR / "logs"
 
 
 def _require_config() -> dict[str, Any]:
@@ -1791,6 +1790,7 @@ def start(
             assert _mcp_mod._deduplicator is not None, (
                 "MCP deduplicator not initialised"
             )
+            assert _mcp_mod._registry is not None, "MCP registry not initialised"
             mqtt_sub_task = asyncio.create_task(
                 _mqtt_subscriber(
                     broker_host,
@@ -1864,7 +1864,7 @@ def start(
                 from starlette.applications import Starlette
                 from starlette.middleware import Middleware
                 from starlette.middleware.base import BaseHTTPMiddleware
-                from starlette.responses import Response
+                from starlette.responses import Response, StreamingResponse
                 from starlette.routing import Mount
                 from starlette.staticfiles import StaticFiles
 
@@ -1895,10 +1895,21 @@ def start(
                         # If this is the index document AND a meta api_base
                         # injection is configured, rewrite the body.
                         ctype = response.headers.get("content-type", "")
-                        if _meta_api_base and ctype.startswith("text/html"):
+                        if (
+                            _meta_api_base
+                            and ctype.startswith("text/html")
+                            and isinstance(response, StreamingResponse)
+                        ):
                             body = b""
                             async for chunk in response.body_iterator:
-                                body += chunk
+                                # StaticFiles streams ``bytes``; the ``str``
+                                # branch is a type-safety fallback matching
+                                # Starlette's default utf-8 body encoding, and
+                                # ``memoryview``/buffer chunks are coerced too.
+                                if isinstance(chunk, str):
+                                    body += chunk.encode("utf-8")
+                                else:
+                                    body += bytes(chunk)
                             try:
                                 html = body.decode("utf-8")
                             except UnicodeDecodeError:
@@ -1945,9 +1956,7 @@ def start(
                     web_uvi_server = uvicorn.Server(web_uvi_config)
                     web_task = asyncio.create_task(web_uvi_server.serve())
                     _local_url, _external_url = _web_ui_urls(config)
-                    console.print(
-                        f"  [green]Web UI[/green] available at {_local_url}"
-                    )
+                    console.print(f"  [green]Web UI[/green] available at {_local_url}")
                     if _external_url and _external_url != _local_url:
                         console.print(
                             f"  [green]Web UI[/green] (external) at {_external_url}"
@@ -2002,8 +2011,13 @@ def start(
 
         finally:
             console.print("\n[bold]Shutting down...[/bold]")
-            if broker_instance is not None and broker_instance.is_running:
-                await broker_instance.stop()
+            # ``broker_instance`` is assigned inside the ``_broker_supervisor``
+            # nested coroutine via ``nonlocal``; pyright's intraprocedural flow
+            # analysis can't see that mutation and narrows it to ``None`` here,
+            # so it flags the body as unreachable. At runtime the supervisor
+            # task does set it, so this guarded shutdown must remain.
+            if broker_instance is not None and broker_instance.is_running:  # pyright: ignore[reportUnnecessaryComparison]
+                await broker_instance.stop()  # pyright: ignore[reportUnreachable]
             # Remove PID file
             try:
                 _PID_FILE.unlink(missing_ok=True)
