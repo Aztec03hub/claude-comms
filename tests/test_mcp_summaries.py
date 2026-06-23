@@ -16,11 +16,36 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent
 
 from claude_comms.mcp_summaries import (
+    summarize_artifact_create,
+    summarize_artifact_delete,
+    summarize_artifact_get,
+    summarize_artifact_list,
+    summarize_artifact_update,
     summarize_check,
+    summarize_conversation_archive,
+    summarize_conversation_create,
+    summarize_conversation_delete,
+    summarize_conversation_unarchive,
+    summarize_conversation_update,
+    summarize_conversations,
+    summarize_dm_open,
+    summarize_get_channel_role,
     summarize_history,
+    summarize_invite,
+    summarize_join,
+    summarize_kick,
+    summarize_leave,
     summarize_members,
+    summarize_profile_status_clear,
+    summarize_profile_status_set,
+    summarize_react,
+    summarize_reactions_get,
     summarize_read,
     summarize_send,
+    summarize_status_clear,
+    summarize_status_set,
+    summarize_thread_read,
+    summarize_update_name,
 )
 
 
@@ -375,6 +400,664 @@ class TestSummarizeSend:
 
 
 # --------------------------------------------------------------------------- #
+# summarize_join
+# --------------------------------------------------------------------------- #
+class TestSummarizeJoin:
+    def test_ok(self):
+        out = summarize_join(
+            {
+                "key": "aabbccdd",
+                "name": "Ada",
+                "type": "claude",
+                "conversation": "backend",
+                "status": "joined",
+            }
+        )
+        assert out == "✅ joined #backend as Ada (aabbccdd)"
+
+    def test_error_loud(self):
+        out = summarize_join({"error": True, "message": "Invalid key format"})
+        assert out.startswith("⚠️ join failed:")
+        assert "Invalid key format" in out
+
+
+# --------------------------------------------------------------------------- #
+# summarize_leave
+# --------------------------------------------------------------------------- #
+class TestSummarizeLeave:
+    def test_left(self):
+        out = summarize_leave({"status": "left", "conversation": "backend"})
+        assert out == "\U0001f44b left #backend"
+
+    def test_not_a_member(self):
+        out = summarize_leave({"status": "not_a_member", "conversation": "backend"})
+        assert "not a member of #backend" in out
+
+    def test_error_loud(self):
+        out = summarize_leave({"error": True, "message": "boom"})
+        assert out.startswith("⚠️ leave failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_update_name
+# --------------------------------------------------------------------------- #
+class TestSummarizeUpdateName:
+    def test_ok(self):
+        out = summarize_update_name(
+            {"key": "aabbccdd", "name": "NewName", "status": "updated"}
+        )
+        assert out == "✏️ display name set to NewName"
+
+    def test_error_loud(self):
+        out = summarize_update_name({"error": True, "message": "Invalid name"})
+        assert out.startswith("⚠️ name update failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_conversations
+# --------------------------------------------------------------------------- #
+class TestSummarizeConversations:
+    def test_joined_list(self):
+        result = {
+            "conversations": [
+                {"conversation": "backend", "unread_count": 0, "total_messages": 5},
+                {"conversation": "general", "unread_count": 2, "total_messages": 9},
+            ]
+        }
+        out = summarize_conversations(result)
+        assert "2 conversations: backend, general" in out
+        assert "\U0001f5c2" in out
+
+    def test_all_with_archived(self):
+        result = {
+            "conversations": [],
+            "all_conversations": [
+                {"name": "backend", "archived": False},
+                {"name": "general", "archived": False},
+                {"name": "old-proj", "archived": True},
+            ],
+        }
+        out = summarize_conversations(result)
+        assert "3 conversations: backend, general, old-proj" in out
+        assert "(1 archived)" in out
+
+    def test_overflow(self):
+        result = {
+            "conversations": [{"conversation": n} for n in ["a", "b", "c", "d", "e"]]
+        }
+        out = summarize_conversations(result)
+        assert "5 conversations" in out
+        assert "+2 more" in out
+
+    def test_empty(self):
+        out = summarize_conversations({"conversations": []})
+        assert out == "\U0001f5c2 no conversations"
+
+    def test_error_loud(self):
+        out = summarize_conversations({"error": True, "message": "bad"})
+        assert out.startswith("⚠️ conversations failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_conversation_create
+# --------------------------------------------------------------------------- #
+class TestSummarizeConversationCreate:
+    def test_ok(self):
+        out = summarize_conversation_create(
+            {"status": "created", "conversation": "backend", "topic": "x"}
+        )
+        assert out == "➕ created #backend"
+
+    def test_error_loud(self):
+        out = summarize_conversation_create(
+            {"error": True, "message": "already exists"}
+        )
+        assert out.startswith("⚠️ create failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_conversation_update
+# --------------------------------------------------------------------------- #
+class TestSummarizeConversationUpdate:
+    def test_ok_with_fields(self):
+        out = summarize_conversation_update(
+            {
+                "status": "updated",
+                "conversation": "backend",
+                "updated_fields": ["topic", "visibility"],
+            }
+        )
+        assert out == "✏️ updated #backend (topic, visibility)"
+
+    def test_ok_no_fields(self):
+        out = summarize_conversation_update(
+            {"status": "updated", "conversation": "backend", "updated_fields": []}
+        )
+        assert out == "✏️ updated #backend"
+
+    def test_error_loud(self):
+        out = summarize_conversation_update(
+            {"error": True, "message": "No update fields provided."}
+        )
+        assert out.startswith("⚠️ update failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_conversation_delete
+# --------------------------------------------------------------------------- #
+class TestSummarizeConversationDelete:
+    def test_deleted(self):
+        out = summarize_conversation_delete(
+            {"deleted": True, "conversation_id": "backend"}
+        )
+        assert out == "\U0001f5d1 deleted #backend"
+
+    def test_confirm_required(self):
+        out = summarize_conversation_delete(
+            {"error": "confirm_required", "message_count": 12, "member_count": 3}
+        )
+        assert out.startswith("❓ confirm delete:")
+        assert "12 msgs" in out
+        assert "3 members" in out
+        assert "confirm=True" in out
+
+    def test_not_authorized_loud(self):
+        out = summarize_conversation_delete(
+            {"error": True, "message": "Only the creator may delete"}
+        )
+        assert out.startswith("⚠️ delete failed:")
+
+    def test_reserved_loud(self):
+        out = summarize_conversation_delete(
+            {"error": True, "message": "reserved", "reason": "reserved"}
+        )
+        assert out.startswith("⚠️ delete failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_conversation_archive
+# --------------------------------------------------------------------------- #
+class TestSummarizeConversationArchive:
+    def test_archived(self):
+        out = summarize_conversation_archive(
+            {
+                "archived": True,
+                "conversation_id": "backend",
+                "evicted_keys": ["aa", "bb"],
+                "message_count": 5,
+            }
+        )
+        assert out.startswith("\U0001f4e6 archived #backend")
+        assert "2 members ejected" in out
+
+    def test_already_archived(self):
+        out = summarize_conversation_archive(
+            {
+                "archived": True,
+                "conversation_id": "backend",
+                "status": "already_archived",
+            }
+        )
+        assert "already archived" in out
+
+    def test_confirm_required(self):
+        out = summarize_conversation_archive(
+            {
+                "error": "confirm_required",
+                "conversation_id": "backend",
+                "message_count": 5,
+                "member_count": 2,
+            }
+        )
+        assert out.startswith("❓ confirm archive:")
+        assert "confirm=True" in out
+
+    def test_not_authorized_loud(self):
+        out = summarize_conversation_archive(
+            {
+                "error": "not_authorized",
+                "conversation_id": "backend",
+                "message": "Only the creator can archive it.",
+            }
+        )
+        assert out.startswith("⚠️ archive failed:")
+        assert "creator" in out
+
+
+# --------------------------------------------------------------------------- #
+# summarize_conversation_unarchive
+# --------------------------------------------------------------------------- #
+class TestSummarizeConversationUnarchive:
+    def test_unarchived(self):
+        out = summarize_conversation_unarchive(
+            {"archived": False, "conversation_id": "backend"}
+        )
+        assert out == "\U0001f4e4 unarchived #backend"
+
+    def test_already_live(self):
+        out = summarize_conversation_unarchive(
+            {"archived": False, "conversation_id": "backend", "status": "already_live"}
+        )
+        assert "already live" in out
+
+    def test_error_loud(self):
+        out = summarize_conversation_unarchive(
+            {"error": "not_authorized", "conversation_id": "backend", "message": "no"}
+        )
+        assert out.startswith("⚠️ unarchive failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_invite
+# --------------------------------------------------------------------------- #
+class TestSummarizeInvite:
+    def test_invited(self):
+        out = summarize_invite({"status": "invited"}, target_name="Ada")
+        assert out == "\U0001f4e8 invited Ada"
+
+    def test_already_member(self):
+        out = summarize_invite({"status": "already_member"}, target_name="Ada")
+        assert "already a member" in out
+
+    def test_error_loud(self):
+        out = summarize_invite({"error": True, "message": "Unknown participant"})
+        assert out.startswith("⚠️ invite failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_kick
+# --------------------------------------------------------------------------- #
+class TestSummarizeKick:
+    def test_kicked(self):
+        out = summarize_kick(
+            {"status": "kicked", "target_key": "aabbccdd", "conversation": "backend"},
+            target_name="Ada",
+        )
+        assert out == "\U0001f6aa kicked Ada from #backend"
+
+    def test_kicked_no_name_falls_back_to_key(self):
+        out = summarize_kick(
+            {"status": "kicked", "target_key": "aabbccdd", "conversation": "backend"}
+        )
+        assert "aabbccdd" in out
+
+    def test_error_loud(self):
+        out = summarize_kick({"error": True, "message": "Only owners or admins"})
+        assert out.startswith("\U0001f6aa kick failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_dm_open
+# --------------------------------------------------------------------------- #
+class TestSummarizeDmOpen:
+    def test_opened(self):
+        out = summarize_dm_open(
+            {"status": "opened", "conversation": "dm-aa-bb"}, target_name="Ada"
+        )
+        assert out == "\U0001f4ac DM with Ada (#dm-aa-bb)"
+
+    def test_existed(self):
+        out = summarize_dm_open(
+            {"status": "existed", "conversation": "dm-aa-bb"}, target_name="Ada"
+        )
+        assert "DM exists with Ada" in out
+
+    def test_error_loud(self):
+        out = summarize_dm_open({"error": True, "message": "Cannot DM yourself."})
+        assert out.startswith("⚠️ DM open failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_artifact_create
+# --------------------------------------------------------------------------- #
+class TestSummarizeArtifactCreate:
+    def test_ok(self):
+        out = summarize_artifact_create(
+            {"status": "created", "name": "backend-plan", "title": "Plan", "version": 1}
+        )
+        assert out == "\U0001f4c4 created artifact 'backend-plan' v1"
+
+    def test_error_loud(self):
+        out = summarize_artifact_create({"error": True, "message": "already exists"})
+        assert out.startswith("⚠️ artifact create failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_artifact_update
+# --------------------------------------------------------------------------- #
+class TestSummarizeArtifactUpdate:
+    def test_ok(self):
+        out = summarize_artifact_update(
+            {
+                "status": "updated",
+                "name": "backend-plan",
+                "version": 3,
+                "author": {"key": "aa", "name": "Ada", "type": "claude"},
+            }
+        )
+        assert out == "\U0001f4c4 'backend-plan' → v3"
+
+    def test_conflict(self):
+        out = summarize_artifact_update(
+            {
+                "error": True,
+                "message": "Version conflict",
+                "latest_version": 4,
+                "latest_author": "Lin",
+            }
+        )
+        assert out.startswith("⚠️ artifact conflict:")
+        assert "v4" in out
+        assert "Lin" in out
+
+    def test_error_loud(self):
+        out = summarize_artifact_update({"error": True, "message": "not found"})
+        assert out.startswith("⚠️ artifact update failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_artifact_get
+# --------------------------------------------------------------------------- #
+class TestSummarizeArtifactGet:
+    def test_ok(self):
+        out = summarize_artifact_get(
+            {
+                "name": "backend-plan",
+                "title": "Plan",
+                "type": "plan",
+                "version": 2,
+                "latest_version": 2,
+                "versions": [
+                    {"version": 1, "author": {"name": "Ada"}},
+                    {"version": 2, "author": {"name": "Lin"}},
+                ],
+            }
+        )
+        assert out == "\U0001f4c4 'backend-plan' v2 (2 versions) by Lin"
+
+    def test_single_version(self):
+        out = summarize_artifact_get(
+            {
+                "name": "doc",
+                "version": 1,
+                "versions": [{"version": 1, "author": {"name": "Ada"}}],
+            }
+        )
+        assert "1 version)" in out
+        assert "by Ada" in out
+
+    def test_error_loud(self):
+        out = summarize_artifact_get({"error": True, "message": "not found"})
+        assert out.startswith("⚠️ artifact get failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_artifact_list
+# --------------------------------------------------------------------------- #
+class TestSummarizeArtifactList:
+    def test_ok(self):
+        out = summarize_artifact_list(
+            {
+                "conversation": "backend",
+                "artifacts": [{"name": "plan"}, {"name": "doc"}],
+                "count": 2,
+            }
+        )
+        assert out == "\U0001f4c4 2 artifacts: plan, doc"
+
+    def test_empty(self):
+        out = summarize_artifact_list(
+            {"conversation": "backend", "artifacts": [], "count": 0}
+        )
+        assert out == "\U0001f4c4 no artifacts in #backend"
+
+    def test_overflow(self):
+        out = summarize_artifact_list(
+            {
+                "conversation": "backend",
+                "artifacts": [{"name": n} for n in ["a", "b", "c", "d"]],
+                "count": 4,
+            }
+        )
+        assert "4 artifacts" in out
+        assert "+1 more" in out
+
+    def test_error_loud(self):
+        out = summarize_artifact_list({"error": True, "message": "bad"})
+        assert out.startswith("⚠️ artifact list failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_artifact_delete
+# --------------------------------------------------------------------------- #
+class TestSummarizeArtifactDelete:
+    def test_ok(self):
+        out = summarize_artifact_delete({"status": "deleted", "name": "backend-plan"})
+        assert out == "\U0001f5d1 deleted artifact 'backend-plan'"
+
+    def test_error_loud(self):
+        out = summarize_artifact_delete({"error": True, "message": "not found"})
+        assert out.startswith("⚠️ artifact delete failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_react
+# --------------------------------------------------------------------------- #
+class TestSummarizeReact:
+    def test_applied_add(self):
+        out = summarize_react(
+            {
+                "status": "applied",
+                "message_id": "msg-12345678abc",
+                "emoji": "👍",
+                "op": "add",
+                "actor_key": "aa",
+                "ts": "x",
+            }
+        )
+        assert out == "👍 reacted to msg-1234"
+
+    def test_applied_remove(self):
+        out = summarize_react(
+            {
+                "status": "applied",
+                "message_id": "msg-12345678abc",
+                "emoji": "👍",
+                "op": "remove",
+            }
+        )
+        assert out.startswith("👍 unreacted to")
+
+    def test_no_op(self):
+        out = summarize_react(
+            {"status": "no_op", "message_id": "msg-12345678", "emoji": "❤️"}
+        )
+        assert "no change" in out
+        assert "❤️" in out
+
+    def test_throttled(self):
+        out = summarize_react({"status": "throttled", "limit_per_minute": 30})
+        assert out.startswith("⚠️ react throttled")
+
+    def test_persisted_publish_failed_not_loud(self):
+        out = summarize_react(
+            {
+                "status": "persisted_publish_failed",
+                "id": "msg-12345678",
+                "emoji": "👍",
+                "op": "add",
+                "error": "boom",
+            }
+        )
+        assert "broadcast failed" in out
+        assert "👍" in out
+
+    def test_error_loud(self):
+        out = summarize_react({"error": True, "message": "message_id required"})
+        assert out.startswith("⚠️ react failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_reactions_get
+# --------------------------------------------------------------------------- #
+class TestSummarizeReactionsGet:
+    def test_ok(self):
+        out = summarize_reactions_get(
+            {
+                "conversation": "backend",
+                "message_id": "msg-12345678",
+                "reactions": {"👍": ["a", "b"], "❤️": ["c"]},
+            }
+        )
+        assert out.startswith("3 reactions on msg-1234:")
+        assert "👍x2" in out
+        assert "❤️x1" in out
+
+    def test_empty(self):
+        out = summarize_reactions_get(
+            {"conversation": "backend", "message_id": "msg-12345678", "reactions": {}}
+        )
+        assert out == "\U0001f937 no reactions on msg-1234"
+
+    def test_overflow(self):
+        reactions = {e: ["a"] for e in ["a", "b", "c", "d", "e", "f", "g"]}
+        out = summarize_reactions_get(
+            {"message_id": "msg-12345678", "reactions": reactions}
+        )
+        assert "(+2 more)" in out
+
+    def test_error_loud(self):
+        out = summarize_reactions_get({"error": True, "message": "not a member"})
+        assert out.startswith("⚠️ reactions failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_status_set / clear
+# --------------------------------------------------------------------------- #
+class TestSummarizeStatus:
+    def test_set(self):
+        out = summarize_status_set({"status": "set", "key": "aa", "label": "thinking"})
+        assert out == "\U0001f7e2 status: thinking"
+
+    def test_throttled(self):
+        out = summarize_status_set(
+            {"status": "throttled", "key": "aa", "label": "x", "throttle_seconds": 2}
+        )
+        assert out.startswith("⚠️ status throttled")
+
+    def test_set_error_loud(self):
+        out = summarize_status_set({"error": True, "message": "Not a member"})
+        assert out.startswith("⚠️ status failed:")
+
+    def test_clear(self):
+        out = summarize_status_clear({"status": "cleared", "key": "aa", "count": 1})
+        assert out == "⚪ status cleared"
+
+    def test_clear_error_loud(self):
+        out = summarize_status_clear({"error": True, "message": "bad conv"})
+        assert out.startswith("⚠️ status clear failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_profile_status_set / clear
+# --------------------------------------------------------------------------- #
+class TestSummarizeProfileStatus:
+    def test_set(self):
+        out = summarize_profile_status_set(
+            {"status": "set", "key": "aa", "emoji": "🚀", "text": "shipping"}
+        )
+        assert out == "\U0001f7e2 profile status: 🚀 shipping"
+
+    def test_set_collapses_to_clear(self):
+        out = summarize_profile_status_set(
+            {"status": "cleared", "key": "aa", "emoji": None, "text": None}
+        )
+        assert out == "⚪ profile status cleared"
+
+    def test_set_error_loud(self):
+        out = summarize_profile_status_set(
+            {"error": True, "message": "Daemon config missing identity.key."}
+        )
+        assert out.startswith("⚠️ profile status failed:")
+
+    def test_clear(self):
+        out = summarize_profile_status_clear({"status": "cleared", "key": "aa"})
+        assert out == "⚪ profile status cleared"
+
+    def test_clear_error_loud(self):
+        out = summarize_profile_status_clear({"error": True, "message": "no key"})
+        assert out.startswith("⚠️ profile status clear failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_get_channel_role
+# --------------------------------------------------------------------------- #
+class TestSummarizeGetChannelRole:
+    def test_ok(self):
+        out = summarize_get_channel_role(
+            {"role": "admin", "participant_key": "aa", "conversation": "backend"}
+        )
+        assert out == "\U0001f3ad role in #backend: admin"
+
+    def test_default_member(self):
+        out = summarize_get_channel_role(
+            {"role": "member", "participant_key": "aa", "conversation": "backend"}
+        )
+        assert "role in #backend: member" in out
+
+    def test_error_loud(self):
+        out = summarize_get_channel_role({"error": True, "message": "not a member"})
+        assert out.startswith("⚠️ role lookup failed:")
+
+
+# --------------------------------------------------------------------------- #
+# summarize_thread_read
+# --------------------------------------------------------------------------- #
+class TestSummarizeThreadRead:
+    def test_ok(self):
+        result = {
+            "conversation": "backend",
+            "root": {"id": "root-1234abcd", "sender": {"name": "Ada"}, "body": "q"},
+            "replies": [
+                _msg("Lin", "first"),
+                _msg("Sam", "looks good to me"),
+            ],
+            "count": 2,
+            "has_more": False,
+        }
+        out = summarize_thread_read(result)
+        assert "2 replies under root-123" in out
+        assert 'last: Sam: "looks good to me"' in out
+
+    def test_empty(self):
+        result = {
+            "conversation": "backend",
+            "root": {"id": "root-1234abcd"},
+            "replies": [],
+            "count": 0,
+            "has_more": False,
+        }
+        out = summarize_thread_read(result)
+        assert out == "\U0001f9f5 no replies under root-123"
+
+    def test_has_more(self):
+        result = {
+            "conversation": "backend",
+            "root": {"id": "root-1234abcd"},
+            "replies": [_msg("Lin", "x")],
+            "count": 1,
+            "has_more": True,
+        }
+        out = summarize_thread_read(result)
+        assert "1 reply under root-123" in out
+        assert "(+more)" in out
+
+    def test_error_loud(self):
+        out = summarize_thread_read({"error": True, "message": "Root not found"})
+        assert out.startswith("⚠️ thread read failed:")
+
+
+# --------------------------------------------------------------------------- #
 # Wrapper return shape (end-to-end through FastMCP)
 # --------------------------------------------------------------------------- #
 class TestWrapperReturnShape:
@@ -435,3 +1118,97 @@ class TestWrapperReturnShape:
         # The model must still get total_unread + conversations.
         assert "total_unread" in parsed
         assert "conversations" in parsed
+
+    def _assert_concise_shape(self, res: CallToolResult) -> dict[str, Any]:
+        """Shared assertions: text-only CallToolResult, no structuredContent,
+        ctrl+o affordance, full JSON after the separator. Returns parsed JSON."""
+        assert isinstance(res, CallToolResult)
+        assert res.structuredContent is None
+        assert len(res.content) == 1
+        block = res.content[0]
+        assert isinstance(block, TextContent)
+        text = block.text
+        assert "(ctrl+o for full)" in text
+        assert "\n---\n" in text
+        _, _, json_part = text.partition("\n---\n")
+        return json.loads(json_part)
+
+    def test_join_wrapper_shape(self, tmp_config: dict[str, Any]):
+        import claude_comms.mcp_server as srv
+
+        mcp = srv.create_server(config=tmp_config)
+        res = self._call(
+            mcp, "comms_join", {"name": "joiner", "conversation": "general"}
+        )
+        parsed = self._assert_concise_shape(res)
+        # Summary line present (the human surface).
+        summary = res.content[0].text.split("\n", 1)[0]
+        assert summary.startswith("✅ joined #general as joiner")
+        # Full JSON still carries the key + status for the model.
+        assert parsed["status"] == "joined"
+        assert "key" in parsed
+        assert parsed["name"] == "joiner"
+
+    def test_artifact_create_wrapper_shape(
+        self, tmp_config: dict[str, Any], tmp_path: Any
+    ):
+        import claude_comms.mcp_server as srv
+
+        # Isolate the artifact store under tmp_path; the default config points
+        # at the real ~/.claude-comms/artifacts which would leak state across
+        # runs (and pollute the user's home).
+        cfg = dict(tmp_config)
+        cfg["artifacts"] = {"data_dir": str(tmp_path / "artifacts")}
+        mcp = srv.create_server(config=cfg)
+
+        # comms_artifact_create publishes on success; swap the broker-required
+        # _noop_publish for a swallowing stub so the success path completes
+        # without a live MQTT daemon.
+        async def _stub_publish(topic: str, payload: bytes, retain: bool = False):
+            return None
+
+        srv._publish_fn = _stub_publish
+
+        p = srv._registry.join("art-creator", "general")
+        res = self._call(
+            mcp,
+            "comms_artifact_create",
+            {
+                "key": p.key,
+                "conversation": "general",
+                "name": "shape-plan",
+                "title": "Plan A",
+                "type": "plan",
+                "content": "# hello",
+            },
+        )
+        parsed = self._assert_concise_shape(res)
+        summary = res.content[0].text.split("\n", 1)[0]
+        assert summary == "\U0001f4c4 created artifact 'shape-plan' v1"
+        assert parsed["status"] == "created"
+        assert parsed["version"] == 1
+
+    def test_kick_wrapper_shape_error_stays_loud(self, tmp_config: dict[str, Any]):
+        # A non-owner kick is an authorization failure; the wrapper must still
+        # return a CallToolResult with a LOUD summary and the full JSON, no
+        # structuredContent. This exercises the error-envelope path end-to-end.
+        import claude_comms.mcp_server as srv
+
+        mcp = srv.create_server(config=tmp_config)
+        caller = srv._registry.join("kicker", "general")
+        target = srv._registry.join("kick-target", "general")
+        res = self._call(
+            mcp,
+            "comms_kick",
+            {
+                "key": caller.key,
+                "conversation": "general",
+                "target_key": target.key,
+            },
+        )
+        parsed = self._assert_concise_shape(res)
+        summary = res.content[0].text.split("\n", 1)[0]
+        # Loud failure marker for the human.
+        assert summary.startswith("\U0001f6aa kick failed:")
+        # Full error envelope preserved for the model.
+        assert parsed.get("error")
