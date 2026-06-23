@@ -17,6 +17,7 @@ Covers the full auth/auth flow:
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import MutableMapping
 from typing import Any
 
 import pytest
@@ -100,7 +101,9 @@ def _mount(
 
     # Wrap the app so we can force ``scope['client']`` to 127.0.0.1 or a
     # spoofed non-loopback address, depending on the test.
-    async def _asgi_wrap(scope: dict, receive: Any, send: Any) -> None:
+    async def _asgi_wrap(
+        scope: MutableMapping[str, Any], receive: Any, send: Any
+    ) -> None:
         if scope["type"] == "http":
             scope = dict(scope)
             scope["client"] = (
@@ -423,6 +426,6 @@ def test_route_built_when_allow_remote_edits_true_and_no_proxy(
 
 
 @pytest.fixture(autouse=True)
-def _reset_token_after_test():
+def _reset_token_after_test():  # pyright: ignore[reportUnusedFunction]
     yield
     cli_module.set_web_token(None)

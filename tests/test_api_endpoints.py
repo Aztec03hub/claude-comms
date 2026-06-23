@@ -362,8 +362,8 @@ class TestMessageStoreIntegration:
             "ts": "2026-03-30T10:00:00Z",
             "sender": {"key": "aabbccdd", "name": "tester", "type": "human"},
         }
-        if not dedup.is_duplicate(msg["id"]):
-            store.add(msg["conv"], msg)
+        if not dedup.is_duplicate(msg["id"]):  # pyright: ignore[reportArgumentType]
+            store.add(msg["conv"], msg)  # pyright: ignore[reportArgumentType]
 
         original = mod._store
         try:

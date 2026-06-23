@@ -473,7 +473,7 @@ class TestSenderKeyNoDedupMentions:
         assert phil in result["mentions"]
 
         # Wire payload must round-trip the same shape
-        topic, payload, _retain = publish_spy.last_call
+        _topic, payload, _retain = publish_spy.last_call
         msg = json.loads(payload)
         assert set(msg["mentions"]) == {ember, phil}
         assert phil in msg["mentions"]

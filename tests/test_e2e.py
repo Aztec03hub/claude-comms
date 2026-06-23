@@ -54,7 +54,7 @@ class MockBroker:
         self.published: list[tuple[str, dict]] = []
         self.subscribers: dict[str, list] = {}
 
-    async def publish(self, topic: str, payload: bytes) -> None:
+    async def publish(self, topic: str, payload: bytes, retain: bool = False) -> None:  # pyright: ignore[reportUnusedParameter]
         """Simulate publishing a message to the broker."""
         msg_data = json.loads(payload)
         self.published.append((topic, msg_data))
@@ -99,7 +99,7 @@ class TestTwoParticipantChat:
     """Full chat flow between two participants."""
 
     @pytest.mark.asyncio
-    async def test_join_send_receive(self, e2e_config: dict) -> None:
+    async def test_join_send_receive(self, e2e_config: dict) -> None:  # pyright: ignore[reportUnusedParameter]
         registry = ParticipantRegistry()
         MessageStore()  # ensure store initializes cleanly
         broker = MockBroker()
@@ -108,10 +108,10 @@ class TestTwoParticipantChat:
         received_alice: list[dict] = []
         received_bob: list[dict] = []
 
-        async def on_msg_alice(topic, msg):
+        async def on_msg_alice(_topic, msg):
             received_alice.append(msg)
 
-        async def on_msg_bob(topic, msg):
+        async def on_msg_bob(_topic, msg):
             received_bob.append(msg)
 
         broker.subscribe("claude-comms/conv/+/messages", on_msg_alice)
@@ -152,7 +152,7 @@ class TestTwoParticipantChat:
         assert received_alice[1]["sender"]["name"] == "bob"
 
     @pytest.mark.asyncio
-    async def test_multiple_conversation_isolation(self, e2e_config: dict) -> None:
+    async def test_multiple_conversation_isolation(self, e2e_config: dict) -> None:  # pyright: ignore[reportUnusedParameter]
         """Messages in one conversation don't appear in another."""
         registry = ParticipantRegistry()
         broker = MockBroker()
@@ -268,7 +268,7 @@ class TestConversationLifecycle:
         exporter = LogExporter(log_dir=log_dir, fmt="both", deduplicator=dedup)
 
         # Join and add messages to store via broker callback
-        async def on_message(topic, msg_data):
+        async def on_message(_topic, msg_data):
             store.add(msg_data["conv"], msg_data)
             exporter.write_message(msg_data)
 
@@ -368,7 +368,7 @@ class TestNameChangeFlow:
         store = MessageStore()
         broker = MockBroker()
 
-        async def on_message(topic, msg_data):
+        async def on_message(_topic, msg_data):
             store.add(msg_data["conv"], msg_data)
 
         broker.subscribe("claude-comms/conv/+/messages", on_message)
@@ -438,7 +438,7 @@ class TestLogFormatVerification:
         r_alice = await tool_comms_join(registry, name="alice", conversation="general")
         r_bob = await tool_comms_join(registry, name="bob", conversation="general")
 
-        async def on_message(topic, msg_data):
+        async def on_message(_topic, msg_data):
             log_exporter_instance.write_message(msg_data)
 
         broker.subscribe("claude-comms/conv/+/messages", on_message)
@@ -477,7 +477,7 @@ class TestLogFormatVerification:
         r = await tool_comms_join(registry, name="alice", conversation="general")
         key = r["key"]
 
-        async def on_message(topic, msg_data):
+        async def on_message(_topic, msg_data):
             log_exporter_instance.write_message(msg_data)
 
         broker.subscribe("claude-comms/conv/+/messages", on_message)
@@ -500,7 +500,7 @@ class TestLogFormatVerification:
 
         r = await tool_comms_join(registry, name="alice", conversation="general")
 
-        async def on_message(topic, msg_data):
+        async def on_message(_topic, msg_data):
             log_exporter_instance.write_message(msg_data)
 
         broker.subscribe("claude-comms/conv/+/messages", on_message)
@@ -535,7 +535,7 @@ class TestFullE2EFlow:
         log_dir = tmp_comms_dir / "logs"
         exporter = LogExporter(log_dir=log_dir, fmt="both", deduplicator=dedup)
 
-        async def on_message(topic, msg_data):
+        async def on_message(_topic, msg_data):
             store.add(msg_data["conv"], msg_data)
             exporter.write_message(msg_data)
 
@@ -921,7 +921,7 @@ class TestMultiParticipantEdgeCases:
         registry = ParticipantRegistry()
         r = await tool_comms_join(registry, name="alice", conversation="general")
 
-        async def timeout_pub(topic, payload):
+        async def timeout_pub(topic, payload, retain: bool = False):  # pyright: ignore[reportUnusedParameter]
             raise TimeoutError("Connection timed out")
 
         result = await tool_comms_send(

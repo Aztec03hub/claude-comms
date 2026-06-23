@@ -208,7 +208,7 @@ def classify_mention_segments(
     nk: dict[str, str] = {}
     if name_to_key:
         for name, key in name_to_key.items():
-            if isinstance(name, str) and isinstance(key, str):
+            if isinstance(name, str) and isinstance(key, str):  # pyright: ignore[reportUnnecessaryIsInstance]
                 nk[name.lower()] = key
 
     # Whisper-gate (per §6.3 R2-C1 + §10 Test #4): when `recipients` is
@@ -335,7 +335,7 @@ def _name_to_key_from_participants(
     return out
 
 
-def _render_text_with_mentions(
+def _render_text_with_mentions(  # pyright: ignore[reportUnusedFunction]
     text: str,
     *,
     message: Message,
@@ -453,7 +453,7 @@ class MessageBubble(Static):
     # renderables that respect existing code-block + multi-segment paths.
     # ------------------------------------------------------------------
 
-    def _render_body(self, msg: Message, is_whisper: bool):
+    def _render_body(self, msg: Message, is_whisper: bool):  # pyright: ignore[reportUnusedParameter]
         """Render the body and return (renderable, has_self_mention).
 
         ``has_self_mention`` is True iff any text segment classified to

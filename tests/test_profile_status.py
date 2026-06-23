@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -60,7 +61,7 @@ from claude_comms.registry_store import (
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> RegistryStore:
+def store(tmp_path: Path) -> Iterator[RegistryStore]:
     """Fresh registry store rooted at tmp_path (data_dir == tmp_path)."""
     s = RegistryStore.open(tmp_path)
     yield s
@@ -108,6 +109,7 @@ async def test_profile_status_set_happy_path(registry: ParticipantRegistry):
     assert res["text"] == "deep in plan review"
 
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_emoji == "thinking-face"
     assert p.profile_status_text == "deep in plan review"
     assert p.profile_status_expires_at is None
@@ -120,6 +122,7 @@ async def test_profile_status_clear_happy_path(registry: ParticipantRegistry):
     res = await tool_comms_profile_status_clear(registry, key=key)
     assert res["status"] == "cleared"
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_emoji is None
     assert p.profile_status_text is None
     assert p.profile_status_expires_at is None
@@ -135,6 +138,7 @@ async def test_profile_status_set_then_clear_idempotent(
     r2 = await tool_comms_profile_status_clear(registry, key=key)
     assert r1["status"] == r2["status"] == "cleared"
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_emoji is None
 
 
@@ -161,6 +165,7 @@ async def test_profile_status_set_expires_at_future_preserved(
     cleared = await auto_expire_profile_statuses_once(registry, publish_fn=None)
     assert cleared == []
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_text == "afk 1h"
 
 
@@ -180,6 +185,7 @@ async def test_profile_status_set_expires_at_past_swept_on_first_tick(
     cleared_keys = await auto_expire_profile_statuses_once(registry, publish_fn=None)
     assert key in cleared_keys
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_emoji is None
     assert p.profile_status_text is None
 
@@ -205,6 +211,7 @@ async def test_profile_status_set_both_emoji_and_text_none_collapses_to_clear(
     res = await tool_comms_profile_status_set(registry, key=key, emoji=None, text=None)
     assert res["status"] == "cleared"
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_emoji is None
     assert p.profile_status_text is None
 
@@ -237,6 +244,7 @@ async def test_profile_status_set_publishes_per_connection_with_three_keys(
     key = await _join_claude(registry)
     # Add an extra web connection so we can assert per-conn fan-out.
     p = registry.get(key)
+    assert p is not None
     ts = now_iso()
     p.connections["web-abcd"] = ConnectionInfo(
         client="web", instance_id="abcd", since=ts, last_seen=ts
@@ -408,7 +416,10 @@ async def test_existing_comms_status_set_still_works_post_migration(
         assert res["label"] == "thinking"
         # The v0.4.0 contract: activity lands on every ConnectionInfo.
         p = reg.get(key)
-        assert p.connections["mcp"].activity.label == "thinking"
+        assert p is not None
+        mcp_activity = p.connections["mcp"].activity
+        assert mcp_activity is not None
+        assert mcp_activity.label == "thinking"
     finally:
         s.close()
         # Reset the activity throttle so adjacent suites aren't affected.
@@ -468,6 +479,7 @@ async def test_profile_status_and_activity_are_independent(
     # Then set profile_status — must not clobber the activity.
     await tool_comms_profile_status_set(registry, key=key, emoji="x", text="durable")
     p = registry.get(key)
+    assert p is not None
     assert p.profile_status_text == "durable"
     assert p.connections["mcp"].activity is not None
     assert p.connections["mcp"].activity.label == "reading"

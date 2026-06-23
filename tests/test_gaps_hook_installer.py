@@ -117,7 +117,7 @@ class TestWindowsTemplateGeneration:
 
 
 class TestInstallValidation:
-    def test_install_raises_on_whitespace_key(self, mock_home):
+    def test_install_raises_on_whitespace_key(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         with pytest.raises(ValueError, match="non-empty string"):
             install_hook(participant_key="   ")
 

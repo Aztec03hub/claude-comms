@@ -52,7 +52,7 @@ from claude_comms.message import Message
 class TestConfigInitFlow:
     """Config creation, loading, permissions, and round-trip."""
 
-    def test_init_creates_config_with_key(self, tmp_path: Path) -> None:
+    def test_init_creates_config_with_key(self, tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
         config = get_default_config()
         assert len(config["identity"]["key"]) == 8
         assert config["identity"]["type"] == "human"
@@ -556,7 +556,11 @@ class TestMCPToolsPipeline:
         # Send with a spy that captures the message
         captured: list[tuple[str, bytes]] = []
 
-        async def mock_publish(topic: str, payload: bytes) -> None:
+        async def mock_publish(
+            topic: str,
+            payload: bytes,
+            retain: bool = False,  # pyright: ignore[reportUnusedParameter]
+        ) -> None:
             captured.append((topic, payload))
 
         result = await tool_comms_send(
@@ -570,7 +574,7 @@ class TestMCPToolsPipeline:
         assert len(captured) == 1
 
         # Parse the published message and add to store
-        topic, payload = captured[0]
+        _topic, payload = captured[0]
         msg_data = json.loads(payload)
         store.add("general", msg_data)
 
@@ -591,7 +595,11 @@ class TestMCPToolsPipeline:
 
         captured: list[tuple[str, bytes]] = []
 
-        async def mock_publish(topic: str, payload: bytes) -> None:
+        async def mock_publish(
+            topic: str,
+            payload: bytes,
+            retain: bool = False,  # pyright: ignore[reportUnusedParameter]
+        ) -> None:
             captured.append((topic, payload))
 
         result = await tool_comms_send(
@@ -620,7 +628,11 @@ class TestMCPToolsPipeline:
 
         captured: list[tuple[str, bytes]] = []
 
-        async def mock_publish(topic: str, payload: bytes) -> None:
+        async def mock_publish(
+            topic: str,
+            payload: bytes,
+            retain: bool = False,  # pyright: ignore[reportUnusedParameter]
+        ) -> None:
             captured.append((topic, payload))
 
         await tool_comms_send(
@@ -653,7 +665,11 @@ class TestMCPToolsPipeline:
 
         captured: list[tuple[str, bytes]] = []
 
-        async def mock_publish(topic: str, payload: bytes) -> None:
+        async def mock_publish(
+            topic: str,
+            payload: bytes,
+            retain: bool = False,  # pyright: ignore[reportUnusedParameter]
+        ) -> None:
             captured.append((topic, payload))
 
         await tool_comms_send(
@@ -720,10 +736,10 @@ class TestGenerateClientIdIntegration:
         from claude_comms.broker import generate_client_id
 
         with pytest.raises(ValueError):
-            generate_client_id(None, "abcdef01")
+            generate_client_id(None, "abcdef01")  # pyright: ignore[reportArgumentType]
 
     def test_none_key_raises(self) -> None:
         from claude_comms.broker import generate_client_id
 
         with pytest.raises(ValueError):
-            generate_client_id("mcp", None)
+            generate_client_id("mcp", None)  # pyright: ignore[reportArgumentType]

@@ -1077,6 +1077,7 @@ class TestWrapperReturnShape:
 
         mcp = srv.create_server(config=tmp_config)
         # Register a participant so the tool returns a real (non-error) dict.
+        assert srv._registry is not None
         p = srv._registry.join("shape-test", "general")
 
         res = self._call(mcp, "comms_read", {"key": p.key, "conversation": "general"})
@@ -1107,12 +1108,15 @@ class TestWrapperReturnShape:
         import claude_comms.mcp_server as srv
 
         mcp = srv.create_server(config=tmp_config)
+        assert srv._registry is not None
         p = srv._registry.join("shape-test-2", "general")
 
         res = self._call(mcp, "comms_check", {"key": p.key})
         assert isinstance(res, CallToolResult)
         assert res.structuredContent is None
-        text = res.content[0].text
+        block = res.content[0]
+        assert isinstance(block, TextContent)
+        text = block.text
         _, _, json_part = text.partition("\n---\n")
         parsed = json.loads(json_part)
         # The model must still get total_unread + conversations.
@@ -1142,7 +1146,9 @@ class TestWrapperReturnShape:
         )
         parsed = self._assert_concise_shape(res)
         # Summary line present (the human surface).
-        summary = res.content[0].text.split("\n", 1)[0]
+        block = res.content[0]
+        assert isinstance(block, TextContent)
+        summary = block.text.split("\n", 1)[0]
         assert summary.startswith("✅ joined #general as joiner")
         # Full JSON still carries the key + status for the model.
         assert parsed["status"] == "joined"
@@ -1164,11 +1170,12 @@ class TestWrapperReturnShape:
         # comms_artifact_create publishes on success; swap the broker-required
         # _noop_publish for a swallowing stub so the success path completes
         # without a live MQTT daemon.
-        async def _stub_publish(topic: str, payload: bytes, retain: bool = False):
+        async def _stub_publish(_topic: str, _payload: bytes, _retain: bool = False):
             return None
 
         srv._publish_fn = _stub_publish
 
+        assert srv._registry is not None
         p = srv._registry.join("art-creator", "general")
         res = self._call(
             mcp,
@@ -1183,7 +1190,9 @@ class TestWrapperReturnShape:
             },
         )
         parsed = self._assert_concise_shape(res)
-        summary = res.content[0].text.split("\n", 1)[0]
+        block = res.content[0]
+        assert isinstance(block, TextContent)
+        summary = block.text.split("\n", 1)[0]
         assert summary == "\U0001f4c4 created artifact 'shape-plan' v1"
         assert parsed["status"] == "created"
         assert parsed["version"] == 1
@@ -1195,6 +1204,7 @@ class TestWrapperReturnShape:
         import claude_comms.mcp_server as srv
 
         mcp = srv.create_server(config=tmp_config)
+        assert srv._registry is not None
         caller = srv._registry.join("kicker", "general")
         target = srv._registry.join("kick-target", "general")
         res = self._call(
@@ -1207,7 +1217,9 @@ class TestWrapperReturnShape:
             },
         )
         parsed = self._assert_concise_shape(res)
-        summary = res.content[0].text.split("\n", 1)[0]
+        block = res.content[0]
+        assert isinstance(block, TextContent)
+        summary = block.text.split("\n", 1)[0]
         # Loud failure marker for the human.
         assert summary.startswith("\U0001f6aa kick failed:")
         # Full error envelope preserved for the model.

@@ -78,8 +78,8 @@ def reactions_topic(conv_id: str) -> str:
 
 
 def _validate_emoji(value: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError("emoji must be a string")
+    if not isinstance(value, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise ValueError("emoji must be a string")  # pyright: ignore[reportUnreachable]
     stripped = value.strip()
     if not stripped:
         raise ValueError("emoji must not be empty")
@@ -291,7 +291,7 @@ class ReactionsStore:
             elif op in ("add", "remove"):
                 resolved = op  # type: ignore[assignment]
             else:
-                raise ValueError(f"invalid op: {op!r}")
+                raise ValueError(f"invalid op: {op!r}")  # pyright: ignore[reportUnreachable]
 
             changed: bool
             if resolved == "add":

@@ -414,7 +414,7 @@ class TestPerThreadMQTTFanout:
 
         published: list[tuple[str, bytes]] = []
 
-        async def capture(topic: str, payload: bytes) -> None:
+        async def capture(topic: str, payload: bytes, retain: bool = False) -> None:  # pyright: ignore[reportUnusedParameter]
             published.append((topic, payload))
 
         result = await tool_comms_send(
@@ -446,7 +446,7 @@ class TestPerThreadMQTTFanout:
         ember = registry.join("ember", "general")
         published: list[tuple[str, bytes]] = []
 
-        async def capture(topic: str, payload: bytes) -> None:
+        async def capture(topic: str, payload: bytes, retain: bool = False) -> None:  # pyright: ignore[reportUnusedParameter]
             published.append((topic, payload))
 
         await tool_comms_send(

@@ -159,7 +159,7 @@ class TestSenderValidation:
 
     def test_sender_invalid_type(self):
         with pytest.raises(ValueError):
-            Sender(key="abcdef01", name="test", type="bot")  # type: ignore
+            Sender(key="abcdef01", name="test", type="bot")  # type: ignore  # pyright: ignore[reportArgumentType]
 
 
 # --- from_mqtt_payload with malformed data ---
@@ -246,6 +246,7 @@ class TestRecipientsValidation:
             conv="general",
             recipients=["11111111", "22222222"],
         )
+        assert msg.recipients is not None
         assert len(msg.recipients) == 2
 
     def test_recipient_with_uppercase_rejected(self):

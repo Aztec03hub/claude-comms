@@ -39,7 +39,7 @@ from claude_comms.mcp_tools import (
     tool_comms_conversation_create,
     tool_comms_conversation_update,
 )
-from claude_comms.message import now_iso
+from claude_comms.message import ParticipantType, now_iso
 from claude_comms.registry_store import RegistryStore
 
 from conftest import PublishSpy
@@ -60,7 +60,7 @@ def _register(
     registry: ParticipantRegistry,
     name: str = "alice",
     conversation: str = "general",
-    participant_type: str = "claude",
+    participant_type: ParticipantType = "claude",
 ) -> str:
     p = registry.join(name, conversation, participant_type=participant_type)
     return p.key

@@ -68,11 +68,13 @@ def test_participants_survive_restart(tmp_path: Path) -> None:
 
     store, reg = _simulate_restart(store, tmp_path)
     try:
-        assert reg.get(p1_key) is not None
-        assert reg.get(p2_key) is not None
-        assert reg.get(p1_key).name == "alice"
-        assert reg.get(p1_key).type == "claude"
-        assert reg.get(p2_key).type == "human"
+        p1 = reg.get(p1_key)
+        p2 = reg.get(p2_key)
+        assert p1 is not None
+        assert p2 is not None
+        assert p1.name == "alice"
+        assert p1.type == "claude"
+        assert p2.type == "human"
     finally:
         store.close()
 
@@ -113,7 +115,9 @@ def test_name_change_persists_across_restart(tmp_path: Path) -> None:
 
     store, reg = _simulate_restart(store, tmp_path)
     try:
-        assert reg.get(p_key).name == "alice_v2"
+        p_restored = reg.get(p_key)
+        assert p_restored is not None
+        assert p_restored.name == "alice_v2"
         # Name index should be rebuilt against the new name.
         assert reg.resolve_name("alice_v2") == p_key
         assert reg.resolve_name("alice") is None

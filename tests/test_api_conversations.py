@@ -469,7 +469,7 @@ class TestGetAllConversationsFull:
 
     def test_returns_daemon_full_set_for_member(
         self,
-        module_state: ParticipantRegistry,
+        module_state: ParticipantRegistry,  # pyright: ignore[reportUnusedParameter]
     ) -> None:
         """The S-FIX: caller who is a member of ``general`` still receives
         rows for every other public channel (so the sidebar's
@@ -486,7 +486,7 @@ class TestGetAllConversationsFull:
 
     def test_unlisted_channel_hidden_from_non_member(
         self,
-        module_state: ParticipantRegistry,
+        module_state: ParticipantRegistry,  # pyright: ignore[reportUnusedParameter]
     ) -> None:
         """Private channels do NOT appear for callers who aren't members."""
         rows = get_all_conversations_full(caller_key="11223344")  # bob
@@ -494,7 +494,7 @@ class TestGetAllConversationsFull:
 
     def test_unlisted_channel_visible_to_member(
         self,
-        module_state: ParticipantRegistry,
+        module_state: ParticipantRegistry,  # pyright: ignore[reportUnusedParameter]
     ) -> None:
         """Private channels appear for callers who ARE members."""
         rows = get_all_conversations_full(caller_key="aabbccdd")  # alice
@@ -506,7 +506,7 @@ class TestGetAllConversationsFull:
 
     def test_listed_channels_visible_with_empty_caller(
         self,
-        module_state: ParticipantRegistry,
+        module_state: ParticipantRegistry,  # pyright: ignore[reportUnusedParameter]
     ) -> None:
         """Empty caller key still gets public channels (read-only client)."""
         rows = get_all_conversations_full(caller_key="")
@@ -541,7 +541,7 @@ class TestApiConversationsRoute:
 
     def test_handler_returns_full_shape_via_collector(
         self,
-        module_state: ParticipantRegistry,
+        module_state: ParticipantRegistry,  # pyright: ignore[reportUnusedParameter]
     ) -> None:
         """Collector output matches the ChannelRow shape the handler wraps.
 

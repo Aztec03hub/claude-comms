@@ -120,7 +120,7 @@ class TestMalformedMessages:
 
     def test_format_entry_none_body(self):
         """None-like msg still handled."""
-        result = format_log_entry(None)
+        result = format_log_entry(None)  # pyright: ignore[reportArgumentType]
         assert result == "[EMPTY MESSAGE]"
 
     def test_format_entry_missing_ts(self):

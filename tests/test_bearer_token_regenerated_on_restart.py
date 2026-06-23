@@ -125,6 +125,6 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _reset_token_after_test():
+def _reset_token_after_test():  # pyright: ignore[reportUnusedFunction]
     yield
     cli_module.set_web_token(None)

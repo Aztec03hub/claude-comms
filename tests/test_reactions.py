@@ -103,7 +103,7 @@ class TestReactionsStoreBasics:
     def test_invalid_op_raises(self, tmp_path: Path) -> None:
         store = ReactionsStore(tmp_path)
         with pytest.raises(ValueError):
-            store.apply(message_id="m1", emoji="heart", actor_key="deadbeef", op="wat")  # type: ignore[arg-type]
+            store.apply(message_id="m1", emoji="heart", actor_key="deadbeef", op="wat")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
 
 class TestReactionsStorePersistence:

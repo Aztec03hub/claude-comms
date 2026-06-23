@@ -153,7 +153,7 @@ def test_invite_happy_path(tmp_path: Path) -> None:
     }
     # tool_comms_invite published a system message on the general topic.
     assert spy.call_count == 1
-    topic, payload, retain = spy.last_call  # type: ignore[misc]
+    topic, payload, _retain = spy.last_call  # type: ignore[misc]
     assert topic == "claude-comms/conv/general/messages"
     assert b"invited" in payload
 

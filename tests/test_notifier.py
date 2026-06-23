@@ -35,7 +35,7 @@ class _FakeRegistry:
     def __init__(self, members):
         self._members = members
 
-    def members(self, conversation):  # noqa: ARG002 - matches real signature
+    def members(self, _conversation):  # matches real signature
         return list(self._members)
 
 
@@ -170,7 +170,7 @@ class TestBroadcast:
             notif_dir,
             enabled=True,
             cue_on_broadcast=True,
-            registry_provider=lambda: registry,
+            registry_provider=lambda: registry,  # pyright: ignore[reportArgumentType]
         )
         n = w.write(_broadcast_msg())
         # Bob + Carol cued, sender excluded.
@@ -196,7 +196,7 @@ class TestSystem:
         w = NotificationWriter(notif_dir, enabled=True, cue_on_broadcast=True)
         # Even if the system msg somehow carried recipients, it must be skipped.
         msg = _system_msg()
-        msg["recipients"] = [BOB_KEY]
+        msg["recipients"] = [BOB_KEY]  # pyright: ignore[reportArgumentType]
         n = w.write(msg)
         assert n == 0
         assert _read_lines(notif_dir, BOB_KEY) == []

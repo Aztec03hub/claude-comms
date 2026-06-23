@@ -18,7 +18,7 @@ from claude_comms.artifact import (
     save_artifact,
     validate_artifact_name,
 )
-from claude_comms.message import Sender
+from claude_comms.message import ParticipantType, Sender
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_artifact_create,
@@ -37,7 +37,7 @@ from conftest import PublishSpy
 
 
 def _sender(
-    key: str = "ab12cd34", name: str = "test-user", type: str = "human"
+    key: str = "ab12cd34", name: str = "test-user", type: ParticipantType = "human"
 ) -> Sender:
     return Sender(key=key, name=name, type=type)
 
@@ -168,7 +168,7 @@ class TestArtifactModel:
         a = Artifact(
             name="x",
             title="X",
-            type=t,
+            type=t,  # pyright: ignore[reportArgumentType]
             conversation_id="general",
             created_by=_sender(),
         )
@@ -179,7 +179,7 @@ class TestArtifactModel:
             Artifact(
                 name="x",
                 title="X",
-                type="invalid",
+                type="invalid",  # pyright: ignore[reportArgumentType]
                 conversation_id="general",
                 created_by=_sender(),
             )
@@ -391,20 +391,23 @@ class TestToolCommsArtifactCreate:
             registry, name="alice", conversation="general"
         )
 
-        kwargs = dict(
+        kwargs: dict[str, str] = dict(
             key=participant["key"],
             conversation="general",
             name="dupe",
             title="Dupe",
             type="doc",
             content="x",
-            data_dir=tmp_path,
         )
 
-        result1 = await tool_comms_artifact_create(registry, spy, **kwargs)
+        result1 = await tool_comms_artifact_create(
+            registry, spy, data_dir=tmp_path, **kwargs
+        )
         assert result1["status"] == "created"
 
-        result2 = await tool_comms_artifact_create(registry, spy, **kwargs)
+        result2 = await tool_comms_artifact_create(
+            registry, spy, data_dir=tmp_path, **kwargs
+        )
         assert result2.get("error") is True
         # Either the case-insensitive collision check or the "already exists"
         # check must fire; both are valid duplicate-name rejections.
