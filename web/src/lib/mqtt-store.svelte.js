@@ -842,7 +842,14 @@ export class MqttChatStore {
       for (const msg of data.messages) {
         if (!msg.id || this.#seenIds.has(msg.id)) continue;
         this.#seenIds.add(msg.id);
-        newMessages.push({ ...msg, channel });
+        // History messages are, by definition, already delivered to the
+        // broker. The per-message `status` is the optimistic local-echo state
+        // ('sending') captured in the wire payload; 'sent' is only ever set by
+        // the live publish callback in the originating session. Without this
+        // normalization, your own past messages reload showing a stuck
+        // "Sending..." spinner forever. Normalize the stale optimistic state.
+        const status = msg.status === 'sending' ? 'sent' : msg.status;
+        newMessages.push({ ...msg, channel, status });
       }
       if (newMessages.length > 0) {
         // Defer the state update to next microtask so Svelte 5's
