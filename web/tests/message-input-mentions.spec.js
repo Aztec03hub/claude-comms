@@ -272,3 +272,135 @@ describe('MessageInput — composerPrefill (profile-card prefill mechanism)', ()
     expect(store.composerPrefill).toBeNull();
   });
 });
+
+describe('MessageInput — caret lands after a committed mention', () => {
+  // Regression for the composer caret bug: after an autocomplete commit the
+  // caret must sit immediately AFTER the inserted @mention so the next typed
+  // characters continue from there. Previously the caret restore used a bare
+  // queueMicrotask, which is not guaranteed to run after Svelte flushes the
+  // bound value into the textarea — so the grown value could reset the caret
+  // and subsequent text landed at the wrong offset (worse with more mentions).
+  //
+  // To keep these tests honest (jsdom can't reproduce the real-browser flush
+  // ordering, and our typeText helper sets the caret itself), each test
+  // CLOBBERS the textarea caret to a deliberately-wrong offset immediately
+  // before the commit fires. After the commit the ONLY code path that can
+  // move the caret to the correct end-of-mention offset is the component's
+  // own `await tick(); inputEl.setSelectionRange(...)` restore. If that
+  // restore regresses (or runs before the value flush), the caret stays at
+  // the clobbered offset and the assertion fails.
+
+  test('test_caret_after_single_mention_commit_tab', async () => {
+    const store = makeStore();
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@em');
+    // Clobber: pretend the caret got knocked to the start.
+    ta.setSelectionRange(0, 0);
+    await pressKey(ta, 'Tab');
+    await tick();
+
+    expect(ta.value).toBe('@ember');
+    // Caret immediately after the inserted mention text — restored by the
+    // component, NOT by the test helper.
+    expect(ta.selectionStart).toBe('@ember'.length);
+    expect(ta.selectionEnd).toBe('@ember'.length);
+  });
+
+  test('test_caret_after_single_mention_commit_dropdown_mousedown', async () => {
+    // The dropdown commits on mousedown (keeps the textarea focused). The
+    // caret must still resolve to the end of the inserted mention.
+    const store = makeStore();
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@em');
+    await tick();
+    ta.setSelectionRange(0, 0); // clobber before commit
+    const option = getByTestId('mention-item-ember-key');
+    await fireEvent.mouseDown(option);
+    await tick();
+
+    expect(ta.value).toBe('@ember');
+    expect(ta.selectionStart).toBe('@ember'.length);
+    expect(ta.selectionEnd).toBe('@ember'.length);
+  });
+
+  test('test_caret_after_mention_commit_with_trailing_text', async () => {
+    // Mention committed in the MIDDLE of the line (text already after the
+    // query). Here end-of-string !== newCursor, so the commit offset math is
+    // load-bearing: the caret must land just after the inserted @mention, not
+    // at the end of the whole line.
+    const store = makeStore();
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    // Build "hi @em there" with the caret sitting right after "@em".
+    ta.value = 'hi @em there';
+    ta.setSelectionRange('hi @em'.length, 'hi @em'.length);
+    await fireEvent.input(ta, { target: ta });
+    await tick();
+
+    ta.setSelectionRange(0, 0); // clobber before commit
+    await pressKey(ta, 'Tab');
+    await tick();
+
+    expect(ta.value).toBe('hi @ember there');
+    // Caret just after the inserted mention, BEFORE " there".
+    expect(ta.selectionStart).toBe('hi @ember'.length);
+    expect(ta.selectionEnd).toBe('hi @ember'.length);
+  });
+
+  test('test_caret_after_double_mention_commit', async () => {
+    // Two mentions in a row. Each commit must base its caret on the CURRENT
+    // value, so the second mention's caret lands at the end of the whole
+    // string — not at a stale offset from the first commit.
+    const store = makeStore();
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@em');
+    ta.setSelectionRange(0, 0);
+    await pressKey(ta, 'Tab');
+    await tick();
+    expect(ta.value).toBe('@ember');
+    expect(ta.selectionStart).toBe('@ember'.length);
+
+    // Type a separator + the second mention prefix, then commit it.
+    await typeText(ta, ' @sa');
+    ta.setSelectionRange(0, 0);
+    await pressKey(ta, 'Tab');
+    await tick();
+
+    expect(ta.value).toBe('@ember @sage');
+    expect(ta.selectionStart).toBe('@ember @sage'.length);
+    expect(ta.selectionEnd).toBe('@ember @sage'.length);
+  });
+
+  test('test_typing_continues_after_committed_mention', async () => {
+    // After committing, typed characters must append after the mention, not
+    // bleed into / before it.
+    const store = makeStore();
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@em');
+    await pressKey(ta, 'Tab');
+    await tick();
+    await typeText(ta, ' hello');
+
+    expect(ta.value).toBe('@ember hello');
+    expect(ta.selectionStart).toBe('@ember hello'.length);
+  });
+});
