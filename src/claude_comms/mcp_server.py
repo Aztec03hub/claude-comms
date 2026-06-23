@@ -194,15 +194,6 @@ def _get_reactions_store(conversation: str) -> ReactionsStore:
         return store
 
 
-def _get_presence() -> PresenceManager | None:
-    """Return the presence manager, or None if not initialised.
-
-    Returns None rather than raising — presence is best-effort and tools
-    must continue to work even if the manager hasn't been wired yet.
-    """
-    return _presence
-
-
 def _touch(key: str | None) -> None:
     """Best-effort refresh of a participant's presence on tool activity.
 
@@ -526,7 +517,7 @@ def get_all_conversations(key: str | None = None) -> list[dict]:
     metas = list_all_conversations(_conv_data_dir)
     result = []
     for meta in metas:
-        entry = {
+        entry: dict[str, Any] = {
             "name": meta.name,
             "topic": meta.topic,
             "last_activity": _activity_tracker.get(meta.name)
@@ -730,16 +721,16 @@ async def _mqtt_subscriber(
                 port=port,
                 identifier=client_id,
             ) as client:
-                await client.subscribe(msg_topic, qos=1)
-                await client.subscribe(presence_topic, qos=1)
-                await client.subscribe(system_topic, qos=1)
-                await client.subscribe(new_presence_topic, qos=1)
+                _ = await client.subscribe(msg_topic, qos=1)
+                _ = await client.subscribe(presence_topic, qos=1)
+                _ = await client.subscribe(system_topic, qos=1)
+                _ = await client.subscribe(new_presence_topic, qos=1)
                 logger.info("MCP subscriber connected to %s:%d", host, port)
                 async for mqtt_msg in client.messages:
                     try:
                         payload = (
                             mqtt_msg.payload.decode("utf-8")
-                            if isinstance(mqtt_msg.payload, bytes)
+                            if isinstance(mqtt_msg.payload, bytes)  # pyright: ignore[reportUnnecessaryIsInstance]
                             else str(mqtt_msg.payload)
                         )
                         # Skip empty retained messages (used for cleanup)
@@ -793,7 +784,7 @@ async def _mqtt_subscriber(
                                     new_count = (
                                         root.get("thread_reply_count") or 0
                                     ) + 1
-                                    store.update_thread_metadata(
+                                    _ = store.update_thread_metadata(
                                         conv_id,
                                         root["id"],
                                         reply_count=new_count,
@@ -822,7 +813,7 @@ async def _mqtt_subscriber(
                             # fires even when logging is disabled / None.
                             if notifier is not None:
                                 try:
-                                    notifier.write(data)
+                                    _ = notifier.write(data)
                                 except Exception:
                                     logger.warning(
                                         "Failed to write notification cue",
@@ -860,7 +851,7 @@ async def _mqtt_subscriber(
 
                             if status == "online" and _registry:
                                 # Ensure participant exists in registry
-                                _registry.join(
+                                _ = _registry.join(
                                     name, "general", key=key, participant_type=p_type
                                 )
                                 p = _registry.get(key)
@@ -879,7 +870,7 @@ async def _mqtt_subscriber(
                             elif status == "offline" and _registry:
                                 p = _registry.get(key)
                                 if p:
-                                    p.connections.pop(conn_key, None)
+                                    _ = p.connections.pop(conn_key, None)
                                     # If no connections left, clear client field
                                     if not p.connections:
                                         p.client = None
@@ -912,7 +903,7 @@ async def _mqtt_subscriber(
                                     if len(parts) > 2 and parts[1] == "conv"
                                     else "general"
                                 )
-                                _registry.join(
+                                _ = _registry.join(
                                     name, conv, key=key, participant_type=p_type
                                 )
                                 # Store client type and connection info
@@ -946,9 +937,9 @@ async def _mqtt_subscriber(
                                             if instance_id
                                             else client_type
                                         )
-                                        existing.connections.pop(conn_key, None)
+                                        _ = existing.connections.pop(conn_key, None)
                                     if not existing.connections:
-                                        _registry.leave(key, "general")
+                                        _ = _registry.leave(key, "general")
 
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning("Malformed MQTT message, skipping")
@@ -1018,11 +1009,11 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     _activity_tracker = LastActivityTracker()
 
     # Bootstrap "general" and backfill missing metadata
-    ensure_general_exists(_conv_data_dir)
+    _ = ensure_general_exists(_conv_data_dir)
     log_dir = Path(
         config.get("logging", {}).get("dir", "~/.claude-comms/logs")
     ).expanduser()
-    backfill_missing_metadata(_conv_data_dir, log_dir)
+    _ = backfill_missing_metadata(_conv_data_dir, log_dir)
 
     mcp_cfg = config.get("mcp", {})
     host = mcp_cfg.get("host", "127.0.0.1")
@@ -1063,7 +1054,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     logging_cfg = config.get("logging", {})
     log_dir = logging_cfg.get("dir", "~/.claude-comms/logs")
     log_path = Path(log_dir).expanduser()
-    replay_jsonl_logs(
+    _ = replay_jsonl_logs(
         log_dir=log_path,
         store=_store,
         deduplicator=_deduplicator,
@@ -1086,6 +1077,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # mismatch became load-bearing once MCP-side presence publishes
     # started passing retain=True (Bug 2 from the v0.3.0 follow-up brief).
     async def _noop_publish(topic: str, payload: bytes, retain: bool = False) -> None:
+        del topic, payload, retain
         raise ConnectionError(
             "MQTT broker unavailable. Run 'claude-comms start' to start the daemon."
         )
@@ -1097,7 +1089,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # ------------------------------------------------------------------
 
     @mcp.tool(structured_output=False)
-    async def comms_join(
+    async def comms_join(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[
             str | None,
             Field(description="Your participant key (omit on first call)"),
@@ -1137,7 +1129,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_join(result))
 
     @mcp.tool(structured_output=False)
-    def comms_leave(
+    def comms_leave(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to leave")],
     ) -> CallToolResult:
@@ -1146,7 +1138,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_leave(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_send(
+    async def comms_send(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         message: Annotated[str, Field(description="Message text to send")],
@@ -1211,7 +1203,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_send(result))
 
     @mcp.tool(structured_output=False)
-    def comms_read(
+    def comms_read(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to read")],
         count: Annotated[
@@ -1270,7 +1262,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_read(result))
 
     @mcp.tool(structured_output=False)
-    def comms_thread_read(
+    def comms_thread_read(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation containing the thread")
@@ -1309,7 +1301,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_thread_read(result))
 
     @mcp.tool(structured_output=False)
-    def comms_check(
+    def comms_check(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str | None,
@@ -1348,7 +1340,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_check(result))
 
     @mcp.tool(structured_output=False)
-    def comms_members(
+    def comms_members(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to list")],
     ) -> CallToolResult:
@@ -1358,7 +1350,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_members(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_status_set(
+    async def comms_status_set(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation to set status in")
@@ -1404,7 +1396,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_status_set(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_status_clear(
+    async def comms_status_clear(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation in which to clear status")
@@ -1432,7 +1424,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # is single-tenant via ``_config["identity"]["key"]``.
 
     @mcp.tool(structured_output=False)
-    async def comms_profile_status_set(
+    async def comms_profile_status_set(  # pyright: ignore[reportUnusedFunction]
         emoji: Annotated[
             str | None,
             Field(description="Single emoji glyph or None to leave unset."),
@@ -1478,7 +1470,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_profile_status_set(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_profile_status_clear() -> CallToolResult:
+    async def comms_profile_status_clear() -> CallToolResult:  # pyright: ignore[reportUnusedFunction]
         """Clear the caller's profile-status triplet.
 
         Idempotent. Broadcasts the cleared payload so subscribers drop
@@ -1498,7 +1490,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_profile_status_clear(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_react(
+    async def comms_react(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation containing the message")
@@ -1545,7 +1537,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_react(result))
 
     @mcp.tool(structured_output=False)
-    def comms_reactions_get(
+    def comms_reactions_get(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation containing the message")
@@ -1568,7 +1560,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_reactions_get(result))
 
     @mcp.tool(structured_output=False)
-    def comms_conversations(
+    def comms_conversations(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         all: Annotated[
             bool, Field(description="If true, list ALL conversations (not just joined)")
@@ -1586,7 +1578,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_conversations(result))
 
     @mcp.tool(structured_output=False)
-    def comms_update_name(
+    def comms_update_name(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         new_name: Annotated[str, Field(description="New display name")],
     ) -> CallToolResult:
@@ -1596,7 +1588,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_update_name(result))
 
     @mcp.tool(structured_output=False)
-    def comms_history(
+    def comms_history(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to search")],
         query: Annotated[
@@ -1620,7 +1612,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_history(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_artifact_create(
+    async def comms_artifact_create(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         name: Annotated[
@@ -1652,7 +1644,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_artifact_create(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_artifact_update(
+    async def comms_artifact_update(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         name: Annotated[str, Field(description="Artifact slug to update")],
@@ -1682,7 +1674,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_artifact_update(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_artifact_delete(
+    async def comms_artifact_delete(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         name: Annotated[str, Field(description="Artifact slug to delete")],
@@ -1701,7 +1693,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_artifact_delete(result))
 
     @mcp.tool(structured_output=False)
-    def comms_artifact_get(
+    def comms_artifact_get(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         name: Annotated[str, Field(description="Artifact slug to read")],
@@ -1730,7 +1722,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_artifact_get(result))
 
     @mcp.tool(structured_output=False)
-    def comms_artifact_list(
+    def comms_artifact_list(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
     ) -> CallToolResult:
@@ -1747,7 +1739,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # -- Conversation discovery tools --
 
     @mcp.tool(structured_output=False)
-    async def comms_conversation_create(
+    async def comms_conversation_create(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="New conversation slug (lowercase, hyphens)")
@@ -1767,7 +1759,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         )
         # Broadcast conversation-lifecycle event so connected browsers
         # incrementally update their sidebar (Bug B fix). Best-effort.
-        if result.get("status") == "created" and _publish_fn is not None:
+        if result.get("status") == "created":
             await publish_conversation_event(
                 _publish_fn,
                 event_type="conversation_created",
@@ -1778,7 +1770,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_conversation_create(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_conversation_update(
+    async def comms_conversation_update(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to update")],
         topic: Annotated[
@@ -1861,11 +1853,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         # Broadcast topic-changed so connected browsers refresh the channel's
         # topic line without waiting for the rate-limited system message.
         # Only fired when topic was one of the updated fields.
-        if (
-            result.get("status") == "updated"
-            and topic is not None
-            and _publish_fn is not None
-        ):
+        if result.get("status") == "updated" and topic is not None:
             await publish_conversation_event(
                 _publish_fn,
                 event_type="conversation_topic_changed",
@@ -1875,7 +1863,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_conversation_update(result))
 
     @mcp.tool(structured_output=False)
-    def comms_get_channel_role(
+    def comms_get_channel_role(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation to query the role in")
@@ -1907,7 +1895,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_get_channel_role(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_conversation_delete(
+    async def comms_conversation_delete(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to delete")],
         confirm: Annotated[
@@ -1937,7 +1925,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_conversation_delete(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_conversation_archive(
+    async def comms_conversation_archive(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation slug to archive")],
         confirm: Annotated[
@@ -1985,7 +1973,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_conversation_archive(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_conversation_unarchive(
+    async def comms_conversation_unarchive(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation slug to unarchive")
@@ -2015,7 +2003,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_conversation_unarchive(result))
 
     @mcp.tool(structured_output=False)
-    async def comms_invite(
+    async def comms_invite(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to invite to")],
         target_name: Annotated[str, Field(description="Name of participant to invite")],
@@ -2036,7 +2024,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_invite(result, target_name=target_name))
 
     @mcp.tool(structured_output=False)
-    async def comms_kick(
+    async def comms_kick(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to kick from")],
         target_key: Annotated[
@@ -2066,7 +2054,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         return _concise(result, summarize_kick(result, target_name=target_name))
 
     @mcp.tool(structured_output=False)
-    async def comms_dm_open(
+    async def comms_dm_open(  # pyright: ignore[reportUnusedFunction]
         key: Annotated[str, Field(description="Your participant key")],
         target_key: Annotated[
             str, Field(description="Participant key (8 hex chars) to DM")
@@ -2175,7 +2163,7 @@ def start_server(config: dict[str, Any] | None = None) -> None:
         except Exception:
             logger.exception("MCP server error")
         finally:
-            sub_task.cancel()
+            _ = sub_task.cancel()
             try:
                 await sub_task
             except asyncio.CancelledError:

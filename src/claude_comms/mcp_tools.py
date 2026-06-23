@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from claude_comms.conversation import (
@@ -505,7 +505,7 @@ def _auto_join_humans(registry: ParticipantRegistry, conversation: str) -> list[
     general_members = registry.members("general")
     for member in general_members:
         if member.type == "human":
-            registry.join(
+            _ = registry.join(
                 member.name, conversation, key=member.key, participant_type="human"
             )
             joined_keys.append(member.key)
@@ -551,7 +551,7 @@ async def tool_comms_join(
                 )
                 if meta is not None:
                     # New conversation was created — run side effects
-                    _auto_join_humans(registry, conversation)
+                    _ = _auto_join_humans(registry, conversation)
                     if publish_fn is not None:
                         body = f"[system] {existing.name} created #{conversation}"
                         system_msg = {
@@ -598,7 +598,7 @@ async def tool_comms_join(
         )
         if meta is not None:
             # New conversation was created — run side effects
-            _auto_join_humans(registry, conversation)
+            _ = _auto_join_humans(registry, conversation)
             if publish_fn is not None:
                 body = f"[system] {p.name} created #{conversation}"
                 system_msg = {
@@ -997,7 +997,7 @@ def tool_comms_thread_read(
 
     if not validate_conv_id(conversation):
         return _error(f"Invalid conversation ID {conversation!r}.")
-    if not root_id or not isinstance(root_id, str):
+    if not root_id or not isinstance(root_id, str):  # pyright: ignore[reportUnnecessaryIsInstance]
         return _error("Parameter 'root_id' is required.")
 
     count = max(1, min(count, 200))
@@ -1689,7 +1689,7 @@ async def auto_expire_profile_statuses_once(
             p.profile_status_emoji = None
             p.profile_status_text = None
             p.profile_status_expires_at = None
-            await _publish_profile_status_to_all_connections(
+            _ = await _publish_profile_status_to_all_connections(
                 p,
                 emoji=None,
                 text=None,
@@ -1715,10 +1715,11 @@ async def auto_expire_profile_statuses_loop(
     """
     while True:
         try:
-            publish_fn = (
-                publish_fn_provider() if callable(publish_fn_provider) else None
+            publish_fn = cast(
+                "PublishFn | None",
+                publish_fn_provider() if callable(publish_fn_provider) else None,
             )
-            await auto_expire_profile_statuses_once(registry, publish_fn=publish_fn)
+            _ = await auto_expire_profile_statuses_once(registry, publish_fn=publish_fn)
         except asyncio.CancelledError:
             return
         except Exception:
@@ -2270,12 +2271,12 @@ async def tool_comms_conversation_create(
         )
 
     # Auto-join creator
-    registry.join(
+    _ = registry.join(
         participant.name, conversation, key=key, participant_type=participant.type
     )
 
     # Auto-join humans
-    _auto_join_humans(registry, conversation)
+    _ = _auto_join_humans(registry, conversation)
 
     # Publish system message to both the new conversation and "general"
     body = f"[system] {participant.name} created #{conversation}"
@@ -2718,6 +2719,7 @@ async def tool_comms_kick(
     is read from the registry's snapshot. Production wiring in
     ``mcp_server.py`` always passes both.
     """
+    del conv_data_dir
     result = _validate_key_registered(registry, key)
     if isinstance(result, dict):
         return result
@@ -2764,7 +2766,7 @@ async def tool_comms_kick(
             )
 
     # Drop target's membership (writes through to RegistryStore when wired).
-    registry.leave(target_key, conversation)
+    _ = registry.leave(target_key, conversation)
 
     # Publish system message to the kicked-from channel.
     body = f"[system] {caller.name} kicked {target.name} from #{conversation}"
@@ -2835,6 +2837,7 @@ async def tool_comms_dm_open(
     call sites), the role writes are skipped silently. Production
     wiring in ``mcp_server.py`` always passes a store.
     """
+    del publish_fn
     result = _validate_key_registered(registry, key)
     if isinstance(result, dict):
         return result
@@ -2883,8 +2886,10 @@ async def tool_comms_dm_open(
     # Auto-join both parties. ``registry.join`` is idempotent for the
     # caller (they're already in the registry) but adds membership to
     # the new DM slug.
-    registry.join(caller.name, dm_slug, key=key, participant_type=caller.type)
-    registry.join(target.name, dm_slug, key=target_key, participant_type=target.type)
+    _ = registry.join(caller.name, dm_slug, key=key, participant_type=caller.type)
+    _ = registry.join(
+        target.name, dm_slug, key=target_key, participant_type=target.type
+    )
 
     # Symmetric ownership: both parties are 'owner' of the DM. There is
     # no member-vs-owner hierarchy for DMs — either party may kick
@@ -2922,7 +2927,7 @@ def _reaction_rate_check(actor_key: str, conv: str) -> bool:
         events = _reaction_event_log.setdefault(bucket, [])
         # Drop events older than 60s
         while events and events[0] < cutoff:
-            events.pop(0)
+            _ = events.pop(0)
         if len(events) >= REACTIONS_PER_ACTOR_PER_MINUTE:
             return False
         events.append(now)
@@ -2970,10 +2975,10 @@ async def tool_comms_react(
     if op not in ("add", "remove", "toggle"):
         return _error(f"op must be 'add', 'remove', or 'toggle' (got {op!r}).")
 
-    if not message_id or not isinstance(message_id, str):
+    if not message_id or not isinstance(message_id, str):  # pyright: ignore[reportUnnecessaryIsInstance]
         return _error("message_id must be a non-empty string.")
 
-    if not emoji or not isinstance(emoji, str) or not emoji.strip():
+    if not emoji or not isinstance(emoji, str) or not emoji.strip():  # pyright: ignore[reportUnnecessaryIsInstance]
         return _error("emoji must be a non-empty string.")
 
     if not _reaction_rate_check(actor.key, conversation):
@@ -3078,7 +3083,7 @@ def tool_comms_reactions_get(
             f"Not a member of conversation {conversation!r}. Call comms_join first."
         )
 
-    if not message_id or not isinstance(message_id, str):
+    if not message_id or not isinstance(message_id, str):  # pyright: ignore[reportUnnecessaryIsInstance]
         return _error("message_id must be a non-empty string.")
 
     store = get_reactions_store(conversation)
@@ -3274,7 +3279,7 @@ async def tool_comms_conversation_delete(
     # registry instead of meta.json.  Best-effort: if a member was removed
     # concurrently the ``leave`` call is a no-op.
     for member in members:
-        registry.leave(member.key, conversation)
+        _ = registry.leave(member.key, conversation)
 
     return {"deleted": True, "conversation_id": conversation}
 
@@ -3328,6 +3333,7 @@ async def tool_comms_conversation_archive(
     Reserved-name guard: ``general`` is the system lobby and cannot be
     archived. Reserved-name archives return an ``invalid_target`` error.
     """
+    del publish_fn
     result = _validate_key_registered(registry, key)
     if isinstance(result, dict):
         return result
@@ -3394,7 +3400,7 @@ async def tool_comms_conversation_archive(
 
     evicted_keys: list[str] = []
     for member in members:
-        registry.leave(member.key, conversation)
+        _ = registry.leave(member.key, conversation)
         evicted_keys.append(member.key)
 
     return {
@@ -3431,6 +3437,7 @@ async def tool_comms_conversation_unarchive(
     out so the unarchive doesn't surprise-resurrect membership that may
     have stale meaning for participants who have moved on.
     """
+    del publish_fn
     result = _validate_key_registered(registry, key)
     if isinstance(result, dict):
         return result
