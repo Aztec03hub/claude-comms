@@ -57,7 +57,7 @@ class TestRequireConfig:
             _require_config()
 
     def test_require_config_exists(self, tmp_path: Path, monkeypatch) -> None:
-        config_path, _ = _setup_config(tmp_path, monkeypatch)
+        _setup_config(tmp_path, monkeypatch)
         result = _require_config()
         assert isinstance(result, dict)
         assert "identity" in result
@@ -102,7 +102,7 @@ class TestStopCommand:
         monkeypatch.setattr("claude_comms.cli._read_pid", lambda: 999999)
 
         # os.kill(pid, 0) should raise OSError for nonexistent process
-        def fake_kill(pid, sig):
+        def fake_kill(_pid, _sig):
             raise OSError("No such process")
 
         monkeypatch.setattr("os.kill", fake_kill)
@@ -132,7 +132,7 @@ class TestSendCommand:
         assert "Config not found" in result.output
 
     def test_send_no_identity_key(self, tmp_path: Path, monkeypatch) -> None:
-        config_path, _ = _setup_config(tmp_path, monkeypatch, **{"identity.key": ""})
+        _setup_config(tmp_path, monkeypatch, **{"identity.key": ""})
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
 
         result = runner.invoke(app, ["send", "hello"])
@@ -179,7 +179,7 @@ class TestSendCommand:
         _setup_config(tmp_path, monkeypatch)
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
 
-        def raise_conn_error(coro):
+        def raise_conn_error(_coro):
             raise ConnectionError("broker down")
 
         monkeypatch.setattr("asyncio.run", raise_conn_error)
@@ -312,7 +312,7 @@ class TestConvListCommand:
         assert "general" in result.output
 
     def test_conv_list_discovers_log_files(self, tmp_path: Path, monkeypatch) -> None:
-        config_path, _ = _setup_config(tmp_path, monkeypatch)
+        _setup_config(tmp_path, monkeypatch)
         # Create a log file for a conversation
         log_dir = tmp_path / "logs"
         log_dir.mkdir(exist_ok=True)
