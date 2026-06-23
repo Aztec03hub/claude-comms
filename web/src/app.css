@@ -1,4 +1,12 @@
-@import "tailwindcss";
+/* Disable Tailwind v4 automatic content detection and scan only the shipped
+ * app source. The auto-detector walks the whole (non-gitignored) tree, which
+ * includes e2e/ test fixtures — a fixture string like `[file:report.pdf]` was
+ * being read as an arbitrary-property utility and emitted as invalid CSS
+ * (`{file: report.pdf}`), producing a build warning. Tests must not feed CSS
+ * generation, so we scan only src/ (every real UI class lives there;
+ * index.html carries no utility classes). */
+@import "tailwindcss" source(none);
+@source "./";
 /* Self-host Inter via @fontsource so the CSP can stay strict
  * (font-src 'self' data:) — no external Google Fonts dependency. */
 @import "@fontsource-variable/inter";
