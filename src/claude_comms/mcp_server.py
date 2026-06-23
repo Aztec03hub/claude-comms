@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from claude_comms.artifact import migrate_artifact_names_to_nfc
@@ -73,6 +74,13 @@ from claude_comms.conversation import (
     backfill_missing_metadata,
     ensure_general_exists,
     list_all_conversations,
+)
+from claude_comms.mcp_summaries import (
+    summarize_check,
+    summarize_history,
+    summarize_members,
+    summarize_read,
+    summarize_send,
 )
 from claude_comms.presence import PresenceManager
 from claude_comms.notifier import NotificationWriter
@@ -186,6 +194,28 @@ def _touch(key: str | None) -> None:
         _presence.ensure_connection(key, client="mcp")
     except Exception:
         logger.exception("Presence ensure_connection failed for key %s", key)
+
+
+def _concise(result: dict[str, Any], summary: str) -> CallToolResult:
+    """Wrap *result* in a text-only ``CallToolResult`` for concise display.
+
+    The returned tool result carries a single ``TextContent`` block whose text
+    is ``<summary>\\n(ctrl+o for full)\\n---\\n<full JSON>`` and NO
+    ``structuredContent``. Claude Code collapses the transcript to the leading
+    summary lines (one ``ctrl+o`` keypress expands to the full JSON), while the
+    model still receives the entire block, so it loses nothing (senders, bodies,
+    ``directed_at_me``, mentions, thread metadata, ``has_more``, etc.).
+
+    Omitting ``structuredContent`` is deliberate: when a FastMCP tool returns a
+    bare dict, Claude Code renders that JSON blob verbatim (issue #9962). A
+    text-only ``CallToolResult`` makes the prose summary the thing CC displays.
+    Verified against mcp SDK 1.26.0: FastMCP's ``convert_result`` and the
+    lowlevel call handler both pass a returned ``CallToolResult`` through
+    untouched, leaving ``structuredContent`` as ``None``.
+    """
+    full_json = json.dumps(result, indent=2, ensure_ascii=False)
+    text = f"{summary}\n(ctrl+o for full)\n---\n{full_json}"
+    return CallToolResult(content=[TextContent(type="text", text=text)])
 
 
 def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
@@ -1089,7 +1119,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """Leave a conversation."""
         return tool_comms_leave(_get_registry(), key=key, conversation=conversation)
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_send(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
@@ -1124,7 +1154,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Send a message to a conversation.
 
         ``mentions`` = broadcast highlight intent (visible to all; named users
@@ -1137,7 +1167,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
-        return await tool_comms_send(
+        result = await tool_comms_send(
             _get_registry(),
             _publish_fn,
             _get_store(),
@@ -1152,8 +1182,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             # conversations at the MCP layer.
             conv_data_dir=_get_conv_data_dir(),
         )
+        return _concise(result, summarize_send(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_read(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to read")],
@@ -1190,7 +1221,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = False,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Read recent messages from a conversation.
 
         ``unread=True`` returns only messages after your server-side read cursor
@@ -1200,7 +1231,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         ``directed_at_me`` (True when you're in its mentions or recipients).
         """
         _touch(key)
-        return tool_comms_read(
+        result = tool_comms_read(
             _get_registry(),
             _get_store(),
             key=key,
@@ -1210,6 +1241,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             top_level_only=top_level_only,
             unread=unread,
         )
+        return _concise(result, summarize_read(result))
 
     @mcp.tool()
     def comms_thread_read(
@@ -1249,7 +1281,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             since=since,
         )
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_check(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
@@ -1267,7 +1299,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = False,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Check for unread messages across conversations.
 
         ``total_unread`` counts only messages visible to the caller (whispers
@@ -1279,22 +1311,24 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         the PRE-advance count, so the caller sees what they acknowledged.
         """
         _touch(key)
-        return tool_comms_check(
+        result = tool_comms_check(
             _get_registry(),
             _get_store(),
             key=key,
             conversation=conversation,
             mark_seen=mark_seen,
         )
+        return _concise(result, summarize_check(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_members(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to list")],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """List current participants in a conversation."""
         _touch(key)
-        return tool_comms_members(_get_registry(), key=key, conversation=conversation)
+        result = tool_comms_members(_get_registry(), key=key, conversation=conversation)
+        return _concise(result, summarize_members(result))
 
     @mcp.tool()
     async def comms_status_set(
@@ -1530,7 +1564,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         _touch(key)
         return tool_comms_update_name(_get_registry(), key=key, new_name=new_name)
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_history(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to search")],
@@ -1541,10 +1575,10 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         count: Annotated[
             int, Field(description="Max results (default 50, max 200)")
         ] = 50,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Search message history by text content or sender name."""
         _touch(key)
-        return tool_comms_history(
+        result = tool_comms_history(
             _get_registry(),
             _get_store(),
             key=key,
@@ -1552,6 +1586,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             query=query,
             count=count,
         )
+        return _concise(result, summarize_history(result))
 
     @mcp.tool()
     async def comms_artifact_create(
