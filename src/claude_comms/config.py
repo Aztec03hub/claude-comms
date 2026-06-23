@@ -28,7 +28,12 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "mode": "host",
         "host": "127.0.0.1",
         "port": 1883,
-        "ws_host": "127.0.0.1",
+        # Bind the broker WebSocket on all interfaces so browsers on the
+        # trusted LAN / Tailscale tailnet (and the WSL2 Windows host, whose
+        # localhost does not reach an in-WSL loopback bind) can connect. The
+        # TCP listener stays loopback. Set to "127.0.0.1" to restore
+        # loopback-only WS binding. MQTT auth still gates connections.
+        "ws_host": "0.0.0.0",
         "ws_port": 9001,
         "remote_host": "",
         "remote_port": 1883,

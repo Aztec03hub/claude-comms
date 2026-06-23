@@ -419,7 +419,10 @@ class TestStatusWebEnabled:
 
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
-        assert "enabled" in result.output
+        # Enabled web UI now prints a clickable URL instead of the word
+        # "enabled" so terminals linkify it.
+        assert "Web UI" in result.output
+        assert "9921" in result.output
 
     def test_status_web_disabled(self, tmp_path: Path, monkeypatch) -> None:
         config_path, _ = _setup_config(tmp_path, monkeypatch)

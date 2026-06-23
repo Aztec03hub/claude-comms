@@ -33,7 +33,13 @@ __all__ = [
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1883
-DEFAULT_WS_HOST = "127.0.0.1"
+# Bind the broker WebSocket listener on all interfaces by default so browsers
+# on the trusted tailnet / LAN (and the WSL2 host, whose localhost does NOT
+# reach an in-WSL loopback bind) can reach it. The TCP listener stays loopback.
+# Security note: this is intended for a trusted LAN / Tailscale tailnet; MQTT
+# auth (broker.auth) still gates connections. Override broker.ws_host to
+# "127.0.0.1" to restore loopback-only WebSocket binding.
+DEFAULT_WS_HOST = "0.0.0.0"
 DEFAULT_WS_PORT = 9001
 DEFAULT_MAX_REPLAY = 1000
 

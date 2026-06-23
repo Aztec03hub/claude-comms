@@ -286,7 +286,9 @@ class TestBuildBrokerConfig:
     def test_default_config(self):
         cfg = _build_broker_config()
         assert cfg["listeners"]["default"]["bind"] == "127.0.0.1:1883"
-        assert cfg["listeners"]["ws-mqtt"]["bind"] == "127.0.0.1:9001"
+        # WS listener binds all interfaces by default so browsers on the
+        # trusted LAN / Tailscale (and the WSL2 Windows host) can reach it.
+        assert cfg["listeners"]["ws-mqtt"]["bind"] == "0.0.0.0:9001"
         assert cfg["listeners"]["default"]["type"] == "tcp"
         assert cfg["listeners"]["ws-mqtt"]["type"] == "ws"
         plugins = cfg["plugins"]

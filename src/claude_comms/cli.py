@@ -229,6 +229,110 @@ def _web_cors_allow_list(web_cfg: dict) -> list[str]:
     return allow
 
 
+def _external_reachable_host(config: dict) -> str | None:
+    """Best-effort discovery of an explicit, browser-reachable host for the daemon.
+
+    Returns a single hostname (no scheme/port) that every browser on the
+    trusted network can use to reach this daemon, or ``None`` when only a
+    loopback / bind-all address is configured.
+
+    Priority (first non-loopback hit wins):
+      1. ``web.api_base`` host (reverse-proxy / Tailscale Funnel deployments).
+      2. The host of any ``web.csp_extra_connect_src`` entry that the operator
+         added for a LAN IP / Tailscale magic-DNS name.
+      3. The host of any ``web.extra_cors_origins`` entry.
+      4. ``broker.ws_host`` when it is an explicit non-loopback bind.
+
+    This reuses the same config the CORS allow-list / CSP already trust, so it
+    introduces no new source of truth.
+    """
+    from urllib.parse import urlsplit
+
+    web_cfg = config.get("web", {}) or {}
+    broker_cfg = config.get("broker", {}) or {}
+
+    def _host_of(origin: str) -> str | None:
+        if not origin:
+            return None
+        parts = urlsplit(origin if "://" in origin else f"//{origin}")
+        host = parts.hostname
+        if host and host not in _LOOPBACK_BIND_ADDRESSES:
+            return host
+        return None
+
+    api_base = web_cfg.get("api_base")
+    if api_base:
+        host = _host_of(api_base)
+        if host:
+            return host
+
+    for origin in web_cfg.get("csp_extra_connect_src", []) or []:
+        host = _host_of(origin)
+        if host:
+            return host
+
+    for origin in web_cfg.get("extra_cors_origins", []) or []:
+        host = _host_of(origin)
+        if host:
+            return host
+
+    ws_host = broker_cfg.get("ws_host", "127.0.0.1")
+    if ws_host and ws_host not in _LOOPBACK_BIND_ADDRESSES:
+        return ws_host
+
+    return None
+
+
+def _web_ui_urls(config: dict) -> tuple[str, str | None]:
+    """Return ``(local_url, external_url_or_none)`` for the web UI.
+
+    The local URL always uses ``localhost`` (terminals linkify it and it's
+    correct on the daemon's own machine). The external URL is the same web
+    port on whatever explicit reachable host the deployment advertises
+    (api_base / Tailscale / LAN), reusing ``_external_reachable_host`` — the
+    same source the CORS allow-list and broker-WS advertisement trust. It is
+    ``None`` when only a loopback/bind-all host is configured.
+    """
+    web_cfg = config.get("web", {}) or {}
+    web_port = web_cfg.get("port", 9921)
+    local_url = f"http://localhost:{web_port}"
+
+    external_url: str | None = None
+    api_base = web_cfg.get("api_base")
+    if api_base:
+        external_url = api_base.rstrip("/")
+    else:
+        host = _external_reachable_host(config)
+        if host:
+            external_url = f"http://{host}:{web_port}"
+    return local_url, external_url
+
+
+def _advertised_broker_ws(config: dict) -> dict:
+    """Compute the broker WebSocket coordinates the daemon advertises to the UI.
+
+    Returns a dict with always-present ``broker_ws_port`` + ``broker_ws_path``
+    and, ONLY when an explicit reachable host is configured, a fully-qualified
+    ``broker_ws_url`` (``ws://<host>:<port><path>``).
+
+    The URL is deliberately omitted when the broker is bound to a loopback /
+    bind-all address with no external host configured: advertising
+    ``ws://127.0.0.1`` or ``ws://0.0.0.0`` would be wrong for every browser
+    that isn't on the daemon's own machine (the classic WSL2 case). In that
+    case the client falls back to its own page-host, which is correct for
+    localhost AND for a LAN/Tailscale name the user typed into the address bar.
+    """
+    broker_cfg = config.get("broker", {}) or {}
+    ws_port = broker_cfg.get("ws_port", 9001)
+    ws_path = "/mqtt"
+    out: dict = {"broker_ws_port": ws_port, "broker_ws_path": ws_path}
+
+    host = _external_reachable_host(config)
+    if host:
+        out["broker_ws_url"] = f"ws://{host}:{ws_port}{ws_path}"
+    return out
+
+
 def build_csp(config: dict) -> str:
     """Construct a Content-Security-Policy header value from config.
 
@@ -272,6 +376,26 @@ def build_csp(config: dict) -> str:
         for h in _expand_loopback_aliases(ws_host):
             connect_origins.append(f"ws://{h}:{ws_port}")
             connect_origins.append(f"wss://{h}:{ws_port}")
+
+        # When an explicit reachable host is configured (LAN IP / Tailscale
+        # name) the daemon advertises ws://<that-host>:<port>/mqtt via
+        # /api/capabilities; the browser will connect there, so its origin
+        # must be in connect-src or the WebSocket is blocked. The matching
+        # http(s) REST origin is already covered by the CORS allow-list.
+        advertised_host = _external_reachable_host(config)
+        if advertised_host:
+            connect_origins.append(f"ws://{advertised_host}:{ws_port}")
+            connect_origins.append(f"wss://{advertised_host}:{ws_port}")
+
+    # ALWAYS allow the loopback broker WebSocket regardless of mode. Desktop
+    # access via http://localhost:9921 must be able to reach ws://localhost:9001
+    # (and ws://127.0.0.1:9001) even when api_base / a reverse proxy is also
+    # configured for remote access. Without this, the localhost page loops on
+    # "Reconnecting to broker". Both alias forms are distinct browser origins.
+    for h in ("localhost", "127.0.0.1"):
+        for origin in (f"ws://{h}:{ws_port}", f"wss://{h}:{ws_port}"):
+            if origin not in connect_origins:
+                connect_origins.append(origin)
 
     extra = web_cfg.get("csp_extra_connect_src") or []
     connect_origins.extend(extra)
@@ -365,6 +489,13 @@ def build_capabilities_route(config: dict):
                     web_cfg.get("use_legacy_codeblock_highlighter", False)
                 ),
             },
+            # Robust broker URL: tell the web client where to reach the broker
+            # WebSocket so it never has to blindly guess from its page host.
+            # ``broker_ws_url`` is present ONLY when an explicit reachable host
+            # is configured (api_base / external host); when the broker is on a
+            # loopback/bind-all address the URL is omitted and the client falls
+            # back to its own page-host with the advertised port + path.
+            **_advertised_broker_ws(config),
         }
         return JSONResponse(
             payload,
@@ -1813,10 +1944,14 @@ def start(
                     )
                     web_uvi_server = uvicorn.Server(web_uvi_config)
                     web_task = asyncio.create_task(web_uvi_server.serve())
+                    _local_url, _external_url = _web_ui_urls(config)
                     console.print(
-                        f"  [green]Web UI[/green] available at "
-                        f"http://{web_host}:{web_port}"
+                        f"  [green]Web UI[/green] available at {_local_url}"
                     )
+                    if _external_url and _external_url != _local_url:
+                        console.print(
+                            f"  [green]Web UI[/green] (external) at {_external_url}"
+                        )
                 else:
                     console.print(
                         f"  [yellow]Web UI[/yellow] dist not found at {_web_dist} — skipping"
@@ -2082,10 +2217,15 @@ def status() -> None:
     # Web config
     web_cfg = config.get("web", {})
     web_on = web_cfg.get("enabled", False)
-    console.print(
-        f"[cyan]Web UI:[/cyan] {'enabled' if web_on else 'disabled'}"
-        f" (port {web_cfg.get('port', 9921)})"
-    )
+    if web_on:
+        local_url, external_url = _web_ui_urls(config)
+        console.print(f"[cyan]Web UI:[/cyan] {local_url}")
+        if external_url and external_url != local_url:
+            console.print(f"[cyan]Web UI (external):[/cyan] {external_url}")
+    else:
+        console.print(
+            f"[cyan]Web UI:[/cyan] disabled (port {web_cfg.get('port', 9921)})"
+        )
 
     # Identity
     identity = config.get("identity", {})

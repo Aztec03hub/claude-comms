@@ -140,9 +140,11 @@ def test_csp_for_lan_bind_expands_specific_host() -> None:
     csp = build_csp(cfg)
     assert "http://10.0.0.5:9920" in csp
     assert "ws://10.0.0.5:9001" in csp
-    # Loopback aliases not added for LAN binds — the user typed the LAN IP.
-    assert "ws://localhost:9001" not in csp
+    # Loopback REST alias not added for LAN binds — the user typed the LAN IP.
     assert "http://localhost:9920" not in csp
+    # The broker loopback WS IS always allowed now so desktop localhost access
+    # (http://localhost:9921 -> ws://localhost:9001) works regardless of bind.
+    assert "ws://localhost:9001" in csp
 
 
 def test_csp_for_zero_zero_zero_zero_bind_still_includes_loopback() -> None:
