@@ -18,8 +18,11 @@ import {
   sameOriginBrokerUrl,
 } from '../src/lib/mqtt-store.svelte.js';
 
-const HTTP = (hostname) => ({ hostname, protocol: 'http:' });
-const HTTPS = (hostname) => ({ hostname, protocol: 'https:' });
+// `host` mirrors window.location.host: it includes the port when a non-default
+// one is present, and equals `hostname` on default ports (80/443). When a caller
+// passes a bare hostname, `host` defaults to it (the no-explicit-port case).
+const HTTP = (hostname, host = hostname) => ({ hostname, host, protocol: 'http:' });
+const HTTPS = (hostname, host = hostname) => ({ hostname, host, protocol: 'https:' });
 
 describe('resolveBrokerUrl — page-origin-first (advertised URL only when host matches)', () => {
   it('honors the advertised broker_ws_url when its host equals the page host', () => {
@@ -64,20 +67,36 @@ describe('resolveBrokerUrl — same-origin (HTTPS proxy)', () => {
     expect(resolveBrokerUrl(caps, HTTP('proxy.local'))).toBe('ws://proxy.local/mqtt');
   });
 
-  it('single-origin Phase 2: broker_ws_same_origin true on http-localhost → ws://localhost/mqtt (NO port)', () => {
-    // The Phase 2 daemon emits broker_ws_same_origin:true because it now bridges
-    // the broker at /mqtt on the web port. Even though broker_ws_port is also
-    // advertised for back-compat, the same-origin flag must win and produce a
-    // PORT-LESS ws URL on the page's own origin (covered by connect-src 'self').
+  it('single-origin: broker_ws_same_origin true on http-localhost:9921 → ws://localhost:9921/mqtt (page port)', () => {
+    // The single-origin daemon emits broker_ws_same_origin:true because it now
+    // bridges the broker at /mqtt on the WEB port (e.g. 9921). The URL must use
+    // the page's own host:port so it matches the page origin exactly and CSP
+    // connect-src 'self' permits it. Dropping the port builds ws://localhost/mqtt
+    // (port 80) — a DIFFERENT origin, which is blocked. broker_ws_port is
+    // advertised for back-compat but the same-origin flag wins.
     const caps = {
       broker_ws_same_origin: true,
       broker_ws_port: 9001,
       broker_ws_path: '/mqtt',
     };
-    const url = resolveBrokerUrl(caps, HTTP('localhost'));
-    expect(url).toBe('ws://localhost/mqtt');
+    const url = resolveBrokerUrl(caps, HTTP('localhost', 'localhost:9921'));
+    expect(url).toBe('ws://localhost:9921/mqtt');
     expect(url).not.toContain(':9001');
-    expect(url).not.toContain('9001');
+  });
+
+  it('single-origin: http page on a Tailscale host:port → ws://host:9921/mqtt (page port)', () => {
+    const caps = { broker_ws_same_origin: true, broker_ws_path: '/mqtt' };
+    const url = resolveBrokerUrl(
+      caps,
+      HTTP('phil-desktop.tail6c27f6.ts.net', 'phil-desktop.tail6c27f6.ts.net:9921'),
+    );
+    expect(url).toBe('ws://phil-desktop.tail6c27f6.ts.net:9921/mqtt');
+  });
+
+  it('https page on the default port (host has no :port) → wss://host/mqtt (no explicit port)', () => {
+    // tailscale serve maps the origin onto 443, so window.location.host has no
+    // port. The same-origin URL must therefore omit the port too.
+    expect(resolveBrokerUrl({}, HTTPS('box.ts.net'))).toBe('wss://box.ts.net/mqtt');
   });
 
   it('honors a custom path on same-origin', () => {
@@ -125,10 +144,17 @@ describe('defaultBrokerUrl', () => {
 });
 
 describe('sameOriginBrokerUrl', () => {
-  it('omits the port and follows the page protocol', () => {
+  it('follows the page protocol and omits the port on default ports', () => {
     expect(sameOriginBrokerUrl({ host: 'box.ts.net', protocol: 'https:' }))
       .toBe('wss://box.ts.net/mqtt');
     expect(sameOriginBrokerUrl({ host: 'box', protocol: 'http:' }))
       .toBe('ws://box/mqtt');
+  });
+
+  it('preserves the port when the host includes one (host:port)', () => {
+    expect(sameOriginBrokerUrl({ host: 'localhost:9921', protocol: 'http:' }))
+      .toBe('ws://localhost:9921/mqtt');
+    expect(sameOriginBrokerUrl({ host: 'phil-desktop.tail6c27f6.ts.net:9921', protocol: 'http:' }))
+      .toBe('ws://phil-desktop.tail6c27f6.ts.net:9921/mqtt');
   });
 });
