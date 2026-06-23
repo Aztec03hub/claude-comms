@@ -163,8 +163,10 @@ def test_csp_always_allows_loopback_ws_even_in_reverse_proxy_mode():
     csp = build_csp(cfg)
     assert "ws://localhost:9001" in csp
     assert "ws://127.0.0.1:9001" in csp
-    # and the reverse-proxy wss origin is still present
-    assert "wss://box.ts.net/mqtt" in csp
+    # and the reverse-proxy broker WS origin is present on the BROKER ws_port
+    # (NOT the old api_base-port-derived ws://...:<api_port>/mqtt). #17 fix.
+    assert "wss://box.ts.net:9001" in csp
+    assert "ws://box.ts.net:9001" in csp
 
 
 def test_csp_no_duplicate_loopback_ws():

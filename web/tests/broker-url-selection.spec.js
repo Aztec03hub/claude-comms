@@ -1,10 +1,13 @@
 // Robust broker-URL selection.
 //
 // The web client used to hardcode `ws://<page-host>:9001/mqtt`, which loops on
-// "Reconnecting to broker" when the page host can't reach the broker (the WSL2
-// case: localhost on Windows doesn't reach the in-WSL broker). The daemon now
-// advertises its broker WebSocket coordinates via /api/capabilities and the
-// client prefers them, with same-origin (HTTPS proxy) and page-host fallbacks.
+// "Reconnecting to broker" when the page host can't reach the broker. The daemon
+// advertises its broker WebSocket coordinates via /api/capabilities, but the
+// client is PAGE-ORIGIN-FIRST: it derives the broker from the host the page was
+// loaded from, and only honors the advertised absolute URL when its host matches
+// the page host (otherwise a localhost desktop page would hairpin onto a
+// Tailscale IP — #17 regression — and be CSP-blocked). Same-origin (HTTPS proxy)
+// and page-host fallbacks remain.
 //
 // These tests exercise the pure selection helpers without a live broker.
 
@@ -18,26 +21,41 @@ import {
 const HTTP = (hostname) => ({ hostname, protocol: 'http:' });
 const HTTPS = (hostname) => ({ hostname, protocol: 'https:' });
 
-describe('resolveBrokerUrl — daemon advertisement wins', () => {
-  it('uses the advertised broker_ws_url verbatim when present', () => {
+describe('resolveBrokerUrl — page-origin-first (advertised URL only when host matches)', () => {
+  it('honors the advertised broker_ws_url when its host equals the page host', () => {
     const caps = { broker_ws_url: 'ws://host.tailnet.ts.net:9001/mqtt' };
-    expect(resolveBrokerUrl(caps, HTTP('localhost'))).toBe('ws://host.tailnet.ts.net:9001/mqtt');
+    expect(resolveBrokerUrl(caps, HTTP('host.tailnet.ts.net')))
+      .toBe('ws://host.tailnet.ts.net:9001/mqtt');
   });
 
-  it('advertised url wins even over a non-loopback page host', () => {
+  it('IGNORES an advertised Tailscale url when the page is on localhost (#17 hairpin)', () => {
+    // The desktop console bug: page on localhost, daemon advertised the
+    // Tailscale broker. Must derive ws://localhost:9001, NOT the Tailscale host.
+    const caps = { broker_ws_url: 'ws://phil-desktop.tail16c27f6.ts.net:9001/mqtt' };
+    expect(resolveBrokerUrl(caps, HTTP('localhost'))).toBe('ws://localhost:9001/mqtt');
+  });
+
+  it('IGNORES an advertised url when the page host differs (uses page host instead)', () => {
     const caps = { broker_ws_url: 'ws://canonical:9001/mqtt' };
-    expect(resolveBrokerUrl(caps, HTTP('192.168.1.10'))).toBe('ws://canonical:9001/mqtt');
+    expect(resolveBrokerUrl(caps, HTTP('192.168.1.10'))).toBe('ws://192.168.1.10:9001/mqtt');
   });
 
-  it('advertised url wins even over an HTTPS page (no same-origin override)', () => {
-    const caps = { broker_ws_url: 'wss://explicit.ts.net:9001/mqtt' };
-    expect(resolveBrokerUrl(caps, HTTPS('explicit.ts.net'))).toBe('wss://explicit.ts.net:9001/mqtt');
+  it('honors advertised port from caps even when ignoring the mismatched url', () => {
+    const caps = { broker_ws_url: 'ws://other-host:9001/mqtt', broker_ws_port: 8001 };
+    expect(resolveBrokerUrl(caps, HTTP('localhost'))).toBe('ws://localhost:8001/mqtt');
   });
 });
 
 describe('resolveBrokerUrl — same-origin (HTTPS proxy)', () => {
   it('uses wss same-origin path (no port) when page is https', () => {
     expect(resolveBrokerUrl({}, HTTPS('box.ts.net'))).toBe('wss://box.ts.net/mqtt');
+  });
+
+  it('same-origin wins over an advertised absolute url on an https page', () => {
+    // tailscale-serve: page is https on the proxied origin; the broker rides
+    // the same origin, so an advertised :9001 url must be ignored.
+    const caps = { broker_ws_url: 'ws://phil-desktop.tail16c27f6.ts.net:9001/mqtt' };
+    expect(resolveBrokerUrl(caps, HTTPS('box.ts.net'))).toBe('wss://box.ts.net/mqtt');
   });
 
   it('uses wss same-origin when daemon flags broker_ws_same_origin', () => {
