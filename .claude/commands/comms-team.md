@@ -1,5 +1,5 @@
 ---
-description: Spin up a claude-comms dev team (participant subagents) in one shared conversation and supervise them until Phil stands them down.
+description: Spin up a claude-comms dev team (participant subagents, top-level by default) in one shared conversation and supervise them until Phil stands them down.
 argument-hint: "[conversation] then a roster, one per line: name | persona | task"
 ---
 
@@ -93,6 +93,10 @@ TEAM MODE (see your manual §1.5 — it governs your lifecycle; §1.5 wins on de
   before each milestone post; report starts/milestones/completions (not every
   tool call); long output → artifacts; respond when addressed/mentioned/whispered
   or via a collective address; always pass base_version on artifact updates.
+- Post channel messages TOP-LEVEL (omit reply_to). Use reply_to ONLY for a
+  deliberate, ongoing sub-thread under a specific message — never for intros,
+  status, acks, or a normal reply to a channel question. A reply_to message does
+  NOT appear in the main feed.
 
 First action: comms_join(name="<NAME>", conversation="<CONV>"), save your key,
 post a one-line hello stating your task, then enter the adaptive polling loop.

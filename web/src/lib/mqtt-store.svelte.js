@@ -1025,13 +1025,62 @@ export class MqttChatStore {
     const roots = this.messages.filter(m => m.channel === ch && !m.reply_to);
     const replies = this.messages.filter(m => m.channel === ch && m.reply_to);
     return roots.map(root => {
-      if (!root.thread_reply_count) return root;
+      // ── Thread-summary field normalization (web-thread-visibility fix) ──
+      // A root can carry its thread metadata in any of three shapes, and
+      // MessageBubble only reads the flat `thread_reply_count` /
+      // `thread_last_author` pair. Reconcile all sources here so the
+      // indicator renders regardless of which path delivered the root:
+      //   1. Flat fields (`thread_reply_count` / `thread_last_author`),
+      //      set by the broker's `_rebuild_thread_metadata` and returned
+      //      verbatim by the `/api/messages` REST endpoint.
+      //   2. A `thread_summary: {reply_count, last_ts, last_author}`
+      //      object, synthesized by `comms_read(top_level_only=True)`
+      //      (the MCP / top-level feed path — see mcp_tools.py §4.2).
+      //   3. Live replies already in `this.messages` that arrived over
+      //      MQTT AFTER the root was loaded. The broker mutates its own
+      //      server-side copy of the root, but never re-pushes the root,
+      //      so without counting local replies a freshly-replied root
+      //      would show a stale/absent indicator until a full reload.
+      const summary = root.thread_summary || null;
+      const localReplies = replies.filter(r => r.reply_to === root.id);
+      const localReplyCount = localReplies.length;
+
+      // Prefer the largest known count: server-reported (flat or summary)
+      // vs. locally-observed replies. `Math.max` lets a live MQTT reply
+      // increment the count past a stale server value AND lets the server
+      // count cover replies that haven't been individually fetched.
+      const serverCount =
+        root.thread_reply_count ?? (summary ? summary.reply_count : 0) ?? 0;
+      const replyCount = Math.max(serverCount || 0, localReplyCount);
+
+      if (!replyCount) return root;
+
+      // Last author: prefer the freshest local reply (live updates), then
+      // fall back to whatever the server reported (flat field or summary).
+      let lastAuthor = root.thread_last_author
+        || (summary ? summary.last_author : null)
+        || null;
+      if (localReplyCount > 0) {
+        const newest = localReplies.reduce(
+          (a, b) => (b.ts > a.ts ? b : a),
+          localReplies[0],
+        );
+        lastAuthor = newest?.sender?.name || lastAuthor;
+      }
+
       const cursorTs = cursors[root.id] || null;
       const unreadCount = cursorTs
-        ? replies.filter(r => r.reply_to === root.id && r.ts > cursorTs).length
-        : (root.thread_reply_count || 0);
-      // Avoid mutating the source dict — return a shallow extension.
-      return { ...root, thread_unread_count: unreadCount };
+        ? localReplies.filter(r => r.ts > cursorTs).length
+        : replyCount;
+
+      // Avoid mutating the source dict — return a shallow extension that
+      // carries the normalized flat fields MessageBubble reads.
+      return {
+        ...root,
+        thread_reply_count: replyCount,
+        thread_last_author: lastAuthor,
+        thread_unread_count: unreadCount,
+      };
     });
   });
 

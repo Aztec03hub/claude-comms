@@ -1178,12 +1178,26 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = False,
+        unread: Annotated[
+            bool,
+            Field(
+                description=(
+                    "When True, return only messages you HAVEN'T SEEN yet, using "
+                    "the server-side read cursor (no manual `since` needed) — the "
+                    "robust way to poll for new messages without missing any. "
+                    "Reading advances the cursor, so the next unread call returns "
+                    "only newer messages. An explicit `since` overrides this."
+                )
+            ),
+        ] = False,
     ) -> dict[str, Any]:
-        """Read recent messages from a conversation. Supports pagination via 'since' parameter.
+        """Read recent messages from a conversation.
 
-        ``top_level_only=True`` filters to thread roots + untyped top-level
-        messages and decorates each retained root with a ``thread_summary``
-        field. Default False is the existing non-breaking behaviour.
+        ``unread=True`` returns only messages after your server-side read cursor
+        (what you haven't seen), no manual timestamp — the reliable poll mode.
+        ``top_level_only=True`` filters to thread roots and decorates each root
+        with a ``thread_summary``. Every returned message carries
+        ``directed_at_me`` (True when you're in its mentions or recipients).
         """
         _touch(key)
         return tool_comms_read(
@@ -1194,6 +1208,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             count=count,
             since=since,
             top_level_only=top_level_only,
+            unread=unread,
         )
 
     @mcp.tool()

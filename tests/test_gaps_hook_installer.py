@@ -81,26 +81,30 @@ class TestHookEnabledCheck:
 
 
 class TestWindowsTemplateGeneration:
-    def test_windows_script_contains_notification_file_path(self):
+    def test_windows_script_fetches_endpoint(self):
+        # HTTP-fetch hook: targets the daemon's drain endpoint, not a local file.
         script = _generate_windows_script(SAMPLE_KEY)
-        assert f"{SAMPLE_KEY}.jsonl" in script
+        assert f"/api/notifications/{SAMPLE_KEY}" in script
 
     def test_windows_script_contains_powershell_json_conversion(self):
         script = _generate_windows_script(SAMPLE_KEY)
         assert "ConvertTo-Json" in script
 
-    def test_windows_script_contains_truncation_logic(self):
-        """Windows script should truncate (Set-Content) the notif file."""
+    def test_windows_script_fetches_over_http_no_local_drain(self):
+        """Cues are drained server-side; the script fetches over HTTP and does
+        no client-side file truncation."""
         script = _generate_windows_script(SAMPLE_KEY)
-        assert "Set-Content" in script
+        assert "Invoke-RestMethod" in script
+        assert "Set-Content" not in script
 
     def test_windows_script_has_rem_comments(self):
         script = _generate_windows_script(SAMPLE_KEY)
         assert "REM" in script
 
-    def test_windows_script_checks_file_existence(self):
+    def test_windows_script_null_safe_on_empty_response(self):
+        # Null-safe: exits cleanly when the daemon is unreachable / no cues.
         script = _generate_windows_script(SAMPLE_KEY)
-        assert "if not exist" in script
+        assert "if (-not $resp)" in script
 
     def test_generate_hook_script_dispatches_to_windows(self):
         with patch("claude_comms.hook_installer._is_windows", return_value=True):

@@ -356,11 +356,22 @@
     {/if}
 
     {#if message.thread_reply_count}
-      <div class="thread-indicator" class:has-unread={message.thread_unread_count > 0} onclick={() => onOpenThread(message)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenThread(message); }} role="button" tabindex="0" data-testid="thread-indicator">
+      <div
+        class="thread-indicator"
+        class:has-unread={message.thread_unread_count > 0}
+        onclick={() => onOpenThread(message)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenThread(message); } }}
+        role="button"
+        tabindex="0"
+        data-testid="thread-indicator"
+        aria-label="Open thread: {message.thread_reply_count} {message.thread_reply_count === 1 ? 'reply' : 'replies'}{message.thread_last_author ? `, last by ${message.thread_last_author}` : ''}"
+      >
+        <span class="thread-icon" aria-hidden="true">💬</span>
         <span class="thread-count">{message.thread_reply_count} {message.thread_reply_count === 1 ? 'reply' : 'replies'}</span>
         {#if message.thread_last_author}
           <span class="thread-last-author">· last by @{message.thread_last_author}</span>
         {/if}
+        <span class="thread-chevron" aria-hidden="true">›</span>
       </div>
     {/if}
 
@@ -647,26 +658,45 @@
     filter: brightness(1.15);
   }
 
+  /* Thread affordance — deliberately prominent so threads opened from the
+     main feed are unmistakable (web-thread-visibility fix). A bordered,
+     tinted chip with a 💬 glyph, the reply count, the last author, and a
+     trailing chevron that signals "click to open". */
   .thread-indicator {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
-    margin-top: 4px;
-    font-size: 11px;
-    color: var(--text-muted);
+    padding: 5px 10px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ember-400);
     cursor: pointer;
     transition: var(--transition-fast);
-    border-radius: 6px;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    width: fit-content;
+    max-width: 100%;
   }
 
   .thread-indicator:hover {
-    background: var(--bg-surface);
-    color: var(--ember-400);
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.4);
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.12);
+  }
+
+  .thread-indicator:focus-visible {
+    outline: 2px solid var(--ember-400);
+    outline-offset: 2px;
+  }
+
+  .thread-icon {
+    font-size: 12px;
+    line-height: 1;
   }
 
   .thread-count {
-    font-weight: 600;
+    font-weight: 700;
     color: var(--ember-400);
   }
 
@@ -674,12 +704,26 @@
     font-weight: 400;
     color: var(--text-muted);
     margin-left: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .thread-chevron {
+    font-weight: 700;
+    color: var(--ember-400);
+    margin-left: 2px;
+    transition: transform var(--transition-fast);
+  }
+
+  .thread-indicator:hover .thread-chevron {
+    transform: translateX(2px);
   }
 
   .thread-indicator.has-unread {
-    background: rgba(245, 158, 11, 0.08);
-    border-left: 2px solid var(--ember-400);
-    padding-left: 6px;
+    background: rgba(245, 158, 11, 0.14);
+    border-left: 3px solid var(--ember-400);
+    padding-left: 8px;
   }
 
   .thread-indicator.has-unread .thread-count::after {

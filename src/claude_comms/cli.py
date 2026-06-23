@@ -374,6 +374,82 @@ def build_capabilities_route(config: dict):
     return Route("/api/capabilities", _handler, methods=["GET"])
 
 
+_NOTIF_KEY_RE = re.compile(r"^[0-9a-f]{8}$")
+
+
+def build_notifications_route(config: dict | None = None, cors=None):
+    """GET /api/notifications/{key} — fetch-and-drain queued notification cues.
+
+    Lets a REMOTE Claude Code host pull its pending cues over HTTP instead of
+    reading ``~/.claude-comms/notifications/<key>.jsonl`` off the daemon's local
+    disk (which only exists on the daemon's machine — the reason cross-machine
+    setups delivered nothing). Each call:
+
+    - Validates ``key`` against ``^[0-9a-f]{8}$`` (rejects path traversal /
+      anything non-8-hex with 400).
+    - Reads ``hook_installer._notification_dir() / f"{key}.jsonl"``, parsing each
+      non-empty line as JSON (malformed lines are skipped, not fatal).
+    - Returns ``{"cues": [...], "count": N}``.
+    - DRAINS the file (truncates) so cues are delivered exactly once. A missing
+      file yields ``{"cues": [], "count": 0}``.
+
+    ``config`` is accepted for signature parity with the other route builders
+    (unused). ``cors`` is the per-request CORS-header function injected by
+    ``_run``; defaults to a no-op so tests need no CORS wiring.
+    """
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    from claude_comms.hook_installer import _notification_dir
+
+    cors_fn = cors or (lambda _request: {})
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        key = request.path_params.get("key", "")
+        if not _NOTIF_KEY_RE.match(key):
+            return JSONResponse(
+                {"error": "invalid key"},
+                status_code=400,
+                headers=cors_fn(request),
+            )
+
+        notif_file = _notification_dir() / f"{key}.jsonl"
+        cues: list[Any] = []
+        try:
+            raw = notif_file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return JSONResponse(
+                {"cues": [], "count": 0},
+                headers=cors_fn(request),
+            )
+        except OSError:
+            return JSONResponse(
+                {"cues": [], "count": 0},
+                headers=cors_fn(request),
+            )
+
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                cues.append(json.loads(line))
+            except (ValueError, TypeError):
+                continue
+
+        # Drain: deliver each cue at most once.
+        try:
+            notif_file.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+
+        return JSONResponse(
+            {"cues": cues, "count": len(cues)},
+            headers=cors_fn(request),
+        )
+
+    return Route("/api/notifications/{key}", _handler, methods=["GET"])
+
+
 def build_identity_route(config: dict, cors=None):
     """GET /api/identity — return the daemon's configured identity.
 
@@ -939,19 +1015,30 @@ def hook_install(
         "--key",
         help="Participant key to bake into the hook (default: identity key from config).",
     ),
+    url: str = typer.Option(
+        "http://localhost:9920",
+        "--url",
+        help=(
+            "Base URL of the claude-comms daemon to fetch cues from. Point this "
+            "at a REMOTE daemon (e.g. http://daemon-host:9920 or a Tailscale "
+            "address) so cross-machine setups deliver messages."
+        ),
+    ),
 ) -> None:
     """Install the PostToolUse notification hook into ~/.claude/settings.json.
 
     The hook is GLOBAL (fires in every Claude Code session on this machine) and is
-    baked with ONE participant key — it drains ~/.claude-comms/notifications/<key>.jsonl
-    and injects new messages mid-turn. Use the key you join the chat with. Run
-    `claude-comms init` first if you have no identity key. `claude-comms hook
-    uninstall` removes it.
+    baked with ONE participant key — it fetches new messages over HTTP from the
+    daemon's `/api/notifications/<key>` endpoint (which drains them server-side)
+    and injects them mid-turn. For a REMOTE daemon, pass `--url` so the hook
+    pulls cues from the daemon's host instead of expecting a local file. Use the
+    key you join the chat with. Run `claude-comms init` first if you have no
+    identity key. `claude-comms hook uninstall` removes it.
     """
     from claude_comms.hook_installer import install_hook
 
     try:
-        result = install_hook(participant_key=(key or None))
+        result = install_hook(participant_key=(key or None), base_url=url)
     except (ValueError, OSError) as exc:
         console.print(f"[red]Hook install failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -1471,6 +1558,10 @@ def start(
             starlette_app.routes.insert(14, build_capabilities_route(config))
             # Bearer-token endpoint (loopback-only).
             starlette_app.routes.insert(15, build_web_token_route())
+            # Notification cue fetch-and-drain (enables REMOTE hook delivery).
+            starlette_app.routes.insert(
+                16, build_notifications_route(config, cors=_cors)
+            )
 
             # Conditional POST /api/artifacts/{conv}/{name}. Returns None
             # when allow_remote_edits is false OR the daemon is in
@@ -1483,9 +1574,9 @@ def start(
                 data_dir_provider=lambda: _mcp_mod._data_dir,
             )
             if _post_route is not None:
-                starlette_app.routes.insert(16, _post_route)
+                starlette_app.routes.insert(17, _post_route)
                 starlette_app.routes.insert(
-                    17, build_artifact_post_options_route(config)
+                    18, build_artifact_post_options_route(config)
                 )
                 console.print(
                     "  [yellow]Artifact edit-in-place[/yellow] POST route registered"

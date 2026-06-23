@@ -836,6 +836,7 @@ def tool_comms_read(
     count: int = 20,
     since: str | None = None,
     top_level_only: bool = False,
+    unread: bool = False,
 ) -> dict[str, Any]:
     """Read recent messages from a conversation with token-aware pagination.
 
@@ -863,8 +864,15 @@ def tool_comms_read(
     # Filter out targeted messages not visible to this participant
     all_msgs = [m for m in all_msgs if _is_visible(m, key)]
 
-    if since:
-        all_msgs = [m for m in all_msgs if _ts_after(m.get("ts", ""), since)]
+    # Resolve the read floor. With unread=True (and no explicit since), use the
+    # participant's SERVER-SIDE read cursor so the caller gets exactly what they
+    # haven't seen — no fragile hand-rolled `since` timestamp to get wrong or
+    # skip messages over. An explicit `since` still wins if both are provided.
+    floor = since
+    if unread and not since:
+        floor = registry.get_cursor(key, conversation)
+    if floor:
+        all_msgs = [m for m in all_msgs if _ts_after(m.get("ts", ""), floor)]
 
     # Apply top_level_only filter AFTER visibility/since but BEFORE count clamp,
     # so callers asking for "last 20 top-level" don't get a 20-message window
@@ -902,22 +910,25 @@ def tool_comms_read(
     # — otherwise the caller is reading the firehose and doesn't need root-only
     # presentation. We build shallow copies so the decoration never mutates the
     # live store dicts (find_by_id returns live refs; same dicts land here).
-    if top_level_only and formatted:
+    # Decorate each returned message with `directed_at_me` (True when the viewer
+    # is in mentions or recipients) so agents can detect targeting without
+    # re-deriving it, and — when top_level_only — attach thread_summary on roots
+    # that actually have replies. Shallow copies so we never mutate the live
+    # store dicts (find_by_id returns live refs; same dicts land here).
+    if formatted:
         decorated: list[dict[str, Any]] = []
         for m in formatted:
-            reply_count = m.get("thread_reply_count")
-            if reply_count:
-                # Only attach thread_summary on roots that actually have replies
-                # — leaves childless top-levels untouched, no churn.
-                copy = dict(m)
+            copy = dict(m)
+            mentioned = m.get("mentions") or []
+            recipients = m.get("recipients") or []
+            copy["directed_at_me"] = key in mentioned or key in recipients
+            if top_level_only and m.get("thread_reply_count"):
                 copy["thread_summary"] = {
-                    "reply_count": reply_count,
+                    "reply_count": m.get("thread_reply_count"),
                     "last_ts": m.get("thread_last_ts"),
                     "last_author": m.get("thread_last_author"),
                 }
-                decorated.append(copy)
-            else:
-                decorated.append(m)
+            decorated.append(copy)
         formatted = decorated
 
     return {

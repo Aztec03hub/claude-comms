@@ -88,12 +88,15 @@ class TestHookInstallerSettingsRoundtrip:
 
 class TestHookInstallerUnixScriptDetails:
     def test_unix_script_limits_to_5_messages(self):
+        # The HTTP-fetch hook caps the preview at the last 5 cues in the
+        # embedded python formatter (cues[-5:]), not via client-side `tail`.
         script = _generate_unix_script("aabb1122")
-        assert "tail -n 5" in script
+        assert "cues[-5:]" in script
 
     def test_unix_script_counts_total_messages(self):
+        # Total count comes from len(cues) in the formatter, not `wc -l`.
         script = _generate_unix_script("aabb1122")
-        assert "wc -l" in script
+        assert "len(cues)" in script
 
     def test_unix_script_handles_overflow_message(self):
         script = _generate_unix_script("aabb1122")
