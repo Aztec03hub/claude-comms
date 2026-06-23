@@ -926,6 +926,70 @@ def _main(
 conv_app = typer.Typer(help="Conversation management commands.")
 app.add_typer(conv_app, name="conv")
 
+hook_app = typer.Typer(
+    help="PostToolUse notification hook (mid-turn message delivery)."
+)
+app.add_typer(hook_app, name="hook")
+
+
+@hook_app.command("install")
+def hook_install(
+    key: str = typer.Option(
+        "",
+        "--key",
+        help="Participant key to bake into the hook (default: identity key from config).",
+    ),
+) -> None:
+    """Install the PostToolUse notification hook into ~/.claude/settings.json.
+
+    The hook is GLOBAL (fires in every Claude Code session on this machine) and is
+    baked with ONE participant key — it drains ~/.claude-comms/notifications/<key>.jsonl
+    and injects new messages mid-turn. Use the key you join the chat with. Run
+    `claude-comms init` first if you have no identity key. `claude-comms hook
+    uninstall` removes it.
+    """
+    from claude_comms.hook_installer import install_hook
+
+    try:
+        result = install_hook(participant_key=(key or None))
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]Hook install failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if result.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {result.get('reason')}")
+        return
+    console.print(
+        f"[green]Hook installed.[/green]\n"
+        f"  script:   {result['script_path']}\n"
+        f"  settings: {result['settings_path']}\n"
+        f"[dim]Global hook — fires in every Claude Code session. "
+        f"Run `claude-comms hook uninstall` to remove it.[/dim]"
+    )
+
+
+@hook_app.command("uninstall")
+def hook_uninstall(
+    key: str = typer.Option(
+        "",
+        "--key",
+        help="Participant key whose hook to remove (default: identity key from config).",
+    ),
+) -> None:
+    """Remove the claude-comms PostToolUse hook from ~/.claude/settings.json."""
+    from claude_comms.hook_installer import uninstall_hook
+
+    try:
+        result = uninstall_hook(participant_key=(key or None))
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]Hook uninstall failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]Hook removed.[/green] "
+        f"script_removed={result.get('script_removed')} "
+        f"settings_updated={result.get('settings_updated')}"
+    )
+
+
 console = Console()
 
 # ---------------------------------------------------------------------------
