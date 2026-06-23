@@ -66,7 +66,7 @@ def _persist_web_token(token: str, path: Path = _WEB_TOKEN_PATH) -> None:
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(token, encoding="utf-8")
+        _ = path.write_text(token, encoding="utf-8")
         try:
             path.chmod(stat.S_IRUSR | stat.S_IWUSR)
         except OSError:
@@ -171,29 +171,6 @@ def _cors_headers(
 
 
 _LOOPBACK_BIND_ADDRESSES = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1"})
-
-
-def _expand_loopback_aliases(host: str) -> list[str]:
-    """Return browser-visible aliases for a host that binds the loopback iface.
-
-    Browsers treat ``127.0.0.1``, ``localhost``, ``0.0.0.0``, and ``::1`` as
-    DIFFERENT origins for Content-Security-Policy purposes. The web UI
-    builds its broker / REST URLs from ``window.location.hostname``, which
-    is whichever of these aliases the user typed into the address bar.
-
-    For loopback bind addresses, return ``[127.0.0.1, localhost]`` so the
-    same daemon works whether the user navigated to ``http://localhost:9921``
-    or ``http://127.0.0.1:9921``. For non-loopback hosts (LAN IP, Tailscale
-    name, public DNS), return the host unchanged — those have one canonical
-    form and the user is responsible for typing it correctly.
-
-    Cross-network deployments where the user accesses the daemon via a
-    Tailscale magic-DNS name or LAN IP that the config doesn't know about
-    should populate ``web.csp_extra_connect_src`` with the external URLs.
-    """
-    if host in _LOOPBACK_BIND_ADDRESSES:
-        return ["127.0.0.1", "localhost"]
-    return [host]
 
 
 def _web_cors_allow_list(web_cfg: dict) -> list[str]:
@@ -622,7 +599,7 @@ def build_notifications_route(_config: dict | None = None, cors=None):
 
         # Drain: deliver each cue at most once.
         try:
-            notif_file.write_text("", encoding="utf-8")
+            _ = notif_file.write_text("", encoding="utf-8")
         except OSError:
             pass
 
@@ -835,7 +812,7 @@ class _ASGIWebSocketWriter:
         self._closed = False
 
     def write(self, data: bytes) -> None:
-        self._stream.write(data)
+        _ = self._stream.write(data)
 
     async def drain(self) -> None:
         import io
@@ -1621,7 +1598,7 @@ def start(
 
         # Write PID immediately so `stop` can find us
         _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+        _ = _PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
 
         shutdown_event = asyncio.Event()
 
@@ -1653,7 +1630,7 @@ def start(
                         f"ws://{broker.ws_host}:{broker.ws_port}"
                     )
                     # Block until shutdown is requested
-                    await shutdown_event.wait()
+                    _ = await shutdown_event.wait()
                     break
                 except asyncio.CancelledError:
                     break
@@ -2042,7 +2019,7 @@ def start(
                 port=broker_port,
                 identifier=pub_client_id,
             )
-            await pub_client.__aenter__()
+            _ = await pub_client.__aenter__()
 
             async def _do_publish(
                 topic: str, payload: bytes, retain: bool = False
@@ -2268,7 +2245,7 @@ def start(
             )
 
             # Block until signalled
-            await shutdown_event.wait()
+            _ = await shutdown_event.wait()
 
             # Graceful shutdown — suppress uvicorn's noisy CancelledError logs
             import logging as _logging
@@ -2294,7 +2271,7 @@ def start(
                     await _mcp_mod._presence.stop()
                 except Exception:
                     _daemon_logger.exception("Failed to stop presence manager")
-            mqtt_sub_task.cancel()
+            _ = mqtt_sub_task.cancel()
             await pub_client.__aexit__(None, None, None)
             if web_task is not None and web_uvi_server is not None:
                 web_uvi_server.should_exit = True
@@ -2613,7 +2590,7 @@ def status() -> None:
 @app.command()
 def tui() -> None:
     """Launch the Textual TUI chat client."""
-    _require_config()
+    _ = _require_config()
 
     if not _is_daemon_running():
         console.print(
@@ -2626,7 +2603,7 @@ def tui() -> None:
         from claude_comms.tui.app import ClaudeCommsApp  # type: ignore[import-not-found]
 
         app_instance = ClaudeCommsApp()
-        app_instance.run()
+        _ = app_instance.run()
     except ImportError:
         console.print(
             "[red]TUI module not available.[/red] Ensure the TUI package is installed."
@@ -2654,7 +2631,7 @@ def web() -> None:
         )
 
     console.print(f"Opening [bold]{url}[/bold] in your browser...")
-    webbrowser.open(url)
+    _ = webbrowser.open(url)
 
 
 # ---------------------------------------------------------------------------
@@ -2691,7 +2668,7 @@ def log(
 
     try:
         # Use tail -f for real-time following
-        subprocess.run(["tail", "-f", str(log_file)])
+        _ = subprocess.run(["tail", "-f", str(log_file)])
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped tailing.[/dim]")
     except FileNotFoundError:
@@ -2699,7 +2676,7 @@ def log(
         try:
             with open(log_file) as fh:
                 # Seek to end
-                fh.seek(0, 2)
+                _ = fh.seek(0, 2)
                 while True:
                     line = fh.readline()
                     if line:
