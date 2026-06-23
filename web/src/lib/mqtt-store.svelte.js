@@ -8,14 +8,19 @@ const DEFAULT_BROKER_WS_PATH = '/mqtt';
 
 /**
  * Current page location, or a localhost/http default when there's no window
- * (SSR / tests).
- * @returns {{hostname: string, protocol: string}}
+ * (SSR / tests). ``host`` includes the port when a non-default one is present
+ * (e.g. ``localhost:9921``); on default ports 80/443 it equals ``hostname``.
+ * @returns {{hostname: string, host: string, protocol: string}}
  */
 function pageLocation() {
   if (typeof window !== 'undefined' && window.location) {
-    return { hostname: window.location.hostname, protocol: window.location.protocol };
+    return {
+      hostname: window.location.hostname,
+      host: window.location.host,
+      protocol: window.location.protocol,
+    };
   }
-  return { hostname: 'localhost', protocol: 'http:' };
+  return { hostname: 'localhost', host: 'localhost', protocol: 'http:' };
 }
 
 /**
@@ -52,21 +57,25 @@ export function defaultBrokerUrl(opts = {}) {
 }
 
 /**
- * Same-origin broker WebSocket URL (no explicit port). Used when the page is
- * served over HTTPS behind a reverse proxy (``tailscale serve``) that maps
- * BOTH the web UI at ``/`` and the broker WS at a path (e.g. ``/mqtt``) onto
- * ONE origin on port 443. Connecting to an explicit ``:9001`` would miss the
- * proxy and trip mixed-content; ``wss://<same-origin><path>`` is correct.
+ * Same-origin broker WebSocket URL. The host MUST include the page's port when
+ * one is present so the URL matches the page origin exactly and is permitted by
+ * CSP ``connect-src 'self'``. Used both when the page is served over HTTPS
+ * behind a reverse proxy (``tailscale serve``, port 443 → no explicit port) and
+ * in the single-origin case where the broker WS is bridged onto the web port
+ * (e.g. ``http://localhost:9921`` → ``ws://localhost:9921/mqtt``). Defaulting to
+ * the page's bare ``hostname`` (dropping the port) builds ``ws://host/mqtt``,
+ * which defaults to port 80 — a DIFFERENT origin than ``:9921`` and CSP-blocked.
  *
  * @param {object} [opts]
- * @param {string} [opts.host]     - Host. Defaults to the page host.
+ * @param {string} [opts.host]     - Host INCLUDING port (``host:port``).
+ *                                   Defaults to the page host.
  * @param {string} [opts.protocol] - Page protocol. Defaults to the page protocol.
  * @param {string} [opts.path]     - WS path. Defaults to {@link DEFAULT_BROKER_WS_PATH}.
  * @returns {string}
  */
 export function sameOriginBrokerUrl(opts = {}) {
   const loc = pageLocation();
-  const host = opts.host ?? loc.hostname;
+  const host = opts.host ?? loc.host ?? loc.hostname;
   const protocol = opts.protocol ?? loc.protocol;
   const path = opts.path ?? DEFAULT_BROKER_WS_PATH;
   return `${wsScheme(protocol)}://${host}${path}`;
@@ -110,7 +119,10 @@ export function resolveBrokerUrl(caps, loc = pageLocation()) {
   const sameOrigin = (caps && caps.broker_ws_same_origin === true)
     || loc.protocol === 'https:';
   if (sameOrigin) {
-    return sameOriginBrokerUrl({ host: loc.hostname, protocol: loc.protocol, path });
+    // Use the page host INCLUDING its port (loc.host) so the URL matches the
+    // page origin exactly and CSP connect-src 'self' permits it. Falls back to
+    // hostname for callers (older tests) that supply only a bare hostname.
+    return sameOriginBrokerUrl({ host: loc.host ?? loc.hostname, protocol: loc.protocol, path });
   }
 
   // 2. Daemon-advertised absolute URL — only if it points at the page's host.
