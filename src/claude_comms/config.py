@@ -78,6 +78,11 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         # sound_enabled is read by the web UI only (SettingsPanel toggle).
         # The Python backend does not use this value.
         "sound_enabled": False,
+        # When True, plain broadcasts (no recipients, no mentions) also cue
+        # every OTHER conversation member's PostToolUse hook (agent
+        # "see-everything" coordination mode). Default off: only whispers and
+        # @mentions generate cues.
+        "cue_on_broadcast": False,
     },
     "presence": {
         # TTL for MCP connections — if a participant hasn't touched the server
@@ -86,6 +91,13 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "connection_ttl_seconds": 180,
         # How often the TTL sweep runs.
         "sweep_interval_seconds": 30,
+        # Default TTL for an ephemeral activity signal (comms_status_set) when
+        # the caller omits ttl_seconds. Was a hardcoded 30s, which expired
+        # mid-turn for multi-second LLM turns; 120s spans a typical turn.
+        "activity_ttl_seconds": 120,
+        # Hard ceiling for activity TTL — caller-supplied values are clamped to
+        # this maximum.
+        "activity_ttl_max_seconds": 300,
     },
     "logging": {
         "dir": "~/.claude-comms/logs",

@@ -75,6 +75,7 @@ from claude_comms.conversation import (
     list_all_conversations,
 )
 from claude_comms.presence import PresenceManager
+from claude_comms.notifier import NotificationWriter
 
 logger = logging.getLogger(__name__)
 
@@ -645,11 +646,14 @@ async def _mqtt_subscriber(
     store: MessageStore,
     deduplicator: MessageDeduplicator,
     log_exporter: Any = None,
+    notifier: "NotificationWriter | None" = None,
 ) -> None:
     """Subscribe to all conversation messages and feed them into the store.
 
     Also writes each message to disk via *log_exporter* (if provided)
-    so messages persist across daemon restarts.
+    so messages persist across daemon restarts, and appends per-recipient
+    notification cues via *notifier* (if provided) so the PostToolUse hook
+    can push mid-turn messages.
 
     Runs as a long-lived background task.  Reconnects on failure.
     """
@@ -756,6 +760,18 @@ async def _mqtt_subscriber(
                                 except Exception:
                                     logger.warning(
                                         "Failed to write message to log", exc_info=True
+                                    )
+                            # Append per-recipient notification cues so the
+                            # PostToolUse hook can push mid-turn messages. Own
+                            # block (NOT nested in the log_exporter guard) so it
+                            # fires even when logging is disabled / None.
+                            if notifier is not None:
+                                try:
+                                    notifier.write(data)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to write notification cue",
+                                        exc_info=True,
                                     )
                             # Refresh presence for message sender (keeps
                             # CLI/raw-MQTT publishers alive without HTTP).
@@ -1278,11 +1294,11 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             ),
         ],
         ttl_seconds: Annotated[
-            int,
+            int | None,
             Field(
-                description="Seconds until the status auto-expires. Default 30, hard cap 300."
+                description="Seconds until the status auto-expires. Omit to use the server default (presence.activity_ttl_seconds, default 120); hard cap presence.activity_ttl_max_seconds (default 300)."
             ),
-        ] = 30,
+        ] = None,
     ) -> dict[str, Any]:
         """Set an ephemeral activity signal ('thinking', 'reading', etc.) on your connections.
 
@@ -1297,12 +1313,16 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         silently dropped (last-write-wins).
         """
         _touch(key)
+        presence_cfg = config.get("presence", {})
+        default_ttl = presence_cfg.get("activity_ttl_seconds", 120)
+        max_ttl = presence_cfg.get("activity_ttl_max_seconds", 300)
         return await tool_comms_status_set(
             _get_registry(),
             key=key,
             conversation=conversation,
             label=label,
-            ttl_seconds=ttl_seconds,
+            ttl_seconds=(ttl_seconds if ttl_seconds is not None else default_ttl),
+            max_ttl_seconds=max_ttl,
             publish_fn=_publish_fn,
         )
 
@@ -2008,8 +2028,20 @@ def start_server(config: dict[str, Any] | None = None) -> None:
         # Start MQTT subscriber background task
         assert _store is not None, "Message store not initialised"
         assert _deduplicator is not None, "Deduplicator not initialised"
+        # Notification cue writer so the PostToolUse hook works in standalone
+        # mode too (registry global is reassigned during create_server, so
+        # resolve it lazily via the provider).
+        notifier = NotificationWriter.from_config(
+            config, registry_provider=lambda: _registry
+        )
         sub_task = asyncio.create_task(
-            _mqtt_subscriber(broker_host, broker_port, _store, _deduplicator)
+            _mqtt_subscriber(
+                broker_host,
+                broker_port,
+                _store,
+                _deduplicator,
+                notifier=notifier,
+            )
         )
 
         # Create a persistent MQTT client for publishing

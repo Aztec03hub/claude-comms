@@ -193,6 +193,79 @@ async def test_status_set_ttl_clamped_to_min():
 
 
 # ---------------------------------------------------------------------------
+# F3: configurable max_ttl_seconds ceiling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_set_ttl_clamped_to_custom_max():
+    """The clamp ceiling honors the passed max_ttl_seconds, not the module
+    constant, so the wrapper can drive it from config."""
+    reg = ParticipantRegistry()
+    key = await _join_claude(reg)
+    res = await tool_comms_status_set(
+        reg,
+        key=key,
+        conversation="general",
+        label="thinking",
+        ttl_seconds=10_000,
+        max_ttl_seconds=120,
+    )
+    assert res["status"] == "set"
+    assert res["ttl_seconds"] == 120
+
+
+@pytest.mark.asyncio
+async def test_status_set_custom_max_allows_above_module_constant():
+    """A max_ttl_seconds above the module constant lifts the ceiling; a TTL
+    between the constant and the custom max is NOT clamped down to the constant."""
+    higher = MAX_ACTIVITY_TTL_SECONDS + 600
+    requested = MAX_ACTIVITY_TTL_SECONDS + 100
+    reg = ParticipantRegistry()
+    key = await _join_claude(reg)
+    res = await tool_comms_status_set(
+        reg,
+        key=key,
+        conversation="general",
+        label="thinking",
+        ttl_seconds=requested,
+        max_ttl_seconds=higher,
+    )
+    assert res["status"] == "set"
+    assert res["ttl_seconds"] == requested
+
+
+@pytest.mark.asyncio
+async def test_status_set_max_ttl_default_is_module_constant():
+    """When max_ttl_seconds is omitted, the legacy module-constant ceiling
+    still applies (back-compat)."""
+    reg = ParticipantRegistry()
+    key = await _join_claude(reg)
+    res = await tool_comms_status_set(
+        reg, key=key, conversation="general", label="thinking", ttl_seconds=10_000
+    )
+    assert res["status"] == "set"
+    assert res["ttl_seconds"] == MAX_ACTIVITY_TTL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_status_set_custom_max_still_floors_at_one():
+    """The lower bound stays a hard 1s floor regardless of max_ttl_seconds."""
+    reg = ParticipantRegistry()
+    key = await _join_claude(reg)
+    res = await tool_comms_status_set(
+        reg,
+        key=key,
+        conversation="general",
+        label="thinking",
+        ttl_seconds=0,
+        max_ttl_seconds=120,
+    )
+    assert res["status"] == "set"
+    assert res["ttl_seconds"] == 1
+
+
+# ---------------------------------------------------------------------------
 # status_set applies + members reflects activity
 # ---------------------------------------------------------------------------
 

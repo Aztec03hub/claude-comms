@@ -192,3 +192,44 @@ class TestGetDefaultConfig:
             "presence",
         }
         assert expected_keys == set(config.keys())
+
+
+class TestHarnessFixDefaults:
+    """New config defaults added for the harness-findings fixes (F1, F3)."""
+
+    def test_notifications_cue_on_broadcast_default_false(self):
+        config = get_default_config()
+        assert config["notifications"]["cue_on_broadcast"] is False
+
+    def test_notifications_hook_enabled_still_present(self):
+        config = get_default_config()
+        assert config["notifications"]["hook_enabled"] is True
+
+    def test_presence_activity_ttl_default_120(self):
+        config = get_default_config()
+        assert config["presence"]["activity_ttl_seconds"] == 120
+
+    def test_presence_activity_ttl_max_default_300(self):
+        config = get_default_config()
+        assert config["presence"]["activity_ttl_max_seconds"] == 300
+
+    def test_new_defaults_inherited_by_load_config(self, tmp_config_path):
+        """A user config that omits the new keys should auto-inherit them via
+        the deep-merge against _DEFAULT_CONFIG."""
+        tmp_config_path.write_text("identity:\n  key: abc12345\n  name: x\n")
+        config = load_config(tmp_config_path)
+        assert config["notifications"]["cue_on_broadcast"] is False
+        assert config["presence"]["activity_ttl_seconds"] == 120
+        assert config["presence"]["activity_ttl_max_seconds"] == 300
+
+    def test_user_override_of_new_keys_wins(self, tmp_config_path):
+        tmp_config_path.write_text(
+            "identity:\n  key: abc12345\n  name: x\n"
+            "presence:\n  activity_ttl_seconds: 90\n"
+            "notifications:\n  cue_on_broadcast: true\n"
+        )
+        config = load_config(tmp_config_path)
+        assert config["presence"]["activity_ttl_seconds"] == 90
+        assert config["notifications"]["cue_on_broadcast"] is True
+        # Untouched new default still inherited.
+        assert config["presence"]["activity_ttl_max_seconds"] == 300

@@ -47,7 +47,7 @@ from claude_comms.reactions import (
     ReactionsStore,
     reactions_topic,
 )
-from claude_comms.mention import build_mention_prefix
+from claude_comms.mention import build_mention_prefix, extract_mentions
 from claude_comms.message import Message, Sender, now_iso, validate_conv_id
 from claude_comms.participant import (
     Activity,
@@ -737,18 +737,33 @@ async def tool_comms_send(
             # (Don't error: mentions is optional metadata, not a routing field.)
             resolved_mentions = None
 
+    # Resolve keys -> human names for the result echo. Built once here (one
+    # `registry.members(conversation)` call) so both the whisper-prefix path
+    # below and the `recipient_names`/`mention_names` result fields reuse it.
+    # Mentions are validated against the GLOBAL registry, so a mentioned key not
+    # in `members(conversation)` falls back to the key via `.get(k, k)`.
+    key_to_name = {m.key: m.name for m in registry.members(conversation)}
+
     # Body-prefix policy: prepend `[@name1, @name2] ` ONLY when recipients is
     # non-empty (whisper intent). Mentions-only sends never get a server-injected
     # prefix — the wire-format `mentions` field carries highlight intent on its
     # own; the prefix is reserved as the visibility marker for whispers.
     if resolved_recipients:
-        members = registry.members(conversation)
-        key_to_name = {m.key: m.name for m in members}
         mentioned_names = [
             key_to_name[k] for k in resolved_recipients if k in key_to_name
         ]
-        prefix = build_mention_prefix(mentioned_names)
-        body = prefix + message
+        # F4: skip prepending if the body already begins with an equivalent
+        # leading `[@...]` prefix whose name set matches the resolved recipients
+        # (case-insensitive). Otherwise prepend the authoritative marker.
+        typed_names = extract_mentions(message)
+        already_prefixed = bool(typed_names) and (
+            {n.lower() for n in typed_names} == {n.lower() for n in mentioned_names}
+        )
+        if already_prefixed:
+            body = message
+        else:
+            prefix = build_mention_prefix(mentioned_names)
+            body = prefix + message
     else:
         body = message
 
@@ -798,6 +813,16 @@ async def tool_comms_send(
         "conversation": conversation,
         "recipients": resolved_recipients,
         "mentions": resolved_mentions,
+        "recipient_names": (
+            [key_to_name.get(k, k) for k in resolved_recipients]
+            if resolved_recipients
+            else None
+        ),
+        "mention_names": (
+            [key_to_name.get(k, k) for k in resolved_mentions]
+            if resolved_mentions
+            else None
+        ),
         "reply_to": reply_to,
     }
 
@@ -1203,6 +1228,7 @@ async def tool_comms_status_set(
     conversation: str,
     label: str,
     ttl_seconds: int = DEFAULT_ACTIVITY_TTL_SECONDS,
+    max_ttl_seconds: int = MAX_ACTIVITY_TTL_SECONDS,
     publish_fn: PublishFn | None = None,
 ) -> dict[str, Any]:
     """Set an ephemeral activity signal on the caller's connections.
@@ -1238,11 +1264,13 @@ async def tool_comms_status_set(
     if len(label) > 32:
         return _error("label must be <= 32 characters.")
 
-    # Clamp TTL into [1, MAX]
+    # Clamp TTL into [1, max_ttl_seconds]. The upper bound is configurable via
+    # max_ttl_seconds (default = MAX_ACTIVITY_TTL_SECONDS) so the wrapper can
+    # honor a config-driven ceiling; the lower bound stays a hard 1s floor.
     if ttl_seconds < 1:
         ttl_seconds = 1
-    if ttl_seconds > MAX_ACTIVITY_TTL_SECONDS:
-        ttl_seconds = MAX_ACTIVITY_TTL_SECONDS
+    if ttl_seconds > max_ttl_seconds:
+        ttl_seconds = max_ttl_seconds
 
     if _activity_throttled(key):
         return {
@@ -1890,6 +1918,7 @@ async def tool_comms_artifact_create(
         "recipients": None,
         "reply_to": None,
         "artifact_ref": name,
+        "actor_key": participant.key,
     }
     topic = f"claude-comms/conv/{conversation}/messages"
     await publish_fn(topic, json.dumps(system_msg).encode())
@@ -1937,11 +1966,19 @@ async def tool_comms_artifact_update(
     # report the wrong "current" version to clients.
     current_version = max((v.version for v in artifact.versions), default=0)
     if base_version is not None and base_version != current_version:
-        return _error(
-            f"Version conflict: you based your edit on v{base_version}, "
-            f"but current version is v{current_version}. "
-            "Re-read the artifact and try again."
-        )
+        # F6: surface machine-readable conflict fields the web 409 banner reads
+        # directly off the response body. `latest_author` MUST be a bare name
+        # STRING (assigned into a string-typed banner state), not a Sender dict.
+        return {
+            "error": True,
+            "message": (
+                f"Version conflict: you based your edit on v{base_version}, "
+                f"but current version is v{current_version}. "
+                "Re-read the artifact and try again."
+            ),
+            "latest_version": current_version,
+            "latest_author": artifact.versions[-1].author.name,
+        }
 
     sender = Sender(key=participant.key, name=participant.name, type=participant.type)
     new_version = current_version + 1
@@ -1973,11 +2010,22 @@ async def tool_comms_artifact_update(
         "recipients": None,
         "reply_to": None,
         "artifact_ref": name,
+        "actor_key": participant.key,
     }
     topic = f"claude-comms/conv/{conversation}/messages"
     await publish_fn(topic, json.dumps(system_msg).encode())
 
-    return {"status": "updated", "name": name, "version": new_version}
+    return {
+        "status": "updated",
+        "name": name,
+        "version": new_version,
+        # F6: echo the updating author and the base_version that was accepted.
+        "author": sender.model_dump(),
+        "base_version": base_version,
+        # F7: advisory flag — a blind update (no base_version) is unguarded
+        # last-write-wins. Passing base_version is recommended.
+        "unguarded": base_version is None,
+    }
 
 
 def tool_comms_artifact_get(
@@ -2046,11 +2094,16 @@ def tool_comms_artifact_get(
         for v in artifact.versions
     ]
 
+    # F6: explicit "latest" hint computed from the source version objects (the
+    # returned `versions` is a list of dicts, so compute from artifact.versions).
+    latest_version = max((v.version for v in artifact.versions), default=0)
+
     return {
         "name": artifact.name,
         "title": artifact.title,
         "type": artifact.type,
         "version": selected_version.version,
+        "latest_version": latest_version,
         "content": chunk,
         "total_chars": total_chars,
         "offset": offset,
@@ -2133,6 +2186,7 @@ async def tool_comms_artifact_delete(
         "recipients": None,
         "reply_to": None,
         "artifact_ref": name,
+        "actor_key": participant.key,
     }
     topic = f"claude-comms/conv/{conversation}/messages"
     await publish_fn(topic, json.dumps(system_msg).encode())
