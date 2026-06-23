@@ -89,10 +89,24 @@
     anchorEvent,
     isMember = false,
     isCreator = false,
+    // True when the caller holds the per-channel ``owner`` or ``admin``
+    // role (hydrated from the server via ``comms_get_channel_role``).
+    // Combined with ``isCreator`` to gate the admin affordances so a real
+    // admin who did not literally create the channel still sees them.
+    isAdminOrOwner = false,
+    // True when the channel is reserved (``general`` / ``system``). The
+    // daemon hard-refuses delete/archive on these regardless of role, so
+    // we suppress those affordances rather than offer an always-403 action.
+    isReserved = false,
     onAction,
     onClose,
     currentNotificationPolicy = { policy: 'All', highlightWords: [] },
   } = $props();
+
+  // Unified admin gate: the original creator OR an owner/admin role-holder.
+  // Replaces the old ``isCreator``-only rule for Close/Delete so both the
+  // sidebar menu and the directory Admin panel use one consistent rule.
+  const canAdmin = $derived(isCreator || isAdminOrOwner);
 
   // -----------------------------------------------------------------
   // Action visibility — computed up-front so keyboard nav can address
@@ -186,13 +200,16 @@
 
     list.push({ id: 'copy-link', label: 'Copy channel link', icon: LinkIcon });
 
-    if (isMember && !isCreator) {
+    if (isMember && !canAdmin) {
       list.push({ id: 'leave', label: 'Leave', icon: LogOut, danger: true });
     }
-    if (isMember && isCreator) {
+    // Close (archive) + Delete are admin affordances. Suppress them on
+    // reserved channels (#general / #system) since the daemon refuses
+    // delete/archive there regardless of role.
+    if (isMember && canAdmin && !isReserved) {
       list.push({ id: 'close', label: 'Close', icon: Archive });
     }
-    if (isCreator) {
+    if (canAdmin && !isReserved) {
       list.push({ id: 'delete', label: 'Delete', icon: Trash2, danger: true });
     }
 

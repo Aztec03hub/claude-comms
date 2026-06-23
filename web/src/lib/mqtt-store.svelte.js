@@ -1615,6 +1615,14 @@ export class MqttChatStore {
       this.checkChannels().catch(() => {
         /* best-effort */
       });
+      // Hydrate the authoritative per-channel role (owner/admin/member)
+      // from the server so role-gated UI (kick + delete/archive) sees
+      // real admins, not just the client-inferred owner/member. Fire-and-
+      // forget; the helper swallows its own errors and leaves the
+      // optimistic inference in place on failure.
+      this.hydrateChannelRoles().catch(() => {
+        /* best-effort */
+      });
       // Install the visibilitychange listener so subsequent tab-
       // visibility regains re-fire ``comms_check`` (subject to the
       // 30s throttle).
@@ -3454,6 +3462,63 @@ export class MqttChatStore {
         this.channelRoles[ch.id] = this.#inferChannelRole(ch.id);
       }
     }
+  }
+
+  /**
+   * Hydrate the ``channelRoles`` cache with the server's authoritative
+   * per-channel role (owner / admin / member) via ``comms_get_channel_role``.
+   *
+   * This is the long-anticipated wrapper noted in ``getChannelRole``'s doc
+   * ([VERIFY surfaced 2026-05-18]): ``#inferChannelRole`` can only ever
+   * derive ``owner`` (you created the channel) or ``member``. It can NEVER
+   * see an ``admin`` row granted on the backend ``conversation_roles``
+   * table, so real admins were invisible to role-gated UI (kick + delete /
+   * archive). This method overwrites the optimistic inference with the
+   * server answer for every joined channel.
+   *
+   * Best-effort and fire-and-forget: it is invoked from the connect
+   * handshake after ``checkChannels``. Each call's failure is swallowed so
+   * a transient daemon hiccup leaves the optimistic inference in place
+   * rather than blanking roles. Reserved/well-known channels are queried
+   * too — the server returns ``member`` for them when the caller has no
+   * explicit row, which is correct (their delete/archive is blocked by the
+   * reserved-name guard regardless of role).
+   *
+   * @returns {Promise<{ success: boolean }>}
+   */
+  async hydrateChannelRoles() {
+    if (!this.userProfile?.key) return { success: false };
+    if (typeof mcpCall !== 'function') return { success: false };
+
+    const ids = Object.values(this.channelsById)
+      .filter((ch) => ch && typeof ch.id === 'string' && ch.id.length > 0)
+      .map((ch) => ch.id);
+
+    const next = { ...this.channelRoles };
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const result = await mcpCall('comms_get_channel_role', {
+            key: this.userProfile.key,
+            conversation: id,
+          });
+          if (
+            result?.success &&
+            result.payload &&
+            (result.payload.role === 'owner' ||
+              result.payload.role === 'admin' ||
+              result.payload.role === 'member')
+          ) {
+            next[id] = result.payload.role;
+          }
+        } catch {
+          /* best-effort; leave optimistic inference for this channel */
+        }
+      }),
+    );
+    // Single map-replace so reactive consumers re-read once, not per-id.
+    this.channelRoles = next;
+    return { success: true };
   }
 
   /**
