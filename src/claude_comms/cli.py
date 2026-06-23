@@ -494,6 +494,7 @@ def build_capabilities_route(config: dict):
     from starlette.routing import Route
 
     async def _handler(request):  # type: ignore[no-untyped-def]
+        del request  # framework-required signature param, intentionally unused
         web_cfg = config.get("web", {}) or {}
         allow_remote_edits = bool(web_cfg.get("allow_remote_edits", False))
         writable = allow_remote_edits and not is_reverse_proxy_mode(config)
@@ -1134,7 +1135,7 @@ app = typer.Typer(
 
 
 @app.callback()
-def _main(
+def main(
     _version: bool = typer.Option(
         False,
         "--version",
@@ -1379,7 +1380,12 @@ def start(
 
         from claude_comms.broker import EmbeddedBroker
 
-        broker_instance: EmbeddedBroker | None = None
+        # Mutable holder so the broker reference survives the
+        # ``create_task``/nested-coroutine boundary without ``nonlocal``.
+        # Reading ``broker_holder[0]`` in the shutdown ``finally`` stays
+        # ``EmbeddedBroker | None`` for the type checker (a plain local would be
+        # narrowed to ``None`` and the shutdown body flagged unreachable).
+        broker_holder: list[EmbeddedBroker | None] = [None]
         broker_task: asyncio.Task | None = None
         loop = asyncio.get_running_loop()
 
@@ -1405,16 +1411,16 @@ def start(
             that can propagate up and kill the broker.  This wrapper
             catches those, waits 2 seconds, and restarts.
             """
-            nonlocal broker_instance
             retries = 0
             while retries < max_retries and not shutdown_event.is_set():
                 try:
-                    broker_instance = EmbeddedBroker.from_config(config)
-                    await broker_instance.start()
+                    broker = EmbeddedBroker.from_config(config)
+                    broker_holder[0] = broker
+                    await broker.start()
                     console.print(
                         f"  [green]Broker[/green] listening on "
-                        f"tcp://{broker_instance.host}:{broker_instance.port}, "
-                        f"ws://{broker_instance.ws_host}:{broker_instance.ws_port}"
+                        f"tcp://{broker.host}:{broker.port}, "
+                        f"ws://{broker.ws_host}:{broker.ws_port}"
                     )
                     # Block until shutdown is requested
                     await shutdown_event.wait()
@@ -1429,12 +1435,13 @@ def start(
                     console.print(
                         f"  [red]Broker crashed[/red] (attempt {retries}/{max_retries}): {e}"
                     )
-                    if broker_instance is not None and broker_instance.is_running:
+                    crashed = broker_holder[0]
+                    if crashed is not None and crashed.is_running:
                         try:
-                            await broker_instance.stop()
+                            await crashed.stop()
                         except Exception:
                             pass
-                        broker_instance = None
+                        broker_holder[0] = None
                     if retries < max_retries and not shutdown_event.is_set():
                         await asyncio.sleep(2)
                         _daemon_logger.info("Restarting broker...")
@@ -2028,13 +2035,13 @@ def start(
 
         finally:
             console.print("\n[bold]Shutting down...[/bold]")
-            # ``broker_instance`` is assigned inside the ``_broker_supervisor``
-            # nested coroutine via ``nonlocal``; pyright's intraprocedural flow
-            # analysis can't see that mutation and narrows it to ``None`` here,
-            # so it flags the body as unreachable. At runtime the supervisor
-            # task does set it, so this guarded shutdown must remain.
-            if broker_instance is not None and broker_instance.is_running:  # pyright: ignore[reportUnnecessaryComparison]
-                await broker_instance.stop()  # pyright: ignore[reportUnreachable]
+            # The broker is created inside the ``_run_broker_with_retry`` task
+            # and stored in ``broker_holder`` so its reference survives the
+            # nested-coroutine boundary for both the runtime and the type
+            # checker. Stop it here if it is still running.
+            broker = broker_holder[0]
+            if broker is not None and broker.is_running:
+                await broker.stop()
             # Remove PID file
             try:
                 _PID_FILE.unlink(missing_ok=True)
