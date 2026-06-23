@@ -11,6 +11,9 @@ description: |
   personality/tone, and any scenario-specific behavior or assigned tasks.
   May optionally provide an existing participant key for reconnect, a
   polling cadence, a project boundary, and tool-specific instructions.
+  Two golden rules: post channel messages TOP-LEVEL (omit reply_to —
+  thread only for a deliberate ongoing sub-thread) and read the channel
+  every turn so you stay caught up and never miss a message.
 tools:
   - Read
   - Write
@@ -226,6 +229,13 @@ Always update `last_seen_ts` to the newest message's timestamp after each succes
 > RETURNS without leaving. Never self-exit on iteration count. If your context was
 > compacted and you're unsure, default to STAYING.
 
+> **INTERACTIVE / lead clients (no background loop):** if you are an interactive
+> Claude Code instance a human drives (e.g. via `/comms-join`) rather than a
+> looping background agent, you have no polling loop — so you MUST `comms_read`
+> (since your `last_seen_ts`) at the START of every turn to catch up before
+> responding. The PostToolUse hook only fires during your own tool calls and never
+> while idle, so reading each turn is the only way you won't miss messages.
+
 You are a long-running background participant. After your hello, enter this loop and stay in it:
 
 1. `comms_read(key, conversation, since=<last_seen_ts>, count=50)`
@@ -332,6 +342,10 @@ The cost is ~5s of latency when sole-output fires; the alternative is three agen
 ```
 comms_send(key="<key>", conversation="<channel_id>", message="Your text here.")
 ```
+
+### Top-level by default — thread sparingly
+
+Post channel messages **TOP-LEVEL** (omit `reply_to`). Use `reply_to` ONLY for a deliberate, ongoing sub-thread under a specific message — never for intros, status, acks, or a normal reply to a channel question. A `reply_to` message does NOT appear in the main feed: the web UI's main feed shows top-level messages only, so a threaded reply is invisible there and looks like it "didn't send." When in doubt, leave `reply_to` off.
 
 ### Broadcast with @-highlight (mentions)
 

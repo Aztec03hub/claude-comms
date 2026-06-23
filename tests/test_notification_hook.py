@@ -1,17 +1,22 @@
 """Tests for the Claude Comms notification hook installer and scripts.
 
 Tests cover:
-- Hook script generation for Unix and Windows
+- The /api/notifications/{key} fetch-and-drain endpoint (Starlette TestClient)
+- Hook script generation for Unix and Windows (now HTTP-fetch based)
+- Hook formatter robustness against hostile cue bodies (injection-safe)
 - Hook installation (script file + settings.json)
 - Hook uninstallation (cleanup)
 - Settings.json manipulation (add, replace, remove)
-- Notification file reading via subprocess (integration)
+
+The hook is HTTP-based now: it pulls queued cues from the daemon's
+``/api/notifications/<key>`` endpoint (which drains them server-side) instead
+of reading a local file, so it works against a REMOTE daemon. The old
+local-file-read e2e tests have been replaced accordingly.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import stat
 import subprocess
 import sys
@@ -19,8 +24,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
+from claude_comms.cli import build_notifications_route
 from claude_comms.hook_installer import (
+    _PY_FORMATTER,
     _add_hook_to_settings,
     _build_hook_entry,
     _generate_unix_script,
@@ -38,9 +47,103 @@ from claude_comms.hook_installer import (
 
 
 SAMPLE_KEY = "a3f7b2c1"
+SAMPLE_URL = "http://daemon-host:9920"
 
 
-# --- Script generation ---
+# --- /api/notifications/{key} endpoint ---
+
+
+class TestNotificationsEndpoint:
+    """GET /api/notifications/{key} fetch-and-drain via Starlette TestClient.
+
+    Points hook_installer._notification_dir() at a tmp dir so the route reads
+    real .jsonl files written by the test.
+    """
+
+    @pytest.fixture()
+    def client(self, tmp_path, monkeypatch):
+        notif_dir = tmp_path / "notifications"
+        notif_dir.mkdir()
+        monkeypatch.setattr(
+            "claude_comms.hook_installer._notification_dir",
+            lambda: notif_dir,
+        )
+        app = Starlette(routes=[build_notifications_route({})])
+        return TestClient(app), notif_dir
+
+    def test_returns_cues_and_drains(self, client):
+        tc, notif_dir = client
+        notif_file = notif_dir / f"{SAMPLE_KEY}.jsonl"
+        cues = [
+            {"conversation": "general", "sender_name": "Alice", "body": "hi"},
+            {"conversation": "dev", "sender_key": "b1c2d3e4", "body": "yo"},
+        ]
+        notif_file.write_text("\n".join(json.dumps(c) for c in cues) + "\n")
+
+        resp = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+        assert data["cues"] == cues
+
+        # Drained: the file is now empty.
+        assert notif_file.read_text().strip() == ""
+
+    def test_second_get_returns_empty(self, client):
+        tc, notif_dir = client
+        notif_file = notif_dir / f"{SAMPLE_KEY}.jsonl"
+        notif_file.write_text(json.dumps({"conversation": "g", "body": "x"}) + "\n")
+
+        first = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert first.json()["count"] == 1
+
+        second = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert second.status_code == 200
+        assert second.json() == {"cues": [], "count": 0}
+
+    def test_missing_file_returns_empty(self, client):
+        tc, _ = client
+        resp = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert resp.status_code == 200
+        assert resp.json() == {"cues": [], "count": 0}
+
+    def test_malformed_lines_skipped(self, client):
+        tc, notif_dir = client
+        notif_file = notif_dir / f"{SAMPLE_KEY}.jsonl"
+        notif_file.write_text(
+            json.dumps({"conversation": "g", "body": "ok"})
+            + "\n"
+            + "{not valid json\n"
+            + "\n"  # blank line
+            + json.dumps({"conversation": "g", "body": "ok2"})
+            + "\n"
+        )
+        resp = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert resp.json()["count"] == 2
+
+    def test_invalid_key_path_traversal_rejected(self, client):
+        tc, _ = client
+        # A traversal-shaped single segment reaches the handler and is rejected
+        # by the 8-hex regex (400). A slash-bearing payload (%2F decodes to "/")
+        # never matches the single-segment route at all (404) — also no file
+        # served. Both outcomes prevent path traversal.
+        assert tc.get("/api/notifications/..%2e").status_code == 400
+        assert tc.get("/api/notifications/aaaa..aa").status_code == 400
+        assert tc.get("/api/notifications/..%2Fetc").status_code in (400, 404)
+
+    def test_invalid_key_non_hex_rejected(self, client):
+        tc, _ = client
+        for bad in ("ZZZZZZZZ", "abc", "a3f7b2c12", "A3F7B2C1"):
+            resp = tc.get(f"/api/notifications/{bad}")
+            assert resp.status_code == 400, bad
+
+    def test_valid_key_accepted(self, client):
+        tc, _ = client
+        resp = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert resp.status_code == 200
+
+
+# --- Script generation (HTTP-fetch based) ---
 
 
 class TestScriptGeneration:
@@ -58,13 +161,20 @@ class TestScriptGeneration:
         script = _generate_unix_script(SAMPLE_KEY)
         assert "cat > /dev/null" in script
 
-    def test_unix_script_checks_notification_file(self):
-        script = _generate_unix_script(SAMPLE_KEY)
-        assert f"{SAMPLE_KEY}.jsonl" in script
+    def test_unix_script_fetches_over_http(self):
+        script = _generate_unix_script(SAMPLE_KEY, SAMPLE_URL)
+        assert "curl -fsS --max-time 3" in script
+        assert f"{SAMPLE_URL}/api/notifications/{SAMPLE_KEY}" in script
 
-    def test_unix_script_truncates_file(self):
+    def test_unix_script_default_base_url(self):
         script = _generate_unix_script(SAMPLE_KEY)
-        assert '> "$NOTIF_FILE"' in script
+        assert "http://localhost:9920/api/notifications/" in script
+
+    def test_unix_script_no_local_file_read(self):
+        script = _generate_unix_script(SAMPLE_KEY)
+        # The hook no longer touches a local notification file.
+        assert ".jsonl" not in script
+        assert "NOTIF_FILE" not in script
 
     def test_unix_script_outputs_json(self):
         script = _generate_unix_script(SAMPLE_KEY)
@@ -84,9 +194,10 @@ class TestScriptGeneration:
         script = _generate_windows_script(SAMPLE_KEY)
         assert "more > nul" in script
 
-    def test_windows_script_uses_powershell(self):
-        script = _generate_windows_script(SAMPLE_KEY)
-        assert "powershell" in script
+    def test_windows_script_fetches_over_http(self):
+        script = _generate_windows_script(SAMPLE_KEY, SAMPLE_URL)
+        assert "Invoke-RestMethod" in script
+        assert f"{SAMPLE_URL}/api/notifications/{SAMPLE_KEY}" in script
 
     def test_windows_script_outputs_json(self):
         script = _generate_windows_script(SAMPLE_KEY)
@@ -97,6 +208,13 @@ class TestScriptGeneration:
     def test_generate_hook_script_unix(self, _mock):
         script = generate_hook_script(SAMPLE_KEY)
         assert script.startswith("#!/bin/bash")
+
+    @patch("claude_comms.hook_installer._is_windows", return_value=False)
+    def test_generate_hook_script_passes_base_url(self, _mock):
+        script = generate_hook_script(SAMPLE_KEY, SAMPLE_URL)
+        assert SAMPLE_URL in script
+        assert SAMPLE_KEY in script
+        assert "curl" in script
 
     @patch("claude_comms.hook_installer._is_windows", return_value=True)
     def test_generate_hook_script_windows(self, _mock):
@@ -305,6 +423,17 @@ class TestInstallUninstall:
         content = result["script_path"].read_text()
         assert SAMPLE_KEY in content
 
+    def test_install_bakes_base_url(self, mock_home):
+        result = install_hook(participant_key=SAMPLE_KEY, base_url=SAMPLE_URL)
+        content = result["script_path"].read_text()
+        assert SAMPLE_URL in content
+        assert f"/api/notifications/{SAMPLE_KEY}" in content
+
+    def test_install_default_base_url(self, mock_home):
+        result = install_hook(participant_key=SAMPLE_KEY)
+        content = result["script_path"].read_text()
+        assert "http://localhost:9920/api/notifications/" in content
+
     def test_install_raises_on_empty_key(self, mock_home):
         # Overwrite config with empty key
         config_path = mock_home / ".claude-comms" / "config.yaml"
@@ -369,244 +498,172 @@ class TestInstallUninstall:
         assert result["script_path"].exists()
 
 
-# --- Hook script integration test (Unix only) ---
+# --- Hook python formatter robustness (Unix only) ---
+
+
+def _run_formatter(cues):
+    """Run the hook's python3 -c formatter with ``{"cues": ...}`` on stdin,
+    exactly as the generated bash hook pipes the daemon's HTTP response into
+    it. Returns the CompletedProcess.
+    """
+    payload = json.dumps({"cues": cues, "count": len(cues)})
+    return subprocess.run(
+        [sys.executable, "-c", _PY_FORMATTER],
+        input=payload,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix shell test")
-class TestHookScriptExecution:
-    """Run the generated hook script and verify JSON output."""
+class TestHookFormatter:
+    """The python formatter parses the daemon's JSON response and emits a safe
+    additionalContext. No body text is ever interpolated into source."""
 
-    @pytest.fixture()
-    def hook_env(self, tmp_path, monkeypatch):
-        """Set up notification file and generate hook script."""
-        home = tmp_path / "fakehome"
-        home.mkdir()
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    def test_empty_cues_exits_silently(self):
+        proc = _run_formatter([])
+        assert proc.returncode == 0
+        assert proc.stdout.strip() == ""
 
-        notif_dir = home / ".claude-comms" / "notifications"
-        notif_dir.mkdir(parents=True)
-
-        notif_file = notif_dir / f"{SAMPLE_KEY}.jsonl"
-
-        # Generate script
-        script_content = _generate_unix_script(SAMPLE_KEY)
-        script_path = tmp_path / "hook.sh"
-        script_path.write_text(script_content)
-        script_path.chmod(script_path.stat().st_mode | stat.S_IXUSR)
-
-        return {
-            "home": home,
-            "notif_file": notif_file,
-            "script_path": script_path,
-        }
-
-    def test_hook_exits_silently_when_no_notifications(self, hook_env):
-        """Hook should exit 0 with no output when notification file is empty/missing."""
-        result = subprocess.run(
-            [str(hook_env["script_path"])],
-            input="{}",  # Simulate stdin from Claude Code
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env={**os.environ, "HOME": str(hook_env["home"])},
-        )
-        assert result.returncode == 0
-        assert result.stdout.strip() == ""
-
-    def test_hook_reads_and_outputs_notifications(self, hook_env):
-        """Hook should read notifications and output valid JSON."""
-        msg = {
-            "conversation": "general",
-            "sender_key": "b1c2d3e4",
-            "sender_name": "TestBot",
-            "body": "Hello from the test!",
-        }
-        hook_env["notif_file"].write_text(json.dumps(msg) + "\n")
-
-        result = subprocess.run(
-            [str(hook_env["script_path"])],
-            input="{}",
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env={**os.environ, "HOME": str(hook_env["home"])},
-        )
-        assert result.returncode == 0
-
-        output = json.loads(result.stdout.strip())
-        assert "hookSpecificOutput" in output
-        assert "additionalContext" in output["hookSpecificOutput"]
-        ctx = output["hookSpecificOutput"]["additionalContext"]
+    def test_single_cue_formats(self):
+        cues = [
+            {
+                "conversation": "general",
+                "sender_key": "b1c2d3e4",
+                "sender_name": "TestBot",
+                "body": "Hello from the test!",
+            }
+        ]
+        proc = _run_formatter(cues)
+        assert proc.returncode == 0
+        out = json.loads(proc.stdout)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
         assert "#general" in ctx
         assert "@TestBot" in ctx
         assert "Hello from the test!" in ctx
 
-    def test_hook_truncates_notification_file(self, hook_env):
-        """After running, the notification file should be empty."""
-        msg = {"conversation": "general", "sender_key": "x", "body": "msg"}
-        hook_env["notif_file"].write_text(json.dumps(msg) + "\n")
-
-        subprocess.run(
-            [str(hook_env["script_path"])],
-            input="{}",
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env={**os.environ, "HOME": str(hook_env["home"])},
+    def test_sender_falls_back_to_key(self):
+        proc = _run_formatter(
+            [{"conversation": "g", "sender_key": "deadbeef", "body": "x"}]
         )
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "@deadbeef" in ctx
 
-        # File should exist but be empty
-        assert hook_env["notif_file"].exists()
-        assert hook_env["notif_file"].read_text().strip() == ""
+    def test_more_than_five_shows_overflow(self):
+        cues = [
+            {"conversation": "dev", "sender_name": f"User{i}", "body": f"m{i}"}
+            for i in range(8)
+        ]
+        proc = _run_formatter(cues)
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "and 3 more message(s)" in ctx
+        # Only the last 5 are shown.
+        assert "User7" in ctx
+        assert "User0" not in ctx
 
-    def test_hook_handles_multiple_messages(self, hook_env):
-        """Hook should summarize multiple messages."""
-        lines = []
-        for i in range(3):
-            msg = {
-                "conversation": "dev",
-                "sender_key": f"key{i}",
-                "sender_name": f"User{i}",
-                "body": f"Message number {i}",
-            }
-            lines.append(json.dumps(msg))
-        hook_env["notif_file"].write_text("\n".join(lines) + "\n")
+    def test_body_truncated_to_120(self):
+        long_body = "z" * 500
+        proc = _run_formatter([{"conversation": "g", "body": long_body}])
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "z" * 120 in ctx
+        assert "z" * 121 not in ctx
 
-        result = subprocess.run(
-            [str(hook_env["script_path"])],
-            input="{}",
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env={**os.environ, "HOME": str(hook_env["home"])},
+    def test_hostile_body_is_inert(self):
+        """A cue body containing newlines, quotes, unicode, braces and
+        shell/python metacharacters must surface as inert text — never
+        executed, never crash the formatter.
+
+        Regression: the old hook interpolated the body into a ``python3 -c``
+        source string, so a newline/quote produced a SyntaxError (the whole
+        notification was silently dropped) and ``$(...)``/backticks were a
+        command-injection vector. The body now arrives as parsed JSON data."""
+        sentinel = Path("/tmp/cc_pwned_xyz")
+        if sentinel.exists():
+            sentinel.unlink()
+
+        body = (
+            "l1\nl2 'q' \"dq\" café 日本語 {not:a,dict} $(touch /tmp/cc_pwned_xyz) `id`"
         )
-        output = json.loads(result.stdout.strip())
-        ctx = output["hookSpecificOutput"]["additionalContext"]
-        assert "#dev" in ctx
-        assert "User0" in ctx or "User1" in ctx or "User2" in ctx
+        proc = _run_formatter(
+            [
+                {
+                    "conversation": "general",
+                    "sender_name": "al'ice",
+                    "body": body,
+                }
+            ]
+        )
+        assert proc.returncode == 0, proc.stderr
+        out = json.loads(proc.stdout)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        assert "New messages" in ctx
+        assert "café 日本語" in ctx
+        # The injection payload is surfaced as inert text (within the 120-char
+        # truncation window), never executed.
+        assert "$(touch /tmp/cc_pwned_xyz)" in ctx
+        assert not sentinel.exists()
 
 
-# --- End-to-end: NotificationWriter cue -> real hook (F1) ---
+# --- End-to-end: endpoint -> formatter (the full HTTP delivery path) ---
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix shell test")
-class TestNotifierToHookEndToEnd:
-    """A cue written by NotificationWriter must parse cleanly through the real
-    hook and surface as additionalContext (closes the F1 dead-push loop)."""
+class TestEndpointToFormatterEndToEnd:
+    """A cue written by NotificationWriter must travel the full HTTP path:
+    drained by the /api/notifications endpoint and formatted by the hook's
+    python pass into additionalContext."""
 
     @pytest.fixture()
-    def hook_env(self, tmp_path, monkeypatch):
-        home = tmp_path / "fakehome"
-        home.mkdir()
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
-
-        notif_dir = home / ".claude-comms" / "notifications"
-        notif_dir.mkdir(parents=True)
-
-        script_content = _generate_unix_script(SAMPLE_KEY)
-        script_path = tmp_path / "hook.sh"
-        script_path.write_text(script_content)
-        script_path.chmod(script_path.stat().st_mode | stat.S_IXUSR)
-
-        return {"home": home, "notif_dir": notif_dir, "script_path": script_path}
-
-    def _run_hook(self, hook_env):
-        return subprocess.run(
-            [str(hook_env["script_path"])],
-            input="{}",
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env={**os.environ, "HOME": str(hook_env["home"])},
+    def env(self, tmp_path, monkeypatch):
+        notif_dir = tmp_path / "notifications"
+        notif_dir.mkdir()
+        monkeypatch.setattr(
+            "claude_comms.hook_installer._notification_dir",
+            lambda: notif_dir,
         )
+        app = Starlette(routes=[build_notifications_route({})])
+        return TestClient(app), notif_dir
 
-    def test_writer_cue_surfaces_in_hook_context(self, hook_env):
+    def test_writer_cue_surfaces_through_endpoint_and_formatter(self, env):
         from claude_comms.notifier import NotificationWriter
 
-        writer = NotificationWriter(
-            hook_env["notif_dir"], enabled=True, cue_on_broadcast=False
+        tc, notif_dir = env
+        writer = NotificationWriter(notif_dir, enabled=True, cue_on_broadcast=False)
+        assert (
+            writer.write(
+                {
+                    "id": "e2e1",
+                    "conv": "general",
+                    "sender": {"key": "b1c2d3e4", "name": "Alice", "type": "claude"},
+                    "recipients": [SAMPLE_KEY],
+                    "mentions": None,
+                    "body": "ping from the writer",
+                }
+            )
+            == 1
         )
-        msg = {
-            "id": "e2e1",
-            "conv": "general",
-            "sender": {"key": "b1c2d3e4", "name": "Alice", "type": "claude"},
-            "recipients": [SAMPLE_KEY],
-            "mentions": None,
-            "body": "ping from the writer",
-        }
-        assert writer.write(msg) == 1
 
-        result = self._run_hook(hook_env)
-        assert result.returncode == 0
-        output = json.loads(result.stdout.strip())
-        ctx = output["hookSpecificOutput"]["additionalContext"]
+        resp = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        assert resp.status_code == 200
+        proc = _run_formatter(resp.json()["cues"])
+        assert proc.returncode == 0
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "#general" in ctx
         assert "@Alice" in ctx
         assert "ping from the writer" in ctx
 
-    def test_multiline_unicode_cue_is_one_parseable_line(self, hook_env):
-        """A multi-line / non-ASCII body must be written as ONE physical line
-        that the hook's per-line ``json.load`` (step 4) parses without error.
-
-        This asserts the F1 writer contract directly. NOTE: the hook script's
-        downstream step-5 ``python3 -c "... '$SUMMARY' ..."`` interpolation
-        chokes on the multi-line *summary text* it builds — but that is a
-        pre-existing hook_installer.py defect (see worklog "Bugs noticed"),
-        independent of the writer's per-line correctness.
-        """
+    def test_hostile_writer_cue_survives_full_path(self, env):
         from claude_comms.notifier import NotificationWriter
 
-        writer = NotificationWriter(
-            hook_env["notif_dir"], enabled=True, cue_on_broadcast=False
-        )
-        body = 'first line\nsecond "quoted" line — café 日本語'
-        msg = {
-            "id": "e2e2",
-            "conv": "general",
-            "sender": {"key": "b1c2d3e4", "name": "Alice", "type": "claude"},
-            "recipients": [SAMPLE_KEY],
-            "mentions": None,
-            "body": body,
-        }
-        writer.write(msg)
+        tc, notif_dir = env
+        sentinel = Path("/tmp/cc_pwned_e2e")
+        if sentinel.exists():
+            sentinel.unlink()
 
-        raw = (hook_env["notif_dir"] / f"{SAMPLE_KEY}.jsonl").read_text(
-            encoding="utf-8"
-        )
-        physical = [ln for ln in raw.split("\n") if ln]
-        assert len(physical) == 1
-        # Exactly what the hook's step-4 per-line parser runs:
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys,json; print(json.load(sys.stdin).get('body',''))",
-            ],
-            input=physical[0],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert proc.returncode == 0
-        assert json.loads(physical[0])["body"] == body
-
-    def test_full_hook_survives_hostile_body(self, hook_env):
-        """The FULL generated hook must deliver a cue whose body contains
-        newlines, quotes, unicode, braces, and shell/python metacharacters.
-
-        Regression: step-5 used to interpolate the body into a ``python3 -c``
-        source string, so a newline/quote produced a SyntaxError (the whole
-        notification was silently dropped) and ``$(...)``/backticks were a
-        command-injection vector. The body is now passed via env var and parsed
-        in python — content is inert."""
-        from claude_comms.notifier import NotificationWriter
-
-        writer = NotificationWriter(
-            hook_env["notif_dir"], enabled=True, cue_on_broadcast=False
-        )
-        body = (
-            "l1\nl2 'q' \"dq\" café 日本語 {not:a,dict} $(touch /tmp/cc_pwned_xyz) `id`"
-        )
+        writer = NotificationWriter(notif_dir, enabled=True, cue_on_broadcast=False)
+        body = 'l1\nl2 "q" café 日本語 $(touch /tmp/cc_pwned_e2e) `id`'
         writer.write(
             {
                 "id": "hostile1",
@@ -617,12 +674,12 @@ class TestNotifierToHookEndToEnd:
                 "body": body,
             }
         )
-        result = self._run_hook(hook_env)
-        assert result.returncode == 0, result.stderr
-        out = json.loads(result.stdout)
-        ctx = out["hookSpecificOutput"]["additionalContext"]
+
+        resp = tc.get(f"/api/notifications/{SAMPLE_KEY}")
+        proc = _run_formatter(resp.json()["cues"])
+        assert proc.returncode == 0, proc.stderr
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "New messages" in ctx
         assert "café 日本語" in ctx
-        # The injection payload is surfaced as inert text, never executed.
-        assert "$(touch /tmp/cc_pwned_xyz)" in ctx
-        assert not Path("/tmp/cc_pwned_xyz").exists()
+        assert "$(touch /tmp/cc_pwned_e2e)" in ctx
+        assert not sentinel.exists()

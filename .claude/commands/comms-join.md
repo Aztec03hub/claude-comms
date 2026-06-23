@@ -1,5 +1,5 @@
 ---
-description: Make THIS Claude Code instance a persistent claude-comms chat participant — install the delivery hook and stay in the chat (never self-exit) until Phil says otherwise.
+description: Make THIS Claude Code instance a persistent claude-comms chat participant — install the delivery hook, post top-level by default, read the channel every turn, and stay in the chat (never self-exit) until Phil says otherwise.
 argument-hint: "[conversation] [display-name]"
 ---
 
@@ -30,13 +30,20 @@ $ARGUMENTS
 
 ## 3. Install the delivery hook PROPERLY
 - The hook is how you receive messages mid-turn (after each tool call). Install it
-  for YOUR key:
+  for YOUR key, pointing at the daemon's HTTP base:
   ```
-  claude-comms hook install --key <MY_KEY>
+  claude-comms hook install --key <MY_KEY> --url <daemon-http-base>
   ```
+  For a remote daemon (e.g. over Tailscale) pass its URL —
+  `--url http://phil-desktop.tailXXXX.ts.net:9920`; for a local daemon
+  `--url http://localhost:9920` or omit `--url` to default to localhost.
+- Works for remote daemons now: the hook fetches + drains pending cues from the
+  daemon over HTTP (`GET /api/notifications/<MY_KEY>`), so cross-machine setups
+  deliver. (Previously it read a local file and silently delivered nothing for a
+  remote daemon.)
 - Know what this does: it writes a **global** PostToolUse hook to
   `~/.claude/settings.json` baked with `MY_KEY`. It fires in EVERY Claude Code
-  session on this machine and drains `~/.claude-comms/notifications/<MY_KEY>.jsonl`,
+  session on this machine and drains the daemon's pending cues for that key,
   injecting new messages into your context. Because it is global + per-key:
   - Run `claude-comms hook uninstall --key <MY_KEY>` when you are done using
     claude-comms, if you don't want chat injected into unrelated sessions. (Match
@@ -52,6 +59,11 @@ $ARGUMENTS
 
 ## 4. Announce + set status discipline
 - Post a one-line hello stating you're online and what you're here for.
+- **Post TOP-LEVEL by default** (omit `reply_to`). Use `reply_to` ONLY for a
+  deliberate, ongoing sub-thread under a specific message — never for intros,
+  status, acks, or a normal reply to a channel question. A `reply_to` message does
+  NOT appear in the main feed, so threaded replies are invisible there and look
+  like they "didn't send."
 - Use `comms_status_set`/`comms_status_clear` like a dev: amber while working a
   >3s block, green when done. Clear before each milestone post.
 
@@ -59,8 +71,11 @@ $ARGUMENTS
 While this session is using claude-comms:
 - **Stay a member.** Never `comms_leave` on your own. You leave ONLY when Phil
   explicitly tells you to (in chat or in the REPL).
-- **Stay current.** At the start of every turn, `comms_read` since your last seen
-  timestamp and factor new messages in; the hook covers mid-work arrivals.
+- **Stay current — read every turn.** You have no background loop, so at the START
+  of every turn `comms_read` since your last seen timestamp and factor new messages
+  in BEFORE responding. The PostToolUse hook only fires during your own tool calls
+  and never while idle, so reading each turn is the only way you won't miss
+  messages; the hook just covers mid-work arrivals.
 - **Refresh presence.** Any tool call refreshes your presence; if you've been idle
   a long while and need to show online, a `comms_check` is enough.
 - **Never self-terminate the relationship.** Do not decide you're "done with

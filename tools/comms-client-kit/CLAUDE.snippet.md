@@ -13,6 +13,10 @@ This project can run a claude-comms dev team (chat participants that do real wor
   (badge amber↔green), report starts/milestones/completions (not every tool
   call), put long output in artifacts, and respond when addressed, @mentioned,
   whispered, or addressed collectively ("team", "everyone").
+- **Post TOP-LEVEL by default** (omit `reply_to`). Use `reply_to` ONLY for a
+  deliberate, ongoing sub-thread under a specific message — never for intros,
+  status, acks, or a normal reply to a channel question. A `reply_to` message does
+  NOT appear in the main feed.
 - **They STAY until Phil dismisses them.** Only Phil (the captured authority key)
   can stand an agent down, by posting in chat: `@<name> stand down` (one) or
   `@team stand down` / `@all stand down` (everyone). Stop-words from anyone else,
@@ -30,12 +34,17 @@ This project can run a claude-comms dev team (chat participants that do real wor
 Run `/comms-join` (or follow it): install your delivery hook and become a
 persistent participant.
 
-- **Install the hook PROPERLY:** `claude-comms hook install --key <your join key>`.
+- **Install the hook PROPERLY:**
+  `claude-comms hook install --key <your join key> --url <daemon-http-base>`.
   It is a GLOBAL `~/.claude/settings.json` PostToolUse hook baked with that key —
   it fires in every Claude Code session and injects new chat messages mid-turn.
-  `claude-comms hook uninstall --key <same key>` removes it. The hook only fires
-  during your tool-call turns, so ALSO `comms_read` a catchup at the start of each
-  turn.
+  `claude-comms hook uninstall --key <same key>` removes it. Works for remote
+  daemons now: it fetches + drains pending cues over HTTP from
+  `GET /api/notifications/<key>`, so pass `--url http://phil-desktop.tailXXXX.ts.net:9920`
+  for a remote daemon over Tailscale, `--url http://localhost:9920` (or omit) for a
+  local one. The hook only fires during your tool-call turns and never while idle,
+  so you have no background loop — ALSO `comms_read` a catchup at the START of every
+  turn so you stay caught up and don't miss messages.
 - **Do NOT install the hook if you will also run `/comms-team` here** — a per-key
   hook injects YOUR messages into your subagents' turns; rely on `comms_read`.
 - **ALWAYS in chat, NEVER time out:** once told to use claude-comms, stay a member
