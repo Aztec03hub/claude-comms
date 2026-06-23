@@ -2461,6 +2461,388 @@ def send(
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def _doctor_emit(passed: bool, check: str, detail: str, fix: str | None = None) -> None:
+    """Print one doctor check line: ``✓/✗ <check> — <detail> [Fix: <cmd>]``."""
+    mark = "[green]✓[/green]" if passed else "[red]✗[/red]"
+    line = f"{mark} {check} — {detail}"
+    if not passed and fix:
+        line += f" [yellow][Fix: {fix}][/yellow]"
+    console.print(line)
+
+
+def _port_owner(port: int) -> str | None:
+    """Best-effort: return a short description of who owns ``:port``.
+
+    Tries ``ss`` then ``lsof``; returns ``None`` if nothing is listening or no
+    tool is available. Used only for human-readable diagnostics.
+    """
+    for cmd in (
+        ["ss", "-tlnpH"],
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+    ):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout
+        except (FileNotFoundError, subprocess.SubprocessError):
+            continue
+        for raw in out.splitlines():
+            if (
+                f":{port} " in raw
+                or f":{port}\t" in raw
+                or raw.rstrip().endswith(f":{port}")
+            ):
+                return raw.strip()[:120]
+    return None
+
+
+def _doctor_can_bind(port: int, host: str = "127.0.0.1") -> bool:
+    """Return True if ``host:port`` can be bound (i.e. nothing is listening)."""
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+@app.command()
+def doctor() -> None:
+    """Self-check: print PASS/FAIL per check with an actionable fix.
+
+    The in-CLI mirror of the web "Connection diagnostics" panel. Verifies the
+    single-origin serving contract end-to-end: config + identity, the daemon,
+    the web origin, and that REST, MCP, and the broker WebSocket are all
+    reachable same-origin on the web port, plus the broker TCP socket, port
+    conflicts, and CSP sanity. Exits non-zero if any critical check fails.
+    """
+    import urllib.error
+    import urllib.request
+
+    console.print("[bold]claude-comms doctor[/bold]\n")
+
+    critical_failed = False
+
+    # ── 1. Config present + parseable + identity key set ──────────────────
+    config: dict[str, Any] | None = None
+    config_path = get_config_path()
+    if not config_path.exists():
+        _doctor_emit(
+            False, "Config", f"not found at {config_path}", "claude-comms init"
+        )
+        critical_failed = True
+    else:
+        try:
+            config = load_config(config_path)
+        except Exception as exc:
+            _doctor_emit(
+                False,
+                "Config",
+                f"failed to parse {config_path}: {exc}",
+                "claude-comms init",
+            )
+            critical_failed = True
+        else:
+            identity = config.get("identity", {}) or {}
+            key = identity.get("key")
+            if key:
+                _doctor_emit(
+                    True,
+                    "Config",
+                    f"loaded; identity {identity.get('name', '(unnamed)')} key={key}",
+                )
+            else:
+                _doctor_emit(
+                    False,
+                    "Config",
+                    "loaded but identity key is not set",
+                    "claude-comms init",
+                )
+                critical_failed = True
+
+    if config is None:
+        # Nothing further can be probed without config.
+        console.print("\n[red]Critical checks failed.[/red]")
+        raise typer.Exit(1)
+
+    web_cfg = config.get("web", {}) or {}
+    mcp_cfg = config.get("mcp", {}) or {}
+    broker_cfg = config.get("broker", {}) or {}
+    web_host = web_cfg.get("host", "127.0.0.1")
+    web_port = web_cfg.get("port", 9921)
+    # The probe must use a connectable host: a bind-all 0.0.0.0 means "reachable
+    # on every interface", so probe via loopback.
+    probe_host = "127.0.0.1" if web_host in ("0.0.0.0", "::", "") else web_host
+    web_origin = f"http://{probe_host}:{web_port}"
+
+    # ── 2. Daemon running ─────────────────────────────────────────────────
+    daemon_running = _is_daemon_running()
+    if daemon_running:
+        _doctor_emit(True, "Daemon", f"running (PID {_read_pid()})")
+    else:
+        _doctor_emit(False, "Daemon", "not running", "claude-comms start --web")
+        critical_failed = True
+
+    def _http_get(url: str, timeout: float = 3.0) -> tuple[int, bytes]:
+        """Return (status, body); status 0 on connection failure."""
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, b""
+        except Exception:
+            return 0, b""
+
+    def _http_post(url: str, payload: dict, timeout: float = 3.0) -> tuple[int, bytes]:
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode(),
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, b""
+        except Exception:
+            return 0, b""
+
+    # ── 3. Web origin reachable ───────────────────────────────────────────
+    if web_cfg.get("enabled", False):
+        status_code, _ = _http_get(f"{web_origin}/")
+        if status_code == 200:
+            _doctor_emit(True, "Web origin", f"GET {web_origin}/ → 200")
+        else:
+            _doctor_emit(
+                False,
+                "Web origin",
+                f"GET {web_origin}/ → {status_code or 'no response'}",
+                "claude-comms start --web",
+            )
+            critical_failed = True
+    else:
+        _doctor_emit(
+            False,
+            "Web origin",
+            "web UI disabled in config (web.enabled=false)",
+            "set web.enabled: true then claude-comms start --web",
+        )
+        critical_failed = True
+
+    # ── 4. REST same-origin ───────────────────────────────────────────────
+    status_code, body = _http_get(f"{web_origin}/api/capabilities")
+    rest_ok = False
+    if status_code == 200:
+        try:
+            json.loads(body)
+            rest_ok = True
+        except Exception:
+            rest_ok = False
+    if rest_ok:
+        _doctor_emit(
+            True,
+            "REST same-origin",
+            f"GET {web_origin}/api/capabilities → 200 JSON",
+        )
+    else:
+        _doctor_emit(
+            False,
+            "REST same-origin",
+            f"GET {web_origin}/api/capabilities → {status_code or 'no response'}",
+            "ensure daemon started with --web (Phase 1 co-mount)",
+        )
+        critical_failed = True
+
+    # ── 5. MCP same-origin ────────────────────────────────────────────────
+    mcp_payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "claude-comms-doctor", "version": "1"},
+        },
+    }
+    status_code, _ = _http_post(f"{web_origin}/mcp", mcp_payload)
+    if status_code == 200:
+        _doctor_emit(True, "MCP same-origin", f"POST {web_origin}/mcp → 200")
+    else:
+        _doctor_emit(
+            False,
+            "MCP same-origin",
+            f"POST {web_origin}/mcp → {status_code or 'no response'}",
+            "ensure daemon started with --web (Phase 1 co-mount)",
+        )
+        critical_failed = True
+
+    # ── 6. Broker WS same-origin (/mqtt) ──────────────────────────────────
+    async def _probe_ws() -> tuple[bool, str]:
+        """Open a WS to <web_origin>/mqtt (subprotocol mqtt) + send CONNECT.
+
+        Returns (ok, detail). ``ok`` means we got a CONNACK byte back.
+        """
+        try:
+            import websockets
+            from websockets import Subprotocol
+        except Exception:
+            return False, "websockets lib unavailable"
+        ws_url = f"ws://{probe_host}:{web_port}/mqtt"
+        # Minimal MQTT 3.1.1 CONNECT packet (clean session, keepalive 60s).
+        client_id = b"cc-doctor"
+        var_header = (
+            b"\x00\x04MQTT"  # protocol name
+            b"\x04"  # protocol level 4 (3.1.1)
+            b"\x02"  # connect flags: clean session
+            b"\x00\x3c"  # keepalive 60s
+        )
+        payload = len(client_id).to_bytes(2, "big") + client_id
+        body = var_header + payload
+        connect = b"\x10" + len(body).to_bytes(1, "big") + body
+        try:
+            async with websockets.connect(
+                ws_url,
+                subprotocols=[Subprotocol("mqtt")],
+                open_timeout=3,
+                close_timeout=2,
+            ) as ws:
+                await ws.send(connect)
+                resp = await asyncio.wait_for(ws.recv(), timeout=3)
+                if isinstance(resp, (bytes, bytearray)) and resp[:1] == b"\x20":
+                    return True, "CONNACK received"
+                return False, "no CONNACK (unexpected response)"
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+
+    try:
+        ws_ok, ws_detail = asyncio.run(_probe_ws())
+    except Exception as exc:
+        ws_ok, ws_detail = False, str(exc)
+    ws_target = f"ws://{probe_host}:{web_port}/mqtt"
+    if ws_ok:
+        _doctor_emit(True, "Broker WS same-origin", f"{ws_target} — {ws_detail}")
+    else:
+        _doctor_emit(
+            False,
+            "Broker WS same-origin",
+            f"{ws_target} — {ws_detail}",
+            "broker not started / Phase 2 /mqtt bridge missing",
+        )
+        critical_failed = True
+
+    # ── 7. Broker TCP ─────────────────────────────────────────────────────
+    broker_host = broker_cfg.get("host", "127.0.0.1")
+    broker_port = broker_cfg.get("port", 1883)
+    broker_probe_host = (
+        "127.0.0.1" if broker_host in ("0.0.0.0", "::", "") else broker_host
+    )
+    auth = broker_cfg.get("auth", {}) or {}
+
+    async def _probe_tcp() -> bool:
+        try:
+            import aiomqtt  # type: ignore[import-untyped]
+
+            kw: dict = {"hostname": broker_probe_host, "port": broker_port}
+            if auth.get("enabled") and auth.get("username") and auth.get("password"):
+                kw["username"] = auth["username"]
+                kw["password"] = auth["password"]
+            async with aiomqtt.Client(**kw):
+                return True
+        except Exception:
+            return False
+
+    try:
+        tcp_ok = asyncio.run(_probe_tcp())
+    except Exception:
+        tcp_ok = False
+    if tcp_ok:
+        _doctor_emit(True, "Broker TCP", f"connected {broker_probe_host}:{broker_port}")
+    else:
+        _doctor_emit(
+            False,
+            "Broker TCP",
+            f"cannot connect {broker_probe_host}:{broker_port}",
+            "broker crashed — check daemon log (claude-comms log)",
+        )
+        critical_failed = True
+
+    # ── 8. Port conflicts ─────────────────────────────────────────────────
+    # When the daemon is running, these ports SHOULD be busy (owned by us); a
+    # conflict only matters when the daemon is NOT running but a port is taken.
+    ws_port_cfg = broker_cfg.get("ws_port", 9001)
+    mcp_port_cfg = mcp_cfg.get("port", 9920)
+    port_specs = [
+        ("web", web_port),
+        ("mcp", mcp_port_cfg),
+        ("broker TCP", broker_port),
+        ("broker WS (:9001)", ws_port_cfg),
+    ]
+    if daemon_running:
+        _doctor_emit(
+            True,
+            "Port conflicts",
+            "daemon running — ports owned by claude-comms (skipped bind-test)",
+        )
+    else:
+        conflicts: list[str] = []
+        for label, port in port_specs:
+            if not _doctor_can_bind(port):
+                owner = _port_owner(port)
+                conflicts.append(
+                    f"{label} :{port} busy" + (f" ({owner})" if owner else "")
+                )
+        if conflicts:
+            _doctor_emit(
+                False,
+                "Port conflicts",
+                "; ".join(conflicts),
+                "stop the conflicting process or change ports in config",
+            )
+            critical_failed = True
+        else:
+            _doctor_emit(True, "Port conflicts", "all configured ports are free")
+
+    # ── 9. CSP sanity ─────────────────────────────────────────────────────
+    csp = build_csp(config)
+    connect_src = ""
+    for directive in csp.split(";"):
+        directive = directive.strip()
+        if directive.startswith("connect-src"):
+            connect_src = directive[len("connect-src") :].strip()
+            break
+    tokens = [t for t in connect_src.split() if t]
+    extra_tokens = [t for t in tokens if t != "'self'"]
+    if not extra_tokens:
+        shown = connect_src or "'self'"
+        _doctor_emit(True, "CSP sanity", f"connect-src {shown}")
+    else:
+        _doctor_emit(
+            False,
+            "CSP sanity",
+            f"connect-src has non-'self' entries: {' '.join(extra_tokens)}",
+            "remove web.api_base / web.csp_extra_connect_src for single-origin",
+        )
+        # CSP drift is a warning, not a hard failure — do not flip critical.
+
+    console.print()
+    if critical_failed:
+        console.print("[red]One or more critical checks failed.[/red]")
+        raise typer.Exit(1)
+    console.print("[green]All checks passed.[/green]")
+
+
+# ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 

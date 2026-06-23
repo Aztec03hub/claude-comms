@@ -32,6 +32,43 @@
   let desktopNotifications = $state(Notification?.permission === 'granted');
   let inAppToasts = $state(untrack(() => store?.inAppToasts ?? true));
 
+  // Connection diagnostics (single-origin design §6): the in-UI mirror of the
+  // ``claude-comms doctor`` CLI. Refresh once when the panel mounts so the
+  // readout reflects the current state of each leg; the user can re-run it.
+  let diagnosticsRunning = $state(false);
+  async function refreshDiagnostics() {
+    if (!store || typeof store.runDiagnostics !== 'function') return;
+    diagnosticsRunning = true;
+    try {
+      await store.runDiagnostics();
+    } finally {
+      diagnosticsRunning = false;
+    }
+  }
+  // Kick an initial probe on mount (untracked so it runs exactly once, not on
+  // every diagnostics mutation).
+  $effect(() => {
+    untrack(() => refreshDiagnostics());
+  });
+  // The leg labels + the value each maps to in store.diagnostics. ``null`` is
+  // rendered as "checking", true as ✓, false as ✗.
+  const DIAG_LEGS = [
+    { key: 'web', label: 'Web server' },
+    { key: 'rest', label: 'REST API' },
+    { key: 'mcp', label: 'MCP' },
+    { key: 'broker', label: 'Broker' },
+  ];
+  function diagSymbol(state) {
+    if (state === true) return '✓';
+    if (state === false) return '✗';
+    return '…';
+  }
+  function diagClass(state) {
+    if (state === true) return 'diag-ok';
+    if (state === false) return 'diag-fail';
+    return 'diag-unknown';
+  }
+
   /**
    * Inline rename status surfaced near the name input under aria-live
    * polite. `kind` discriminates style classes; `text` is the rendered
@@ -303,6 +340,33 @@
           {store?.connected ? 'Connected' : 'Disconnected'}
         </span>
       </div>
+
+      <!-- Connection diagnostics (single-origin design §6): the in-UI mirror
+           of `claude-comms doctor`. Shows which leg (web / REST / MCP / broker)
+           is reachable so a failure is self-explaining. -->
+      <div class="setting-row diag-row">
+        <span class="setting-label">Connection diagnostics</span>
+        <button
+          type="button"
+          class="diag-refresh-btn"
+          data-testid="diagnostics-refresh"
+          onclick={refreshDiagnostics}
+          disabled={diagnosticsRunning}
+          aria-label="Re-run connection diagnostics"
+        >
+          {diagnosticsRunning ? 'Checking…' : 'Re-check'}
+        </button>
+      </div>
+      <ul class="diag-list" data-testid="connection-diagnostics" aria-live="polite">
+        {#each DIAG_LEGS as leg (leg.key)}
+          <li class="diag-item">
+            <span class="diag-symbol {diagClass(store?.diagnostics?.[leg.key])}" aria-hidden="true">
+              {diagSymbol(store?.diagnostics?.[leg.key])}
+            </span>
+            <span class="diag-leg-label">{leg.label}</span>
+          </li>
+        {/each}
+      </ul>
     </div>
   </div>
 </div>
@@ -527,6 +591,60 @@
 
   .disconnected {
     color: #ef4444;
+  }
+
+  /* Connection diagnostics readout (single-origin design §6). */
+  .diag-row {
+    align-items: center;
+  }
+  .diag-refresh-btn {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-deepest, var(--bg-surface));
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: var(--transition-fast);
+  }
+  .diag-refresh-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--text-faint);
+  }
+  .diag-refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .diag-list {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+  }
+  .diag-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .diag-symbol {
+    font-weight: 700;
+    width: 12px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .diag-symbol.diag-ok {
+    color: #22c55e;
+  }
+  .diag-symbol.diag-fail {
+    color: #ef4444;
+  }
+  .diag-symbol.diag-unknown {
+    color: var(--text-faint);
   }
 
   /* Toggle Switch */

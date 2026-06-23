@@ -931,9 +931,19 @@
       <div class="parse-failure-banner" role="alert" data-testid="server-unreachable-banner">
         <span class="parse-failure-icon">⚠</span>
         <span class="parse-failure-text">
-          Server unreachable — channels unavailable. The page will refresh
-          the channel list once the daemon comes back online.
+          Can't reach the claude-comms daemon{store.pageOrigin ? ` at ${store.pageOrigin}` : ''}.
+          Is <code>claude-comms start --web</code> running? The channel list
+          refreshes automatically once the daemon is back.
         </span>
+        <button
+          type="button"
+          class="banner-retry-btn"
+          data-testid="server-unreachable-retry"
+          onclick={() => store.connect()}
+          aria-label="Retry connecting to the daemon"
+        >
+          Retry
+        </button>
       </div>
     {/if}
 
@@ -1372,6 +1382,31 @@
     border-radius: 3px;
     font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
     font-size: 11px;
+  }
+  /* Retry affordance on the server-unreachable banner (single-origin
+   * diagnostics §6). Restrained ember styling so it reads as an action
+   * without dominating the warning banner. */
+  .banner-retry-btn {
+    flex-shrink: 0;
+    margin-left: auto;
+    align-self: center;
+    background: rgba(245, 158, 11, 0.16);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: var(--ember-400, #f59e0b);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .banner-retry-btn:hover {
+    background: rgba(245, 158, 11, 0.26);
+    border-color: rgba(245, 158, 11, 0.6);
+  }
+  .banner-retry-btn:focus-visible {
+    outline: 2px solid rgba(245, 158, 11, 0.8);
+    outline-offset: 1px;
   }
 
   /* Set-your-name banner. Sits at the top of the main pane above
