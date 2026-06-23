@@ -76,11 +76,36 @@ from claude_comms.conversation import (
     list_all_conversations,
 )
 from claude_comms.mcp_summaries import (
+    summarize_artifact_create,
+    summarize_artifact_delete,
+    summarize_artifact_get,
+    summarize_artifact_list,
+    summarize_artifact_update,
     summarize_check,
+    summarize_conversation_archive,
+    summarize_conversation_create,
+    summarize_conversation_delete,
+    summarize_conversation_unarchive,
+    summarize_conversation_update,
+    summarize_conversations,
+    summarize_dm_open,
+    summarize_get_channel_role,
     summarize_history,
+    summarize_invite,
+    summarize_join,
+    summarize_kick,
+    summarize_leave,
     summarize_members,
+    summarize_profile_status_clear,
+    summarize_profile_status_set,
+    summarize_react,
+    summarize_reactions_get,
     summarize_read,
     summarize_send,
+    summarize_status_clear,
+    summarize_status_set,
+    summarize_thread_read,
+    summarize_update_name,
 )
 from claude_comms.presence import PresenceManager
 from claude_comms.notifier import NotificationWriter
@@ -1071,7 +1096,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # Register tools
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_join(
         key: Annotated[
             str | None,
@@ -1085,7 +1110,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             str | None,
             Field(description="Display name (required on first call)"),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Join a conversation. Returns your participant key. Call with name on first use; key on subsequent calls."""
         result = await tool_comms_join(
             _get_registry(),
@@ -1109,15 +1134,16 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             )
         if not result.get("error"):
             _touch(result.get("key"))
-        return result
+        return _concise(result, summarize_join(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_leave(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to leave")],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Leave a conversation."""
-        return tool_comms_leave(_get_registry(), key=key, conversation=conversation)
+        result = tool_comms_leave(_get_registry(), key=key, conversation=conversation)
+        return _concise(result, summarize_leave(result))
 
     @mcp.tool(structured_output=False)
     async def comms_send(
@@ -1243,7 +1269,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         )
         return _concise(result, summarize_read(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_thread_read(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
@@ -1260,7 +1286,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             str | None,
             Field(description="ISO timestamp to read replies after"),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Read replies inside a single thread.
 
         Returns ``{conversation, root, replies, count, has_more}``. The
@@ -1271,7 +1297,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         this root.
         """
         _touch(key)
-        return tool_comms_thread_read(
+        result = tool_comms_thread_read(
             _get_registry(),
             _get_store(),
             key=key,
@@ -1280,6 +1306,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             count=count,
             since=since,
         )
+        return _concise(result, summarize_thread_read(result))
 
     @mcp.tool(structured_output=False)
     def comms_check(
@@ -1330,7 +1357,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         result = tool_comms_members(_get_registry(), key=key, conversation=conversation)
         return _concise(result, summarize_members(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_status_set(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
@@ -1348,7 +1375,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 description="Seconds until the status auto-expires. Omit to use the server default (presence.activity_ttl_seconds, default 120); hard cap presence.activity_ttl_max_seconds (default 300)."
             ),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Set an ephemeral activity signal ('thinking', 'reading', etc.) on your connections.
 
         Status is presence, not content: it lives only as long as the activity TTL or your
@@ -1365,7 +1392,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         presence_cfg = config.get("presence", {})
         default_ttl = presence_cfg.get("activity_ttl_seconds", 120)
         max_ttl = presence_cfg.get("activity_ttl_max_seconds", 300)
-        return await tool_comms_status_set(
+        result = await tool_comms_status_set(
             _get_registry(),
             key=key,
             conversation=conversation,
@@ -1374,25 +1401,27 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             max_ttl_seconds=max_ttl,
             publish_fn=_publish_fn,
         )
+        return _concise(result, summarize_status_set(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_status_clear(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation in which to clear status")
         ],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Clear any active activity signal on your connections.
 
         Idempotent: safe to call when no activity is set.
         """
         _touch(key)
-        return await tool_comms_status_clear(
+        result = await tool_comms_status_clear(
             _get_registry(),
             key=key,
             conversation=conversation,
             publish_fn=_publish_fn,
         )
+        return _concise(result, summarize_status_clear(result))
 
     # ── v0.4.2 Step 3.14, Wave A2 re-issue post-§I.18-collision-rename ──
     # Profile status is the DURABLE per-participant ornament Wave E's
@@ -1402,7 +1431,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     # surface intentionally omits a ``key`` argument — caller identity
     # is single-tenant via ``_config["identity"]["key"]``.
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_profile_status_set(
         emoji: Annotated[
             str | None,
@@ -1421,7 +1450,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Set the caller's durable profile-status triplet.
 
         Persists ``profile_status_emoji`` / ``profile_status_text`` /
@@ -1435,12 +1464,10 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         assert _config is not None, "MCP server config not initialised"
         caller_key = _config.get("identity", {}).get("key")
         if not caller_key:
-            return {
-                "error": True,
-                "message": "Daemon config missing identity.key.",
-            }
+            err = {"error": True, "message": "Daemon config missing identity.key."}
+            return _concise(err, summarize_profile_status_set(err))
         _touch(caller_key)
-        return await tool_comms_profile_status_set(
+        result = await tool_comms_profile_status_set(
             _get_registry(),
             key=caller_key,
             emoji=emoji,
@@ -1448,9 +1475,10 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             expires_at=expires_at,
             publish_fn=_publish_fn,
         )
+        return _concise(result, summarize_profile_status_set(result))
 
-    @mcp.tool()
-    async def comms_profile_status_clear() -> dict[str, Any]:
+    @mcp.tool(structured_output=False)
+    async def comms_profile_status_clear() -> CallToolResult:
         """Clear the caller's profile-status triplet.
 
         Idempotent. Broadcasts the cleared payload so subscribers drop
@@ -1459,18 +1487,17 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         assert _config is not None, "MCP server config not initialised"
         caller_key = _config.get("identity", {}).get("key")
         if not caller_key:
-            return {
-                "error": True,
-                "message": "Daemon config missing identity.key.",
-            }
+            err = {"error": True, "message": "Daemon config missing identity.key."}
+            return _concise(err, summarize_profile_status_clear(err))
         _touch(caller_key)
-        return await tool_comms_profile_status_clear(
+        result = await tool_comms_profile_status_clear(
             _get_registry(),
             key=caller_key,
             publish_fn=_publish_fn,
         )
+        return _concise(result, summarize_profile_status_clear(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_react(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
@@ -1492,7 +1519,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 description="Operation: 'add', 'remove', or 'toggle' (default). Toggle resolves against current state."
             ),
         ] = "toggle",
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Add, remove, or toggle a reaction on a message.
 
         Reactions persist in the conversation's reactions log and broadcast on
@@ -1505,7 +1532,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
-        return await tool_comms_react(
+        result = await tool_comms_react(
             _get_registry(),
             _publish_fn,
             _get_reactions_store,
@@ -1515,54 +1542,58 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             emoji=emoji,
             op=op,
         )
+        return _concise(result, summarize_react(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_reactions_get(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation containing the message")
         ],
         message_id: Annotated[str, Field(description="Target message UUID")],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """List current reactions on a message.
 
         Returns ``{"reactions": {emoji: [actor_key, ...]}}``. Empty when the
         message has never received a reaction.
         """
         _touch(key)
-        return tool_comms_reactions_get(
+        result = tool_comms_reactions_get(
             _get_registry(),
             _get_reactions_store,
             key=key,
             conversation=conversation,
             message_id=message_id,
         )
+        return _concise(result, summarize_reactions_get(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_conversations(
         key: Annotated[str, Field(description="Your participant key")],
         all: Annotated[
             bool, Field(description="If true, list ALL conversations (not just joined)")
         ] = False,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """List all conversations you have joined with unread counts. Use all=true to discover all conversations."""
         _touch(key)
-        return tool_comms_conversations(
+        result = tool_comms_conversations(
             _get_registry(),
             _get_store(),
             key=key,
             all=all,
             conv_data_dir=_get_conv_data_dir(),
         )
+        return _concise(result, summarize_conversations(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_update_name(
         key: Annotated[str, Field(description="Your participant key")],
         new_name: Annotated[str, Field(description="New display name")],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Change your display name. Your key remains the same."""
         _touch(key)
-        return tool_comms_update_name(_get_registry(), key=key, new_name=new_name)
+        result = tool_comms_update_name(_get_registry(), key=key, new_name=new_name)
+        return _concise(result, summarize_update_name(result))
 
     @mcp.tool(structured_output=False)
     def comms_history(
@@ -1588,7 +1619,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         )
         return _concise(result, summarize_history(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_artifact_create(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
@@ -1603,11 +1634,11 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         content: Annotated[
             str, Field(description="Initial content (markdown, code, etc.)")
         ],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Create a new collaborative artifact in a conversation. Returns artifact metadata."""
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
-        return await tool_comms_artifact_create(
+        result = await tool_comms_artifact_create(
             _get_registry(),
             _publish_fn,
             key=key,
@@ -1618,8 +1649,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             content=content,
             data_dir=_get_data_dir(),
         )
+        return _concise(result, summarize_artifact_create(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_artifact_update(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
@@ -1632,11 +1664,11 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 description="Expected current version for concurrency check (optional)"
             ),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Update an artifact with new content. Optionally check base_version for concurrency safety."""
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
-        return await tool_comms_artifact_update(
+        result = await tool_comms_artifact_update(
             _get_registry(),
             _publish_fn,
             key=key,
@@ -1647,17 +1679,18 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             base_version=base_version,
             data_dir=_get_data_dir(),
         )
+        return _concise(result, summarize_artifact_update(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_artifact_delete(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
         name: Annotated[str, Field(description="Artifact slug to delete")],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Delete an artifact and all its versions from a conversation."""
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
-        return await tool_comms_artifact_delete(
+        result = await tool_comms_artifact_delete(
             _get_registry(),
             _publish_fn,
             key=key,
@@ -1665,8 +1698,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             name=name,
             data_dir=_get_data_dir(),
         )
+        return _concise(result, summarize_artifact_delete(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_artifact_get(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
@@ -1680,10 +1714,10 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         limit: Annotated[
             int | None, Field(description="Max characters to return (default: 50000)")
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Read an artifact's content with optional chunked pagination. Returns content chunk + version metadata."""
         _touch(key)
-        return tool_comms_artifact_get(
+        result = tool_comms_artifact_get(
             _get_registry(),
             key=key,
             conversation=conversation,
@@ -1693,31 +1727,33 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             limit=limit,
             data_dir=_get_data_dir(),
         )
+        return _concise(result, summarize_artifact_get(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_artifact_list(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Target conversation")],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """List all artifacts in a conversation with summary metadata (no content)."""
         _touch(key)
-        return tool_comms_artifact_list(
+        result = tool_comms_artifact_list(
             _get_registry(),
             key=key,
             conversation=conversation,
             data_dir=_get_data_dir(),
         )
+        return _concise(result, summarize_artifact_list(result))
 
     # -- Conversation discovery tools --
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_conversation_create(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="New conversation slug (lowercase, hyphens)")
         ],
         topic: Annotated[str, Field(description="Conversation topic/description")] = "",
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Create a new conversation with optional topic. Auto-joins you and all human participants."""
         _touch(key)
         assert _publish_fn is not None
@@ -1739,9 +1775,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 topic=topic,
                 creator_key=key,
             )
-        return result
+        return _concise(result, summarize_conversation_create(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_conversation_update(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to update")],
@@ -1797,7 +1833,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Update one or more of a conversation's mutable fields.
 
         All update fields are optional; pass at least one. The 'name' field
@@ -1836,9 +1872,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 name=conversation,
                 topic=topic,
             )
-        return result
+        return _concise(result, summarize_conversation_update(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def comms_get_channel_role(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
@@ -1853,7 +1889,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Return the per-channel role for the caller or a target participant.
 
         Caller must be a member of the conversation. Unknown (conversation,
@@ -1861,15 +1897,16 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         default-safe semantics.
         """
         _touch(key)
-        return tool_comms_get_channel_role(
+        result = tool_comms_get_channel_role(
             _get_registry(),
             _get_registry_store(),
             key=key,
             conversation=conversation,
             target_participant_key=target_participant_key,
         )
+        return _concise(result, summarize_get_channel_role(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_conversation_delete(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to delete")],
@@ -1883,11 +1920,11 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = False,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Soft-delete a conversation. Creator-only. Two-phase: call with confirm=False first to get counts, then confirm=True to delete."""
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
-        return await tool_comms_conversation_delete(
+        result = await tool_comms_conversation_delete(
             _get_registry(),
             _get_store(),
             _publish_fn,
@@ -1896,8 +1933,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             confirm=confirm,
             conv_data_dir=_get_conv_data_dir(),
         )
+        return _concise(result, summarize_conversation_delete(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_conversation_archive(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation slug to archive")],
@@ -1911,7 +1949,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 )
             ),
         ] = False,
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Archive a conversation; preserve history, eject members, block new sends.
 
         Creator-only in v0.4.0. Two-phase: call with ``confirm=False`` first
@@ -1942,15 +1980,15 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 archived_by=result.get("archived_by"),
                 evicted_keys=result.get("evicted_keys") or [],
             )
-        return result
+        return _concise(result, summarize_conversation_archive(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_conversation_unarchive(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[
             str, Field(description="Conversation slug to unarchive")
         ],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Unarchive a conversation; reverse the archive state flip.
 
         Creator-only in v0.4.0. Restores the conversation to the live
@@ -1972,19 +2010,19 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
                 event_type="unarchived",
                 conversation_id=conversation,
             )
-        return result
+        return _concise(result, summarize_conversation_unarchive(result))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_invite(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to invite to")],
         target_name: Annotated[str, Field(description="Name of participant to invite")],
         message: Annotated[str, Field(description="Optional invite message")] = "",
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Invite a participant to a conversation. Posts invite notification in #general."""
         _touch(key)
         assert _publish_fn is not None
-        return await tool_comms_invite(
+        result = await tool_comms_invite(
             _get_registry(),
             _publish_fn,
             key=key,
@@ -1993,15 +2031,16 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             message=message,
             conv_data_dir=_get_conv_data_dir(),
         )
+        return _concise(result, summarize_invite(result, target_name=target_name))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_kick(
         key: Annotated[str, Field(description="Your participant key")],
         conversation: Annotated[str, Field(description="Conversation to kick from")],
         target_key: Annotated[
             str, Field(description="Participant key (8 hex chars) to eject")
         ],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Eject a participant from a conversation. Owner / admin only.
 
         Authorization gates on the caller's per-channel role from the
@@ -2011,7 +2050,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """
         _touch(key)
         assert _publish_fn is not None
-        return await tool_comms_kick(
+        result = await tool_comms_kick(
             _get_registry(),
             _publish_fn,
             _get_registry_store(),
@@ -2020,14 +2059,17 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             target_key=target_key,
             conv_data_dir=_get_conv_data_dir(),
         )
+        target = _get_registry().get(target_key)
+        target_name = target.name if target else ""
+        return _concise(result, summarize_kick(result, target_name=target_name))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     async def comms_dm_open(
         key: Annotated[str, Field(description="Your participant key")],
         target_key: Annotated[
             str, Field(description="Participant key (8 hex chars) to DM")
         ],
-    ) -> dict[str, Any]:
+    ) -> CallToolResult:
         """Open (or look up) the deterministic two-party DM channel.
 
         DM slug is ``dm-{lo}-{hi}`` where the two participant keys are
@@ -2038,7 +2080,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
         """
         _touch(key)
         assert _publish_fn is not None
-        return await tool_comms_dm_open(
+        result = await tool_comms_dm_open(
             _get_registry(),
             _publish_fn,
             _get_registry_store(),
@@ -2046,6 +2088,9 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             target_key=target_key,
             conv_data_dir=_get_conv_data_dir(),
         )
+        target = _get_registry().get(target_key)
+        target_name = target.name if target else ""
+        return _concise(result, summarize_dm_open(result, target_name=target_name))
 
     return mcp
 

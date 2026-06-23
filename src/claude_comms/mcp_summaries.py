@@ -20,8 +20,28 @@ from typing import Any
 
 
 def _is_error(result: dict[str, Any]) -> bool:
-    """True when *result* is an ``_error()``-shaped dict."""
+    """True when *result* is an ``_error()``-shaped dict.
+
+    Both error envelopes register as truthy: the standard
+    ``{"error": True, "message": ...}`` and the string-discriminator shape
+    ``{"error": "<reason>", ...}`` used by the conversation-lifecycle tools.
+    """
     return bool(result.get("error"))
+
+
+def _err_msg(result: dict[str, Any]) -> str:
+    """Best-effort human reason from either error envelope.
+
+    Prefers the ``message`` field; falls back to the ``error`` discriminator
+    string (e.g. ``"not_authorized"``); finally a generic fallback.
+    """
+    msg = result.get("message")
+    if msg:
+        return str(msg)
+    err = result.get("error")
+    if isinstance(err, str) and err:
+        return err
+    return "unknown error"
 
 
 _IRREGULAR_PLURALS = {"reply": "replies"}
@@ -262,3 +282,489 @@ def summarize_send(result: dict[str, Any]) -> str:
         line += f" · @{_names_clause(mention_names)}"
 
     return line
+
+
+def _short_id(msg_id: str | None, length: int = 8) -> str:
+    """First *length* chars of a message/root id; ``?`` when missing."""
+    if not msg_id:
+        return "?"
+    return str(msg_id)[:length]
+
+
+# --------------------------------------------------------------------------- #
+# comms_join
+# --------------------------------------------------------------------------- #
+def summarize_join(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_join`` result dict.
+
+    Success shape: ``{key, name, type, conversation, status:'joined'}``.
+    """
+    if _is_error(result):
+        return f"⚠️ join failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    name = result.get("name", "?")
+    key = result.get("key", "?")
+    return f"✅ joined #{conv} as {name} ({key})"
+
+
+# --------------------------------------------------------------------------- #
+# comms_leave
+# --------------------------------------------------------------------------- #
+def summarize_leave(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_leave`` result dict.
+
+    Shape: ``{status:'left'|'not_a_member', conversation}``.
+    """
+    if _is_error(result):
+        return f"⚠️ leave failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    if result.get("status") == "not_a_member":
+        return f"\U0001f44b not a member of #{conv} (nothing to leave)"
+    return f"\U0001f44b left #{conv}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_update_name
+# --------------------------------------------------------------------------- #
+def summarize_update_name(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_update_name`` result dict.
+
+    Success shape: ``{key, name, status:'updated'}``.
+    """
+    if _is_error(result):
+        return f"⚠️ name update failed: {_err_msg(result)}"
+    name = result.get("name", "?")
+    return f"✏️ display name set to {name}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_conversations
+# --------------------------------------------------------------------------- #
+def summarize_conversations(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_conversations`` result dict.
+
+    Shape: ``{conversations:[{conversation, unread_count, total_messages}]}``
+    and, when ``all=True``, an additional ``all_conversations`` list whose
+    entries carry ``{name, archived, ...}``.
+    """
+    if _is_error(result):
+        return f"⚠️ conversations failed: {_err_msg(result)}"
+
+    convs = result.get("conversations") or []
+    all_convs = result.get("all_conversations")
+
+    if all_convs is not None:
+        total = len(all_convs)
+        archived = sum(1 for c in all_convs if c.get("archived"))
+        names = [c.get("name") or "?" for c in all_convs]
+    else:
+        total = len(convs)
+        archived = 0
+        names = [c.get("conversation") or "?" for c in convs]
+
+    if total == 0:
+        return "\U0001f5c2 no conversations"
+
+    line = (
+        f"\U0001f5c2 {total} {_plural(total, 'conversation')}: {_names_clause(names)}"
+    )
+    if archived:
+        line += f" ({archived} archived)"
+    return line
+
+
+# --------------------------------------------------------------------------- #
+# comms_conversation_create
+# --------------------------------------------------------------------------- #
+def summarize_conversation_create(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_conversation_create`` result dict.
+
+    Success shape: ``{status:'created', conversation, topic}``.
+    """
+    if _is_error(result):
+        return f"⚠️ create failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    return f"➕ created #{conv}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_conversation_update
+# --------------------------------------------------------------------------- #
+def summarize_conversation_update(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_conversation_update`` result dict.
+
+    Success shape: ``{status:'updated', conversation, updated_fields:[...]}``.
+    """
+    if _is_error(result):
+        return f"⚠️ update failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    fields = result.get("updated_fields") or []
+    if fields:
+        return f"✏️ updated #{conv} ({', '.join(fields)})"
+    return f"✏️ updated #{conv}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_conversation_delete
+# --------------------------------------------------------------------------- #
+def summarize_conversation_delete(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_conversation_delete`` result dict.
+
+    Success uses ``{deleted: True, conversation_id}``. ``confirm=False``
+    pre-flight returns ``{error:'confirm_required', message_count, member_count}``
+    which is surfaced as a pre-flight prompt, not a failure.
+    """
+    if result.get("error") == "confirm_required":
+        msgs = result.get("message_count", 0)
+        members = result.get("member_count", 0)
+        return (
+            f"❓ confirm delete: {msgs} {_plural(msgs)}, "
+            f"{members} {_plural(members, 'member')} (re-call confirm=True)"
+        )
+    if _is_error(result) or not result.get("deleted"):
+        return f"⚠️ delete failed: {_err_msg(result)}"
+    conv = result.get("conversation_id", "?")
+    return f"\U0001f5d1 deleted #{conv}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_conversation_archive
+# --------------------------------------------------------------------------- #
+def summarize_conversation_archive(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_conversation_archive`` result dict.
+
+    Success uses ``{archived: True, conversation_id, evicted_keys, ...}``.
+    ``confirm=False`` returns ``{error:'confirm_required', ...}`` (pre-flight,
+    not a failure); ``already_archived`` is a benign no-op.
+    """
+    if result.get("error") == "confirm_required":
+        msgs = result.get("message_count", 0)
+        members = result.get("member_count", 0)
+        return (
+            f"❓ confirm archive: ejects {members} "
+            f"{_plural(members, 'member')}, {msgs} {_plural(msgs)} "
+            "(re-call confirm=True)"
+        )
+    if _is_error(result):
+        return f"⚠️ archive failed: {_err_msg(result)}"
+    conv = result.get("conversation_id", "?")
+    if result.get("status") == "already_archived":
+        return f"\U0001f4e6 #{conv} already archived"
+    if not result.get("archived"):
+        return f"⚠️ archive failed: {_err_msg(result)}"
+    evicted = len(result.get("evicted_keys") or [])
+    line = f"\U0001f4e6 archived #{conv}"
+    if evicted:
+        line += f" ({evicted} {_plural(evicted, 'member')} ejected)"
+    return line
+
+
+# --------------------------------------------------------------------------- #
+# comms_conversation_unarchive
+# --------------------------------------------------------------------------- #
+def summarize_conversation_unarchive(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_conversation_unarchive`` result dict.
+
+    Success uses ``{archived: False, conversation_id}``; ``already_live`` is a
+    benign no-op.
+    """
+    if _is_error(result):
+        return f"⚠️ unarchive failed: {_err_msg(result)}"
+    conv = result.get("conversation_id", "?")
+    if result.get("status") == "already_live":
+        return f"\U0001f4e4 #{conv} already live"
+    return f"\U0001f4e4 unarchived #{conv}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_invite
+# --------------------------------------------------------------------------- #
+def summarize_invite(result: dict[str, Any], target_name: str = "") -> str:
+    """Summarize a ``tool_comms_invite`` result dict.
+
+    Success shape: ``{status:'invited'|'already_member'}``. The result carries
+    no name or conversation, so the wrapper passes ``target_name`` through.
+    """
+    if _is_error(result):
+        return f"⚠️ invite failed: {_err_msg(result)}"
+    who = target_name or "participant"
+    if result.get("status") == "already_member":
+        return f"\U0001f4e8 {who} is already a member"
+    return f"\U0001f4e8 invited {who}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_kick
+# --------------------------------------------------------------------------- #
+def summarize_kick(result: dict[str, Any], target_name: str = "") -> str:
+    """Summarize a ``tool_comms_kick`` result dict.
+
+    Success shape: ``{status:'kicked', target_key, conversation}``. The result
+    carries no display name, so the wrapper passes ``target_name`` through.
+    """
+    if _is_error(result):
+        return f"\U0001f6aa kick failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    who = target_name or result.get("target_key") or "participant"
+    return f"\U0001f6aa kicked {who} from #{conv}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_dm_open
+# --------------------------------------------------------------------------- #
+def summarize_dm_open(result: dict[str, Any], target_name: str = "") -> str:
+    """Summarize a ``tool_comms_dm_open`` result dict.
+
+    Success shape: ``{status:'opened'|'existed', conversation}``.
+    """
+    if _is_error(result):
+        return f"⚠️ DM open failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    who = target_name or "participant"
+    verb = "DM exists with" if result.get("status") == "existed" else "DM with"
+    return f"\U0001f4ac {verb} {who} (#{conv})"
+
+
+# --------------------------------------------------------------------------- #
+# comms_artifact_create
+# --------------------------------------------------------------------------- #
+def summarize_artifact_create(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_artifact_create`` result dict.
+
+    Success shape: ``{status:'created', name, title, version:1}``.
+    """
+    if _is_error(result):
+        return f"⚠️ artifact create failed: {_err_msg(result)}"
+    name = result.get("name", "?")
+    version = result.get("version", 1)
+    return f"\U0001f4c4 created artifact '{name}' v{version}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_artifact_update
+# --------------------------------------------------------------------------- #
+def summarize_artifact_update(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_artifact_update`` result dict.
+
+    Success shape: ``{status:'updated', name, version, ...}``. Version
+    conflicts come back as ``{error:True, latest_version, latest_author}``.
+    """
+    if result.get("latest_version") is not None and _is_error(result):
+        latest = result.get("latest_version")
+        author = result.get("latest_author") or "?"
+        return f"⚠️ artifact conflict: current is v{latest} (by {author}), re-read"
+    if _is_error(result):
+        return f"⚠️ artifact update failed: {_err_msg(result)}"
+    name = result.get("name", "?")
+    version = result.get("version", "?")
+    return f"\U0001f4c4 '{name}' → v{version}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_artifact_get
+# --------------------------------------------------------------------------- #
+def summarize_artifact_get(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_artifact_get`` result dict.
+
+    Shape: ``{name, title, type, version, latest_version, versions:[...], ...}``;
+    each ``versions[i]`` carries an ``author`` Sender dict.
+    """
+    if _is_error(result):
+        return f"⚠️ artifact get failed: {_err_msg(result)}"
+    name = result.get("name", "?")
+    version = result.get("version", "?")
+    versions = result.get("versions") or []
+    n_versions = len(versions)
+    author = "?"
+    if versions:
+        last = versions[-1].get("author") or {}
+        author = last.get("name") or last.get("key") or "?"
+    return (
+        f"\U0001f4c4 '{name}' v{version} "
+        f"({n_versions} {_plural(n_versions, 'version')}) by {author}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# comms_artifact_list
+# --------------------------------------------------------------------------- #
+def summarize_artifact_list(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_artifact_list`` result dict.
+
+    Shape: ``{conversation, artifacts:[{name, ...}], count}``.
+    """
+    if _is_error(result):
+        return f"⚠️ artifact list failed: {_err_msg(result)}"
+    artifacts = result.get("artifacts") or []
+    count = result.get("count", len(artifacts))
+    if count == 0:
+        conv = result.get("conversation", "?")
+        return f"\U0001f4c4 no artifacts in #{conv}"
+    names = [a.get("name") or "?" for a in artifacts]
+    return f"\U0001f4c4 {count} {_plural(count, 'artifact')}: {_names_clause(names)}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_artifact_delete
+# --------------------------------------------------------------------------- #
+def summarize_artifact_delete(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_artifact_delete`` result dict.
+
+    Success shape: ``{status:'deleted', name}``.
+    """
+    if _is_error(result):
+        return f"⚠️ artifact delete failed: {_err_msg(result)}"
+    name = result.get("name", "?")
+    return f"\U0001f5d1 deleted artifact '{name}'"
+
+
+# --------------------------------------------------------------------------- #
+# comms_react
+# --------------------------------------------------------------------------- #
+def summarize_react(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_react`` result dict.
+
+    Status values: ``applied`` (with ``op`` add/remove), ``no_op``,
+    ``throttled``, ``persisted_publish_failed`` (uses ``id`` not ``message_id``).
+    """
+    if _is_error(result) and result.get("status") != "persisted_publish_failed":
+        return f"⚠️ react failed: {_err_msg(result)}"
+
+    status = result.get("status")
+    emoji = result.get("emoji", "?")
+    msg_id = _short_id(result.get("message_id") or result.get("id"))
+
+    if status == "throttled":
+        return "⚠️ react throttled (rate limit)"
+    if status == "no_op":
+        return f"{emoji} no change on {msg_id}"
+    if status == "persisted_publish_failed":
+        op = result.get("op", "add")
+        verb = "unreacted to" if op == "remove" else "reacted to"
+        return f"{emoji} {verb} {msg_id} (saved, broadcast failed)"
+
+    # applied
+    op = result.get("op", "add")
+    verb = "unreacted to" if op == "remove" else "reacted to"
+    return f"{emoji} {verb} {msg_id}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_reactions_get
+# --------------------------------------------------------------------------- #
+def summarize_reactions_get(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_reactions_get`` result dict.
+
+    Shape: ``{conversation, message_id, reactions:{emoji:[actor_key,...]}}``.
+    """
+    if _is_error(result):
+        return f"⚠️ reactions failed: {_err_msg(result)}"
+    msg_id = _short_id(result.get("message_id"))
+    reactions = result.get("reactions") or {}
+    total = sum(len(actors) for actors in reactions.values())
+    if total == 0:
+        return f"\U0001f937 no reactions on {msg_id}"
+    parts = [f"{emoji}x{len(actors)}" for emoji, actors in reactions.items()]
+    clause = " ".join(parts[:5])
+    if len(parts) > 5:
+        clause += f" (+{len(parts) - 5} more)"
+    return f"{total} {_plural(total, 'reaction')} on {msg_id}: {clause}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_status_set / comms_status_clear (ephemeral activity)
+# --------------------------------------------------------------------------- #
+def summarize_status_set(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_status_set`` result dict.
+
+    Success shape: ``{status:'set', label, ...}``; ``throttled`` is benign.
+    """
+    if _is_error(result):
+        return f"⚠️ status failed: {_err_msg(result)}"
+    if result.get("status") == "throttled":
+        return "⚠️ status throttled (>1 update / 2s)"
+    label = result.get("label", "?")
+    return f"\U0001f7e2 status: {label}"
+
+
+def summarize_status_clear(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_status_clear`` result dict.
+
+    Success shape: ``{status:'cleared', count}``.
+    """
+    if _is_error(result):
+        return f"⚠️ status clear failed: {_err_msg(result)}"
+    return "⚪ status cleared"
+
+
+# --------------------------------------------------------------------------- #
+# comms_profile_status_set / comms_profile_status_clear (durable ornament)
+# --------------------------------------------------------------------------- #
+def summarize_profile_status_set(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_profile_status_set`` result dict.
+
+    Success shape: ``{status:'set'|'cleared', emoji, text, ...}``; an all-None
+    payload collapses to a clear.
+    """
+    if _is_error(result):
+        return f"⚠️ profile status failed: {_err_msg(result)}"
+    if result.get("status") == "cleared":
+        return "⚪ profile status cleared"
+    emoji = result.get("emoji")
+    text = result.get("text")
+    label = " ".join(p for p in (emoji, text) if p) or "(set)"
+    return f"\U0001f7e2 profile status: {label}"
+
+
+def summarize_profile_status_clear(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_profile_status_clear`` result dict.
+
+    Success shape: ``{status:'cleared', ...}``.
+    """
+    if _is_error(result):
+        return f"⚠️ profile status clear failed: {_err_msg(result)}"
+    return "⚪ profile status cleared"
+
+
+# --------------------------------------------------------------------------- #
+# comms_get_channel_role
+# --------------------------------------------------------------------------- #
+def summarize_get_channel_role(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_get_channel_role`` result dict.
+
+    Shape: ``{role, participant_key, conversation}``.
+    """
+    if _is_error(result):
+        return f"⚠️ role lookup failed: {_err_msg(result)}"
+    conv = result.get("conversation", "?")
+    role = result.get("role", "member")
+    return f"\U0001f3ad role in #{conv}: {role}"
+
+
+# --------------------------------------------------------------------------- #
+# comms_thread_read
+# --------------------------------------------------------------------------- #
+def summarize_thread_read(result: dict[str, Any]) -> str:
+    """Summarize a ``tool_comms_thread_read`` result dict.
+
+    Shape: ``{conversation, root, replies:[...], count, has_more}``; ``root``
+    and each reply are message dicts (``sender``, ``body``, ``ts``, ``id``).
+    """
+    if _is_error(result):
+        return f"⚠️ thread read failed: {_err_msg(result)}"
+
+    root = result.get("root") or {}
+    root_id = _short_id(root.get("id"))
+    replies = result.get("replies") or []
+    count = result.get("count", len(replies))
+    has_more = result.get("has_more", False)
+
+    if count == 0:
+        return f"\U0001f9f5 no replies under {root_id}"
+
+    line1 = f"\U0001f9f5 {count} {_plural(count, 'reply')} under {root_id}"
+    last = replies[-1]
+    line2 = f'last: {_sender_name(last)}: "{_truncate(last.get("body", ""))}"'
+    if has_more:
+        line2 += " (+more)"
+    return f"{line1}\n{line2}"
