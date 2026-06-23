@@ -196,6 +196,39 @@ def _expand_loopback_aliases(host: str) -> list[str]:
     return [host]
 
 
+def _web_cors_allow_list(web_cfg: dict) -> list[str]:
+    """Allowed CORS origins for the web UI calling the API cross-port.
+
+    Base = loopback web origins (localhost/127.0.0.1 on the web port) + the vite
+    dev ports. Plus ``api_base`` when set. Plus, when ``api_base`` is set, the web
+    origin DERIVED from api_base's host on the web port — so a Tailscale/LAN
+    deployment that points api_base at its external host also allows the matching
+    web origin with no extra config. Plus any explicit ``web.extra_cors_origins``
+    (escape hatch, mirrors ``web.csp_extra_connect_src`` for cross-network use).
+    """
+    web_port = web_cfg.get("port", 9921)
+    allow = [
+        f"http://localhost:{web_port}",
+        f"http://127.0.0.1:{web_port}",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
+    api_base = web_cfg.get("api_base")
+    if api_base:
+        allow.append(api_base)
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(api_base)
+        if parts.scheme and parts.hostname:
+            allow.append(f"{parts.scheme}://{parts.hostname}:{web_port}")
+    for origin in web_cfg.get("extra_cors_origins", []) or []:
+        if origin:
+            allow.append(origin)
+    return allow
+
+
 def build_csp(config: dict) -> str:
     """Construct a Content-Security-Policy header value from config.
 
@@ -609,18 +642,7 @@ def build_artifact_post_options_route(config: dict):
 
     web_cfg = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
-    web_port = web_cfg.get("port", 9921)
-    allow_list = [
-        f"http://localhost:{web_port}",
-        f"http://127.0.0.1:{web_port}",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ]
-    api_base = web_cfg.get("api_base")
-    if api_base:
-        allow_list.append(api_base)
+    allow_list = _web_cors_allow_list(web_cfg)
 
     async def _handler(request: Request) -> JSONResponse:
         return JSONResponse(
@@ -687,18 +709,7 @@ def build_invite_post_route(
 
     web_cfg = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
-    web_port = web_cfg.get("port", 9921)
-    allow_list = [
-        f"http://localhost:{web_port}",
-        f"http://127.0.0.1:{web_port}",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ]
-    api_base = web_cfg.get("api_base")
-    if api_base:
-        allow_list.append(api_base)
+    allow_list = _web_cors_allow_list(web_cfg)
 
     identity_cfg = config.get("identity", {}) or {}
     caller_key_default = identity_cfg.get("key", "")
@@ -866,18 +877,7 @@ def build_invite_options_route(config: dict):
 
     web_cfg = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
-    web_port = web_cfg.get("port", 9921)
-    allow_list = [
-        f"http://localhost:{web_port}",
-        f"http://127.0.0.1:{web_port}",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ]
-    api_base = web_cfg.get("api_base")
-    if api_base:
-        allow_list.append(api_base)
+    allow_list = _web_cors_allow_list(web_cfg)
 
     async def _handler(request: Request) -> JSONResponse:
         return JSONResponse(
@@ -1254,17 +1254,7 @@ def start(
             # enforcement on the POST route — that is refused entirely when
             # ``is_reverse_proxy_mode`` is true).
             web_cfg = config.get("web", {}) or {}
-            cors_origins = [
-                f"http://localhost:{web_port}",
-                f"http://127.0.0.1:{web_port}",
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-                "http://localhost:5174",
-                "http://127.0.0.1:5174",
-            ]
-            _api_base_origin = web_cfg.get("api_base")
-            if _api_base_origin:
-                cors_origins.append(_api_base_origin)
+            cors_origins = _web_cors_allow_list(web_cfg)
             # R2-3 + R6-4: default to exact-match CORS. ``strict_cors=false``
             # re-enables the legacy (buggy) substring-match path with a
             # deprecation warning on every hit.
