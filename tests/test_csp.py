@@ -140,10 +140,10 @@ def test_csp_for_lan_bind_expands_specific_host() -> None:
     csp = build_csp(cfg)
     assert "http://10.0.0.5:9920" in csp
     assert "ws://10.0.0.5:9001" in csp
-    # Loopback REST alias not added for LAN binds — the user typed the LAN IP.
-    assert "http://localhost:9920" not in csp
-    # The broker loopback WS IS always allowed now so desktop localhost access
-    # (http://localhost:9921 -> ws://localhost:9001) works regardless of bind.
+    # The loopback REST/MCP AND broker WS origins are ALWAYS allowed now so
+    # desktop localhost access (http://localhost:9921 -> http://localhost:9920
+    # and ws://localhost:9001) works regardless of the configured bind.
+    assert "http://localhost:9920" in csp
     assert "ws://localhost:9001" in csp
 
 
@@ -176,6 +176,27 @@ def test_csp_for_api_base_uses_external_origin() -> None:
     assert "https://comms.example.com" in csp
     # ws derived from api_base scheme
     assert "wss://comms.example.com/mqtt" in csp
+
+
+def test_csp_for_api_base_still_allows_loopback_rest_and_broker() -> None:
+    """Reverse-proxy mode must NOT drop loopback origins. A desktop page at
+    http://localhost:9921 still reaches http://localhost:9920 (REST) and
+    ws://localhost:9001 (broker) directly, even when api_base routes the
+    laptop/Tailscale path through a non-loopback origin.
+    """
+    cfg = {
+        "broker": {"ws_host": "127.0.0.1", "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {"api_base": "https://phil-desktop.example.ts.net:9920"},
+    }
+    csp = build_csp(cfg)
+    # api_base path stays intact for the remote/laptop case.
+    assert "https://phil-desktop.example.ts.net:9920" in csp
+    # Loopback REST/MCP always present so desktop localhost isn't CSP-blocked.
+    assert "http://localhost:9920" in csp
+    assert "http://127.0.0.1:9920" in csp
+    # Loopback broker WS always present too.
+    assert "ws://localhost:9001" in csp
 
 
 def test_csp_extra_connect_src_escape_hatch() -> None:
