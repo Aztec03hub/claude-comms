@@ -333,16 +333,52 @@ def _advertised_broker_ws(config: dict) -> dict:
     return out
 
 
+def _rest_origins_for_host(host: str, mcp_port: int) -> list[str]:
+    """REST/MCP connect-src origins (http+https) for a single host.
+
+    A host the page may be served from must be able to ``fetch`` the REST API
+    on the MCP port. CSP ``connect-src`` governs whether the browser is even
+    allowed to make the request, independent of the server's CORS response, so
+    every reachable host needs its REST origin listed here.
+    """
+    return [f"http://{host}:{mcp_port}", f"https://{host}:{mcp_port}"]
+
+
+def _broker_origins_for_host(host: str, ws_port: int) -> list[str]:
+    """Broker WebSocket connect-src origins (ws+wss) for a single host.
+
+    The broker listens on ``broker.ws_port`` (default 9001). Origins are
+    ``scheme://host:port`` only — no ``/mqtt`` path, since CSP origins never
+    include a path component.
+    """
+    return [f"ws://{host}:{ws_port}", f"wss://{host}:{ws_port}"]
+
+
 def build_csp(config: dict) -> str:
     """Construct a Content-Security-Policy header value from config.
 
-    ``connect-src`` is derived dynamically from the configured MCP / broker
-    host+port. For loopback binds the policy includes BOTH the ``127.0.0.1``
-    AND ``localhost`` variants (browsers treat them as distinct origins).
-    When ``web.api_base`` is set the policy switches to reverse-proxy mode
-    and uses that origin authoritatively. ``web.csp_extra_connect_src`` is
-    merged in as an escape hatch for LAN / Tailscale deployments the daemon
-    can't auto-discover at startup.
+    ``connect-src`` is built to be COMPREHENSIVE: for every host the page may
+    legitimately be served from, it lists BOTH the REST origin (MCP port,
+    default 9920) AND the broker WebSocket origin (ws_port, default 9001), in
+    http(s) / ws(s) variants. The covered hosts are:
+
+      * Loopback aliases (``localhost`` + ``127.0.0.1``) — always, regardless
+        of mode, so desktop access via ``http://localhost:9921`` reaches the
+        local REST API and broker.
+      * The external/advertised reachable host from
+        ``_external_reachable_host`` (Tailscale name / LAN IP) — both REST and
+        broker, so a page served from that host can call back to it.
+      * In reverse-proxy mode (``web.api_base`` set), ``api_base`` is the
+        authoritative REST origin and the broker WS is derived on ``ws_port``.
+
+    ``web.csp_extra_connect_src`` is appended verbatim as an operator escape
+    hatch.
+
+    Note: CORS (the server's response headers) and CSP ``connect-src`` (the
+    browser's permission to send the request) are independent. A REST origin
+    being in the CORS allow-list does NOT make the browser allow the fetch —
+    the origin must also be in ``connect-src``. That is why every reachable
+    host's REST origin is listed here explicitly.
     """
     web_cfg = config.get("web", {}) or {}
     mcp_cfg = config.get("mcp", {}) or {}
@@ -369,55 +405,54 @@ def build_csp(config: dict) -> str:
             # the BROKER ws_port — NOT the api_base REST port. The broker
             # listens on ws_port (default 9001), so an api_base-port-derived
             # origin (e.g. ws://host:9920/mqtt) is the wrong port and blocks
-            # the real connection. The client targets ws://<host>:<ws_port>
-            # (no /mqtt in the origin — origins are scheme://host:port).
+            # the real connection.
             external_host = _external_reachable_host(config)
             if external_host:
-                connect_origins.append(f"ws://{external_host}:{ws_port}")
-                connect_origins.append(f"wss://{external_host}:{ws_port}")
+                connect_origins.extend(_broker_origins_for_host(external_host, ws_port))
     else:
         # Direct mode: include http/https + ws/wss variants for every
         # browser-visible alias of the configured loopback bind. Both
         # schemes are included so future TLS deployment is covered.
         for h in _expand_loopback_aliases(mcp_host):
-            connect_origins.append(f"http://{h}:{mcp_port}")
-            connect_origins.append(f"https://{h}:{mcp_port}")
+            connect_origins.extend(_rest_origins_for_host(h, mcp_port))
         for h in _expand_loopback_aliases(ws_host):
-            connect_origins.append(f"ws://{h}:{ws_port}")
-            connect_origins.append(f"wss://{h}:{ws_port}")
+            connect_origins.extend(_broker_origins_for_host(h, ws_port))
 
         # When an explicit reachable host is configured (LAN IP / Tailscale
-        # name) the daemon advertises ws://<that-host>:<port>/mqtt via
-        # /api/capabilities; the browser will connect there, so its origin
-        # must be in connect-src or the WebSocket is blocked. The matching
-        # http(s) REST origin is already covered by the CORS allow-list.
+        # name) the page may be served FROM that host, so it must be able to
+        # reach BOTH the broker WS (advertised via /api/capabilities) AND the
+        # REST API on that same host. CSP connect-src must list both or the
+        # browser blocks the request outright — CORS does NOT cover this; CORS
+        # governs the server's response, connect-src governs whether the
+        # browser may make the request at all.
         advertised_host = _external_reachable_host(config)
         if advertised_host:
-            connect_origins.append(f"ws://{advertised_host}:{ws_port}")
-            connect_origins.append(f"wss://{advertised_host}:{ws_port}")
+            connect_origins.extend(_broker_origins_for_host(advertised_host, ws_port))
+            connect_origins.extend(_rest_origins_for_host(advertised_host, mcp_port))
 
-    # ALWAYS allow the loopback broker WebSocket regardless of mode. Desktop
-    # access via http://localhost:9921 must be able to reach ws://localhost:9001
-    # (and ws://127.0.0.1:9001) even when api_base / a reverse proxy is also
-    # configured for remote access. Without this, the localhost page loops on
-    # "Reconnecting to broker". Both alias forms are distinct browser origins.
+    # ALWAYS allow the loopback broker WebSocket and REST/MCP API regardless of
+    # mode. Desktop access via http://localhost:9921 must be able to reach
+    # ws://localhost:9001 and http://localhost:9920 (and the 127.0.0.1 aliases)
+    # even when api_base / a reverse proxy is also configured for remote access.
+    # Without this, the localhost page loops on "Reconnecting to broker" and
+    # REST fetches are CSP-blocked. Both alias forms are distinct browser
+    # origins.
     for h in ("localhost", "127.0.0.1"):
-        for origin in (f"ws://{h}:{ws_port}", f"wss://{h}:{ws_port}"):
-            if origin not in connect_origins:
-                connect_origins.append(origin)
-
-    # ALWAYS allow the loopback REST/MCP API too (mirror the broker block), so a
-    # desktop page at http://localhost:9921 can reach http://localhost:9920 even in
-    # api_base / reverse-proxy mode. Both alias forms are distinct browser origins.
-    for h in ("localhost", "127.0.0.1"):
-        for origin in (f"http://{h}:{mcp_port}", f"https://{h}:{mcp_port}"):
-            if origin not in connect_origins:
-                connect_origins.append(origin)
+        connect_origins.extend(_broker_origins_for_host(h, ws_port))
+        connect_origins.extend(_rest_origins_for_host(h, mcp_port))
 
     extra = web_cfg.get("csp_extra_connect_src") or []
     connect_origins.extend(extra)
 
-    connect_src = " ".join(connect_origins)
+    # Dedup while preserving first-seen order.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for origin in connect_origins:
+        if origin not in seen:
+            seen.add(origin)
+            deduped.append(origin)
+
+    connect_src = " ".join(deduped)
 
     return (
         "default-src 'self'; "

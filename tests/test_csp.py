@@ -244,3 +244,162 @@ def test_csp_extra_connect_src_escape_hatch() -> None:
     csp = build_csp(cfg)
     assert "ws://my-laptop.tailnet.ts.net:9001" in csp
     assert "http://my-laptop.tailnet.ts.net:9920" in csp
+
+
+# --------------------------------------------------------------------------
+# build_csp — comprehensive connect-src matrix
+#
+# Contract: for EVERY host the page may be served from, connect-src must list
+# BOTH the REST origin (mcp_port, default 9920) AND the broker WS origin
+# (ws_port, default 9001), for loopback AND the external/advertised host.
+#
+# History: a page served from the Tailscale host with web.api_base UNSET ran
+# the direct-mode branch, which added the external broker WS but NOT its REST
+# origin, so fetch http://<tailscale-host>:9920/api/* was CSP-blocked. The old
+# code carried a comment claiming the REST origin was "already covered by the
+# CORS allow-list" — false: CORS governs the server's response, connect-src
+# governs whether the browser may make the request at all.
+# --------------------------------------------------------------------------
+
+
+_TS_HOST = "phil-desktop.tail6c27f6.ts.net"
+
+
+def _no_connect_directive(csp: str) -> str:
+    """Extract the connect-src directive substring for targeted assertions."""
+    return next(d for d in csp.split("; ") if d.startswith("connect-src "))
+
+
+def test_csp_direct_mode_external_via_ws_host_covers_rest_and_broker() -> None:
+    """Case 1: direct mode, external host present via a non-loopback ws_host.
+
+    The external host must get BOTH its REST origin (http/https on 9920) AND
+    its broker WS origin (ws/wss on 9001), alongside the always-on loopback
+    REST + broker.
+    """
+    cfg = {
+        "broker": {"ws_host": _TS_HOST, "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {"host": "127.0.0.1", "port": 9921},
+    }
+    csp = build_csp(cfg)
+    # External host: REST (this is the formerly-missing class) + broker.
+    assert f"http://{_TS_HOST}:9920" in csp
+    assert f"https://{_TS_HOST}:9920" in csp
+    assert f"ws://{_TS_HOST}:9001" in csp
+    assert f"wss://{_TS_HOST}:9001" in csp
+    # Loopback REST + broker always present.
+    assert "http://localhost:9920" in csp
+    assert "http://127.0.0.1:9920" in csp
+    assert "ws://localhost:9001" in csp
+    assert "ws://127.0.0.1:9001" in csp
+
+
+def test_csp_direct_mode_external_rest_not_assumed_covered_by_cors() -> None:
+    """The bogus "REST covered by CORS" assumption is gone: in direct mode the
+    external host's REST origin is actually present in connect-src.
+    """
+    cfg = {
+        "broker": {"ws_host": _TS_HOST, "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {"host": "127.0.0.1", "port": 9921},
+    }
+    connect = _no_connect_directive(build_csp(cfg))
+    assert f"http://{_TS_HOST}:9920" in connect
+
+
+def test_csp_direct_mode_external_via_csp_extra_also_gets_rest() -> None:
+    """Case 2: external host present ONLY via csp_extra_connect_src.
+
+    An operator who adds just ``ws://<host>:9001`` to csp_extra should still
+    end up with that host's REST origin allowed — _external_reachable_host
+    derives the host from the csp_extra entry, and direct mode then adds BOTH
+    REST and broker for it. So operators no longer need to also hand-add the
+    REST entry.
+    """
+    cfg = {
+        "broker": {"ws_host": "127.0.0.1", "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {
+            "csp_extra_connect_src": [f"ws://{_TS_HOST}:9001"],
+        },
+    }
+    csp = build_csp(cfg)
+    # The verbatim extra entry is present.
+    assert f"ws://{_TS_HOST}:9001" in csp
+    # And the REST origin for that host is derived automatically.
+    assert f"http://{_TS_HOST}:9920" in csp
+    assert f"https://{_TS_HOST}:9920" in csp
+    # Broker wss variant too.
+    assert f"wss://{_TS_HOST}:9001" in csp
+    # Loopback still intact.
+    assert "http://localhost:9920" in csp
+    assert "ws://localhost:9001" in csp
+
+
+def test_csp_api_base_mode_full_matrix_no_bogus_mqtt() -> None:
+    """Case 3: reverse-proxy mode — api_base REST + ws_port broker + loopback
+    REST + loopback broker, and NO bogus ``:9920/mqtt`` origin.
+    """
+    api_base = f"https://{_TS_HOST}:9920"
+    cfg = {
+        "broker": {"ws_host": "127.0.0.1", "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {"api_base": api_base},
+    }
+    csp = build_csp(cfg)
+    # api_base is the authoritative REST origin.
+    assert api_base in csp
+    # Broker WS on the correct port (9001), not the api port.
+    assert f"ws://{_TS_HOST}:9001" in csp
+    assert f"wss://{_TS_HOST}:9001" in csp
+    # Loopback REST + broker always present.
+    assert "http://localhost:9920" in csp
+    assert "http://127.0.0.1:9920" in csp
+    assert "ws://localhost:9001" in csp
+    assert "ws://127.0.0.1:9001" in csp
+    # No bogus api-port-derived /mqtt origin.
+    assert "/mqtt" not in csp
+    assert f"ws://{_TS_HOST}:9920" not in csp
+
+
+def test_csp_loopback_only_config_has_no_external() -> None:
+    """Case 4: plain loopback-only config — loopback REST + broker, no external.
+
+    No non-loopback host should leak into connect-src.
+    """
+    cfg = {
+        "broker": {"ws_host": "127.0.0.1", "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {"host": "127.0.0.1", "port": 9921},
+    }
+    csp = build_csp(cfg)
+    # Loopback REST + broker, both aliases, both scheme variants.
+    assert "http://localhost:9920" in csp
+    assert "https://localhost:9920" in csp
+    assert "http://127.0.0.1:9920" in csp
+    assert "https://127.0.0.1:9920" in csp
+    assert "ws://localhost:9001" in csp
+    assert "wss://localhost:9001" in csp
+    assert "ws://127.0.0.1:9001" in csp
+    assert "wss://127.0.0.1:9001" in csp
+    # No external host present.
+    assert ".ts.net" not in csp
+    assert "10.0.0" not in csp
+
+
+def test_csp_connect_src_origins_are_deduped() -> None:
+    """connect-src must not contain duplicate origins even when the external
+    host derivation overlaps with loopback/extra entries.
+    """
+    cfg = {
+        "broker": {"ws_host": _TS_HOST, "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {
+            "csp_extra_connect_src": [f"ws://{_TS_HOST}:9001"],
+        },
+    }
+    connect = _no_connect_directive(build_csp(cfg))
+    # Strip the "connect-src " prefix, split into origin tokens.
+    tokens = connect[len("connect-src ") :].split()
+    assert len(tokens) == len(set(tokens)), f"duplicate origins: {tokens}"
