@@ -1,0 +1,4 @@
+# Extra deps for the agent harness (NOT claude-comms runtime deps).
+# Install into the repo venv: .venv/bin/pip install -r tools/agent-harness/requirements.txt
+# `mcp` already ships with claude-comms; `anthropic` drives the live Sonnet agents.
+anthropic>=0.111

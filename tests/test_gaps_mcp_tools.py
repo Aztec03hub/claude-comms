@@ -350,3 +350,194 @@ class TestCommsCheckEdgeCases:
     ):
         result = tool_comms_check(registry, store, key="ZZZZZZZZ")
         assert result.get("error") is True
+
+
+# --- F2: comms_send echoes human names ---
+
+
+class TestCommsSendNameEcho:
+    @pytest.mark.asyncio
+    async def test_whisper_returns_recipient_names(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="psst",
+            recipients=["bob"],
+        )
+        assert result["status"] == "sent"
+        # keys unchanged (back-compat) AND human-readable names added.
+        assert result["recipient_names"] == ["bob"]
+        assert all(len(k) == 8 for k in result["recipients"])
+
+    @pytest.mark.asyncio
+    async def test_mention_returns_mention_names(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="hey all",
+            mentions=["bob"],
+        )
+        assert result["status"] == "sent"
+        assert result["mention_names"] == ["bob"]
+
+    @pytest.mark.asyncio
+    async def test_plain_send_name_fields_none(
+        self, registry: ParticipantRegistry, sample_participant: dict, publish_spy
+    ):
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sample_participant["key"],
+            conversation="general",
+            message="broadcast",
+        )
+        assert result["status"] == "sent"
+        assert result["recipient_names"] is None
+        assert result["mention_names"] is None
+
+    @pytest.mark.asyncio
+    async def test_unresolved_mention_key_fallback(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        """A mentioned key that isn't a member of the conversation falls back to
+        the key string (no crash, no None entry)."""
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        # Bob is in a DIFFERENT conversation but globally registered, so the
+        # mention resolves to a key but is not in members(general).
+        bob = await tool_comms_join(registry, name="bob", conversation="other-room")
+
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="hi",
+            mentions=[bob["key"]],
+        )
+        assert result["status"] == "sent"
+        # name unresolvable in this conversation -> key fallback (the key itself).
+        assert result["mention_names"] == [bob["key"]]
+
+
+# --- F4: whisper [@name] prefix is idempotent ---
+
+
+class TestWhisperPrefixIdempotent:
+    @staticmethod
+    def _body(publish_spy) -> str:
+        # First call is the canonical messages-topic publish.
+        _topic, payload, _retain = publish_spy.calls[0]
+        return json.loads(payload)["body"]
+
+    @pytest.mark.asyncio
+    async def test_no_typed_prefix_gets_one_prefix(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+
+        await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="hello there",
+            recipients=["bob"],
+        )
+        body = self._body(publish_spy)
+        assert body == "[@bob] hello there"
+
+    @pytest.mark.asyncio
+    async def test_typed_matching_prefix_not_doubled(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+
+        await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="[@bob] hello there",
+            recipients=["bob"],
+        )
+        body = self._body(publish_spy)
+        assert body == "[@bob] hello there"
+        assert body.count("[@bob]") == 1
+
+    @pytest.mark.asyncio
+    async def test_typed_matching_prefix_case_insensitive(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="Bob", conversation="general")
+
+        await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="[@bob] hi",
+            recipients=["Bob"],
+        )
+        body = self._body(publish_spy)
+        # The typed (lowercase) prefix matches the recipient set case-insensitively,
+        # so it is kept verbatim and NOT re-prefixed with the canonical casing.
+        assert body == "[@bob] hi"
+        assert body.lower().count("[@bob]") == 1
+
+    @pytest.mark.asyncio
+    async def test_mismatched_prefix_still_gets_authoritative_marker(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        """A typed prefix whose name set does NOT match the resolved recipients
+        still gets the authoritative whisper marker prepended."""
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+        await tool_comms_join(registry, name="carol", conversation="general")
+
+        await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="[@carol] wrong tag",
+            recipients=["bob"],
+        )
+        body = self._body(publish_spy)
+        # Authoritative marker for the real recipient (bob) is prepended.
+        assert body == "[@bob] [@carol] wrong tag"
+
+    @pytest.mark.asyncio
+    async def test_multi_recipient_matched_prefix_not_doubled(
+        self, registry: ParticipantRegistry, publish_spy
+    ):
+        sender = await tool_comms_join(registry, name="alice", conversation="general")
+        await tool_comms_join(registry, name="bob", conversation="general")
+        await tool_comms_join(registry, name="carol", conversation="general")
+
+        await tool_comms_send(
+            registry,
+            publish_spy,
+            key=sender["key"],
+            conversation="general",
+            message="[@bob, @carol] team note",
+            recipients=["bob", "carol"],
+        )
+        body = self._body(publish_spy)
+        assert body == "[@bob, @carol] team note"

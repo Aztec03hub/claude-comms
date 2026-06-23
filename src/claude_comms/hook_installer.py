@@ -78,37 +78,39 @@ NOTIF_FILE="{notif_file}"
 CONTENT=$(cat "$NOTIF_FILE")
 > "$NOTIF_FILE"
 
-# 4. Format messages for context injection
-# Take up to 5 most recent lines
+# 4. Format + emit additionalContext in ONE python pass that reads the raw
+# JSONL lines via env vars. All parsing/formatting happens in python, so a
+# message body containing newlines, quotes, or unicode can never break the
+# hook (previously bodies were interpolated into the python source and a
+# newline/quote produced a SyntaxError, dropping the whole notification).
 MESSAGES=$(echo "$CONTENT" | tail -n 5)
 COUNT=$(echo "$CONTENT" | wc -l | tr -d ' ')
 
-# Build summary from JSONL lines
-SUMMARY=""
-while IFS= read -r line; do
-    CONV=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('conversation','?'))" 2>/dev/null)
-    SENDER=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sender_name','') or d.get('sender_key','?'))" 2>/dev/null)
-    BODY=$(echo "$line" | python3 -c "import sys,json; b=json.load(sys.stdin).get('body',''); print(b[:120])" 2>/dev/null)
-    if [ -n "$CONV" ] && [ -n "$BODY" ]; then
-        SUMMARY="$SUMMARY\\n  #$CONV @$SENDER: $BODY"
-    fi
-done <<< "$MESSAGES"
-
-if [ "$COUNT" -gt 5 ]; then
-    SUMMARY="$SUMMARY\\n  ... and $(( COUNT - 5 )) more message(s)"
-fi
-
-# 5. Output JSON with additionalContext
-python3 -c "
-import json, sys
-ctx = '\\U0001f4ec New messages:' + '$SUMMARY' + '\\n\\n(Use comms_read for full history, comms_send to reply)'
-print(json.dumps({{
-    'hookSpecificOutput': {{
-        'hookEventName': 'PostToolUse',
-        'additionalContext': ctx
-    }}
-}}))
-"
+CC_MESSAGES="$MESSAGES" CC_COUNT="$COUNT" python3 -c '
+import json, os
+lines = [ln for ln in os.environ.get("CC_MESSAGES", "").splitlines() if ln.strip()]
+parts = []
+for ln in lines:
+    try:
+        d = json.loads(ln)
+    except Exception:
+        continue
+    conv = d.get("conversation", "?")
+    sender = d.get("sender_name") or d.get("sender_key", "?")
+    body = (d.get("body", "") or "")[:120]
+    parts.append("\\n  #" + str(conv) + " @" + str(sender) + ": " + str(body))
+try:
+    count = int(os.environ.get("CC_COUNT", "0") or 0)
+except ValueError:
+    count = 0
+summary = "".join(parts)
+if count > 5:
+    summary += "\\n  ... and " + str(count - 5) + " more message(s)"
+if not summary:
+    raise SystemExit(0)
+ctx = "\\U0001f4ec New messages:" + summary + "\\n\\n(Use comms_read for full history, comms_send to reply)"
+print(json.dumps(dict(hookSpecificOutput=dict(hookEventName="PostToolUse", additionalContext=ctx))))
+'
 """
 
 
@@ -142,9 +144,10 @@ powershell -NoProfile -Command ^
   "$summary = '';" ^
   "foreach ($ln in $recent) {{" ^
   "  try {{ $m = $ln | ConvertFrom-Json;" ^
-  "    $conv = $m.conversation;" ^
-  "    $sender = if ($m.sender_name) {{ $m.sender_name }} else {{ $m.sender_key }};" ^
-  "    $body = $m.body.Substring(0, [Math]::Min(120, $m.body.Length));" ^
+  "    $conv = if ($m.conversation) {{ $m.conversation }} else {{ '?' }};" ^
+  "    $sender = if ($m.sender_name) {{ $m.sender_name }} elseif ($m.sender_key) {{ $m.sender_key }} else {{ '?' }};" ^
+  "    $b = [string]$m.body;" ^
+  "    $body = $b.Substring(0, [Math]::Min(120, $b.Length));" ^
   "    $summary += \"`n  #$conv @$sender`: $body\";" ^
   "  }} catch {{}};" ^
   "}};" ^

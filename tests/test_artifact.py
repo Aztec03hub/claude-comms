@@ -22,6 +22,7 @@ from claude_comms.message import Sender
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_artifact_create,
+    tool_comms_artifact_delete,
     tool_comms_artifact_get,
     tool_comms_artifact_update,
     tool_comms_join,
@@ -612,3 +613,342 @@ class TestToolCommsArtifactUpdate:
 
         assert result["status"] == "updated"
         assert result["version"] == 2
+
+
+# ===================================================================
+# F5: artifact system messages carry actor_key
+# ===================================================================
+
+
+class TestArtifactSystemMessageActorKey:
+    """The broadcast [system] artifact echoes (create/update/delete) must carry
+    the acting participant's key in `actor_key` so consumers can self-suppress
+    without losing the broadcast for everyone else (recipients stays None)."""
+
+    @staticmethod
+    def _last_system_msg(spy: PublishSpy) -> dict:
+        # The system message is always the most recent publish on the
+        # conversation messages topic.
+        _topic, payload, _retain = spy.calls[-1]
+        return json.loads(payload)
+
+    @pytest.mark.asyncio
+    async def test_create_system_message_has_actor_key(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="plan",
+            content="x",
+            data_dir=tmp_path,
+        )
+
+        msg = self._last_system_msg(spy)
+        assert msg["sender"]["key"] == "00000000"
+        # Still a broadcast, not a whisper — everyone else must receive it.
+        assert msg["recipients"] is None
+        assert msg["actor_key"] == participant["key"]
+
+    @pytest.mark.asyncio
+    async def test_update_system_message_has_actor_key(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+
+        await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="v2",
+            base_version=1,
+            data_dir=tmp_path,
+        )
+
+        msg = self._last_system_msg(spy)
+        assert msg["recipients"] is None
+        assert msg["actor_key"] == participant["key"]
+
+    @pytest.mark.asyncio
+    async def test_delete_system_message_has_actor_key(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+
+        await tool_comms_artifact_delete(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            data_dir=tmp_path,
+        )
+
+        msg = self._last_system_msg(spy)
+        assert msg["recipients"] is None
+        assert msg["actor_key"] == participant["key"]
+
+    @pytest.mark.asyncio
+    async def test_non_actor_key_differs(self, tmp_path: Path):
+        """A second participant's key must NOT equal the actor_key, so the
+        intake filter `actor_key == reader_key` only drops it for the actor."""
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        actor = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        other = await _register_participant(
+            registry, name="bob", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=actor["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+
+        msg = self._last_system_msg(spy)
+        assert msg["actor_key"] == actor["key"]
+        assert msg["actor_key"] != other["key"]
+
+
+# ===================================================================
+# F6 / F7: artifact result ergonomics
+# ===================================================================
+
+
+class TestArtifactResultErgonomics:
+    @pytest.mark.asyncio
+    async def test_get_returns_latest_version(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+        await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="v2",
+            base_version=1,
+            data_dir=tmp_path,
+        )
+
+        # Request an OLD version explicitly; latest_version must still be 2.
+        result = tool_comms_artifact_get(
+            registry,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            version=1,
+            data_dir=tmp_path,
+        )
+        assert result["version"] == 1
+        assert result["latest_version"] == 2
+
+    @pytest.mark.asyncio
+    async def test_update_success_includes_author_and_base_version(
+        self, tmp_path: Path
+    ):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+
+        result = await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="v2",
+            base_version=1,
+            data_dir=tmp_path,
+        )
+        assert result["status"] == "updated"
+        assert isinstance(result["author"], dict)
+        assert result["author"]["key"] == participant["key"]
+        assert result["author"]["name"] == "alice"
+        assert result["base_version"] == 1
+
+    @pytest.mark.asyncio
+    async def test_update_with_base_version_is_guarded(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+
+        result = await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="v2",
+            base_version=1,
+            data_dir=tmp_path,
+        )
+        # F7: guarded update -> unguarded is False.
+        assert result["unguarded"] is False
+
+    @pytest.mark.asyncio
+    async def test_update_without_base_version_is_unguarded(self, tmp_path: Path):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+
+        result = await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="v2",
+            data_dir=tmp_path,
+        )
+        # F7: blind update -> advisory flag set.
+        assert result["unguarded"] is True
+        assert result["base_version"] is None
+
+    @pytest.mark.asyncio
+    async def test_conflict_returns_latest_version_and_author_string(
+        self, tmp_path: Path
+    ):
+        registry = ParticipantRegistry()
+        spy = PublishSpy()
+        participant = await _register_participant(
+            registry, name="alice", conversation="general"
+        )
+        await tool_comms_artifact_create(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            title="P",
+            type="doc",
+            content="v1",
+            data_dir=tmp_path,
+        )
+        # Advance to v2 so a stale base_version=1 conflicts.
+        await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="v2",
+            base_version=1,
+            data_dir=tmp_path,
+        )
+
+        result = await tool_comms_artifact_update(
+            registry,
+            spy,
+            key=participant["key"],
+            conversation="general",
+            name="p",
+            content="boom",
+            base_version=1,
+            data_dir=tmp_path,
+        )
+        assert result.get("error") is True
+        assert "conflict" in result["message"].lower()
+        # web 409 banner reads these exact field names off the body.
+        assert result["latest_version"] == 2
+        assert isinstance(result["latest_version"], int)
+        # latest_author MUST be a bare NAME string (not a dict) or the banner
+        # renders [object Object].
+        assert isinstance(result["latest_author"], str)
+        assert result["latest_author"] == "alice"

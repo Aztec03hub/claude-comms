@@ -484,3 +484,145 @@ class TestHookScriptExecution:
         ctx = output["hookSpecificOutput"]["additionalContext"]
         assert "#dev" in ctx
         assert "User0" in ctx or "User1" in ctx or "User2" in ctx
+
+
+# --- End-to-end: NotificationWriter cue -> real hook (F1) ---
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix shell test")
+class TestNotifierToHookEndToEnd:
+    """A cue written by NotificationWriter must parse cleanly through the real
+    hook and surface as additionalContext (closes the F1 dead-push loop)."""
+
+    @pytest.fixture()
+    def hook_env(self, tmp_path, monkeypatch):
+        home = tmp_path / "fakehome"
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+
+        notif_dir = home / ".claude-comms" / "notifications"
+        notif_dir.mkdir(parents=True)
+
+        script_content = _generate_unix_script(SAMPLE_KEY)
+        script_path = tmp_path / "hook.sh"
+        script_path.write_text(script_content)
+        script_path.chmod(script_path.stat().st_mode | stat.S_IXUSR)
+
+        return {"home": home, "notif_dir": notif_dir, "script_path": script_path}
+
+    def _run_hook(self, hook_env):
+        return subprocess.run(
+            [str(hook_env["script_path"])],
+            input="{}",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env={**os.environ, "HOME": str(hook_env["home"])},
+        )
+
+    def test_writer_cue_surfaces_in_hook_context(self, hook_env):
+        from claude_comms.notifier import NotificationWriter
+
+        writer = NotificationWriter(
+            hook_env["notif_dir"], enabled=True, cue_on_broadcast=False
+        )
+        msg = {
+            "id": "e2e1",
+            "conv": "general",
+            "sender": {"key": "b1c2d3e4", "name": "Alice", "type": "claude"},
+            "recipients": [SAMPLE_KEY],
+            "mentions": None,
+            "body": "ping from the writer",
+        }
+        assert writer.write(msg) == 1
+
+        result = self._run_hook(hook_env)
+        assert result.returncode == 0
+        output = json.loads(result.stdout.strip())
+        ctx = output["hookSpecificOutput"]["additionalContext"]
+        assert "#general" in ctx
+        assert "@Alice" in ctx
+        assert "ping from the writer" in ctx
+
+    def test_multiline_unicode_cue_is_one_parseable_line(self, hook_env):
+        """A multi-line / non-ASCII body must be written as ONE physical line
+        that the hook's per-line ``json.load`` (step 4) parses without error.
+
+        This asserts the F1 writer contract directly. NOTE: the hook script's
+        downstream step-5 ``python3 -c "... '$SUMMARY' ..."`` interpolation
+        chokes on the multi-line *summary text* it builds — but that is a
+        pre-existing hook_installer.py defect (see worklog "Bugs noticed"),
+        independent of the writer's per-line correctness.
+        """
+        from claude_comms.notifier import NotificationWriter
+
+        writer = NotificationWriter(
+            hook_env["notif_dir"], enabled=True, cue_on_broadcast=False
+        )
+        body = 'first line\nsecond "quoted" line — café 日本語'
+        msg = {
+            "id": "e2e2",
+            "conv": "general",
+            "sender": {"key": "b1c2d3e4", "name": "Alice", "type": "claude"},
+            "recipients": [SAMPLE_KEY],
+            "mentions": None,
+            "body": body,
+        }
+        writer.write(msg)
+
+        raw = (hook_env["notif_dir"] / f"{SAMPLE_KEY}.jsonl").read_text(
+            encoding="utf-8"
+        )
+        physical = [ln for ln in raw.split("\n") if ln]
+        assert len(physical) == 1
+        # Exactly what the hook's step-4 per-line parser runs:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys,json; print(json.load(sys.stdin).get('body',''))",
+            ],
+            input=physical[0],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert proc.returncode == 0
+        assert json.loads(physical[0])["body"] == body
+
+    def test_full_hook_survives_hostile_body(self, hook_env):
+        """The FULL generated hook must deliver a cue whose body contains
+        newlines, quotes, unicode, braces, and shell/python metacharacters.
+
+        Regression: step-5 used to interpolate the body into a ``python3 -c``
+        source string, so a newline/quote produced a SyntaxError (the whole
+        notification was silently dropped) and ``$(...)``/backticks were a
+        command-injection vector. The body is now passed via env var and parsed
+        in python — content is inert."""
+        from claude_comms.notifier import NotificationWriter
+
+        writer = NotificationWriter(
+            hook_env["notif_dir"], enabled=True, cue_on_broadcast=False
+        )
+        body = (
+            "l1\nl2 'q' \"dq\" café 日本語 {not:a,dict} $(touch /tmp/cc_pwned_xyz) `id`"
+        )
+        writer.write(
+            {
+                "id": "hostile1",
+                "conv": "general",
+                "sender": {"key": "b1c2d3e4", "name": "al'ice", "type": "claude"},
+                "recipients": [SAMPLE_KEY],
+                "mentions": None,
+                "body": body,
+            }
+        )
+        result = self._run_hook(hook_env)
+        assert result.returncode == 0, result.stderr
+        out = json.loads(result.stdout)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        assert "New messages" in ctx
+        assert "café 日本語" in ctx
+        # The injection payload is surfaced as inert text, never executed.
+        assert "$(touch /tmp/cc_pwned_xyz)" in ctx
+        assert not Path("/tmp/cc_pwned_xyz").exists()

@@ -1498,6 +1498,15 @@ def start(
                 f"{_log_exporter.log_dir} (format: {_log_exporter.fmt})"
             )
 
+            # Notification cue writer so the PostToolUse hook can push mid-turn
+            # messages. Registry global is reassigned during create_server, so
+            # resolve it lazily via the provider (NOT captured at construction).
+            from claude_comms.notifier import NotificationWriter
+
+            _notifier = NotificationWriter.from_config(
+                config, registry_provider=lambda: _mcp_mod._registry
+            )
+
             # Start MQTT subscriber to feed messages into the MCP store + disk
             broker_cfg = config.get("broker", {})
             broker_host = broker_cfg.get("host", "127.0.0.1")
@@ -1513,6 +1522,7 @@ def start(
                     _mcp_mod._store,
                     _mcp_mod._deduplicator,
                     log_exporter=_log_exporter,
+                    notifier=_notifier,
                 )
             )
 

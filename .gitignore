@@ -64,3 +64,6 @@ mockups/*
 
 # Internal recruiter-facing demo guide: kept on local disk, not published
 docs/dev/DEMOS.md
+
+# agent harness run outputs (real-agent, non-deterministic, may contain transcripts)
+tools/agent-harness/runs/
