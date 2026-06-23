@@ -77,9 +77,9 @@ def reactions_topic(conv_id: str) -> str:
     return f"claude-comms/conv/{conv_id}/reactions"
 
 
-def _validate_emoji(value: str) -> str:
-    if not isinstance(value, str):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise ValueError("emoji must be a string")  # pyright: ignore[reportUnreachable]
+def _validate_emoji(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("emoji must be a string")
     stripped = value.strip()
     if not stripped:
         raise ValueError("emoji must not be empty")

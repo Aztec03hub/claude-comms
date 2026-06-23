@@ -541,6 +541,16 @@ def build_capabilities_route(config: dict):
 _NOTIF_KEY_RE = re.compile(r"^[0-9a-f]{8}$")
 
 
+def _empty_cors_headers(*args: object) -> dict[str, str]:
+    """Default no-op CORS-header provider for route builders under test.
+
+    Accepts and discards the request argument so callers can invoke it like the
+    real per-request CORS function while contributing no headers.
+    """
+    del args
+    return {}
+
+
 def build_notifications_route(_config: dict | None = None, cors=None):
     """GET /api/notifications/{key} — fetch-and-drain queued notification cues.
 
@@ -561,12 +571,13 @@ def build_notifications_route(_config: dict | None = None, cors=None):
     (unused). ``cors`` is the per-request CORS-header function injected by
     ``_run``; defaults to a no-op so tests need no CORS wiring.
     """
+    del _config
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
     from claude_comms.hook_installer import _notification_dir
 
-    cors_fn = cors or (lambda _request: {})
+    cors_fn = cors or _empty_cors_headers
 
     async def _handler(request):  # type: ignore[no-untyped-def]
         key = request.path_params.get("key", "")
@@ -631,7 +642,7 @@ def build_identity_route(config: dict, cors=None):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    cors_fn = cors or (lambda _request: {})
+    cors_fn = cors or _empty_cors_headers
 
     async def _handler(request):  # type: ignore[no-untyped-def]
         identity = config.get("identity", {}) or {}
@@ -649,10 +660,11 @@ def build_identity_route(config: dict, cors=None):
 
 def build_identity_options_route(_config: dict, cors=None):
     """OPTIONS preflight for CORS on /api/identity."""
+    del _config
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    cors_fn = cors or (lambda _request: {})
+    cors_fn = cors or _empty_cors_headers
 
     async def _handler(request):  # type: ignore[no-untyped-def]
         return JSONResponse({}, headers=cors_fn(request))
@@ -671,7 +683,7 @@ def build_conversations_route(config: dict, get_conversations, cors=None):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    cors_fn = cors or (lambda _request: {})
+    cors_fn = cors or _empty_cors_headers
 
     async def _handler(request):  # type: ignore[no-untyped-def]
         # ``?all`` is accepted for back-compat but is a no-op — the endpoint
@@ -690,10 +702,11 @@ def build_conversations_route(config: dict, get_conversations, cors=None):
 
 def build_conversations_options_route(_config: dict, cors=None):
     """OPTIONS preflight for CORS on /api/conversations."""
+    del _config
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    cors_fn = cors or (lambda _request: {})
+    cors_fn = cors or _empty_cors_headers
 
     async def _handler(request):  # type: ignore[no-untyped-def]
         return JSONResponse({}, headers=cors_fn(request))
@@ -1351,6 +1364,7 @@ def main(
     ),
 ) -> None:
     """Distributed inter-Claude messaging platform."""
+    del _version
 
 
 conv_app = typer.Typer(help="Conversation management commands.")
@@ -2099,6 +2113,10 @@ def start(
                     publish_fn_provider=lambda: _mcp_mod._publish_fn,
                 )
             )
+            # Keep a strong reference so the fire-and-forget task is not
+            # garbage-collected mid-run (asyncio holds only a weak ref); the
+            # name lives until the enclosing daemon scope exits at shutdown.
+            _ = _profile_status_expire_task
             console.print(
                 "  [green]Profile-status auto-expire[/green] sweep started (~60s tick)"
             )
