@@ -390,6 +390,9 @@ def build_csp(config: dict) -> str:
 
     if api_base:
         # ── LEGACY reverse-proxy compat (web.api_base set) ─────────────────
+        # DEPRECATED under single-origin (see single-origin-design.md Phase 4);
+        # kept functional for legacy reverse-proxy deployments; scheduled for
+        # removal in a later pass.
         # Reverse-proxy mode: api_base is authoritative for the REST origin.
         connect_origins.append(api_base)
         ws_url = web_cfg.get("ws_url")
@@ -1449,6 +1452,41 @@ def _require_config() -> dict[str, Any]:
     return load_config(config_path)
 
 
+def _warn_deprecated_cross_origin_config(config: dict[str, Any]) -> None:
+    """Emit one-line deprecation warnings for legacy cross-origin config keys.
+
+    Single-origin serving (see single-origin-design.md Phase 4) makes the
+    cross-origin knobs below unnecessary. They are DEPRECATED but remain fully
+    functional for legacy reverse-proxy deployments; removal is deferred to a
+    later pass. Each warning fires once at daemon startup, and ONLY when the
+    corresponding key is actually set / non-empty.
+    """
+    web_cfg = config.get("web", {}) or {}
+
+    if web_cfg.get("api_base"):
+        logger.warning(
+            "web.api_base is set — single-origin serving makes it unnecessary; "
+            "it still works (legacy reverse-proxy mode) but will be removed in a "
+            "future release. You can unset it unless you front the daemon with an "
+            "external reverse proxy on a different origin."
+        )
+
+    if web_cfg.get("ws_url"):
+        logger.warning(
+            "web.ws_url is set — single-origin serving makes it unnecessary; it "
+            "still works (legacy reverse-proxy mode) but will be removed in a "
+            "future release. You can unset it unless you front the daemon with an "
+            "external reverse proxy on a different origin."
+        )
+
+    if web_cfg.get("csp_extra_connect_src"):
+        logger.warning(
+            "web.csp_extra_connect_src is non-empty — usually unnecessary under "
+            "single-origin (connect-src is 'self'); kept functional for legacy "
+            "cross-origin deployments and scheduled for removal in a later pass."
+        )
+
+
 def _read_pid() -> int | None:
     """Read the daemon PID file; return PID or None."""
     from claude_comms.broker import EmbeddedBroker
@@ -1579,6 +1617,11 @@ def start(
 
     # Foreground mode — run the async event loop
     console.print("[bold]Starting claude-comms daemon...[/bold]")
+
+    # Single-origin Phase 4: warn (once, at startup) about any legacy
+    # cross-origin config keys that are set. Deprecation-only — the legacy
+    # reverse-proxy path stays fully functional; removal is deferred.
+    _warn_deprecated_cross_origin_config(config)
 
     async def _run_daemon() -> None:
         import logging as _logging
