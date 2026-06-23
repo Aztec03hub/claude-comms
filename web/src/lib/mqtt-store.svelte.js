@@ -75,18 +75,26 @@ export function sameOriginBrokerUrl(opts = {}) {
 /**
  * Resolve the broker WebSocket URL the client should connect to.
  *
+ * PAGE-ORIGIN-FIRST. The broker the client targets must live on the SAME host
+ * the page was loaded from — a host can't reach its own Tailscale IP (hairpin)
+ * and a cross-host origin is CSP-blocked. So the daemon-advertised absolute URL
+ * is honored ONLY when its host matches the page host; otherwise it's ignored
+ * in favor of page-relative derivation. (#17 regression: the advertised
+ * Tailscale URL was preferred unconditionally, so a localhost page wrongly
+ * targeted the Tailscale broker — hairpin + CSP block.)
+ *
  * Precedence:
- *   1. Daemon-advertised explicit ``broker_ws_url`` (api_base / Tailscale /
- *      LAN host configured) — wins so EVERY browser uses the known-good host.
- *   2. Same-origin path when the page is served over HTTPS (assume a reverse
+ *   1. Same-origin path when the page is served over HTTPS (assume a reverse
  *      proxy like ``tailscale serve`` maps the broker WS onto this origin) or
  *      when the daemon flags ``broker_ws_same_origin``. Yields
  *      ``wss://<same-origin><path>`` (no port).
+ *   2. Daemon-advertised explicit ``broker_ws_url`` — but ONLY when its host
+ *      equals the page host. A mismatched advertised host is ignored.
  *   3. Fallback ``<ws|wss>://<page-host>:<port><path>`` from the page,
  *      honoring the advertised port/path when present.
  *
- * This fixes both the WSL2 "Reconnecting to broker" loop (the client no longer
- * blindly guesses) and the Tailscale-HTTPS mixed-content case.
+ * This fixes the WSL2 "Reconnecting to broker" loop, the Tailscale-HTTPS
+ * mixed-content case, and the desktop localhost-hairpin (#17 regression).
  *
  * @param {object|null|undefined} caps - Parsed /api/capabilities response.
  * @param {{hostname: string, protocol: string}} [loc] - Page location override (tests).
@@ -97,16 +105,24 @@ export function resolveBrokerUrl(caps, loc = pageLocation()) {
     ? caps.broker_ws_path
     : DEFAULT_BROKER_WS_PATH;
 
-  // 1. Explicit advertised URL wins.
-  if (caps && typeof caps.broker_ws_url === 'string' && caps.broker_ws_url) {
-    return caps.broker_ws_url;
-  }
-
-  // 2. Same-origin: page is HTTPS (proxy assumption) or daemon flagged it.
+  // 1. Same-origin: page is HTTPS (reverse-proxy assumption) or daemon flagged
+  //    it. The broker rides the page's own origin (port 443, proxied path).
   const sameOrigin = (caps && caps.broker_ws_same_origin === true)
     || loc.protocol === 'https:';
   if (sameOrigin) {
     return sameOriginBrokerUrl({ host: loc.hostname, protocol: loc.protocol, path });
+  }
+
+  // 2. Daemon-advertised absolute URL — only if it points at the page's host.
+  //    A different host would hairpin / be CSP-blocked, so ignore it.
+  if (caps && typeof caps.broker_ws_url === 'string' && caps.broker_ws_url) {
+    try {
+      if (new URL(caps.broker_ws_url).hostname === loc.hostname) {
+        return caps.broker_ws_url;
+      }
+    } catch {
+      // Malformed advertised URL → ignore, derive page-relative below.
+    }
   }
 
   // 3. Fallback: page host + advertised/default port, scheme from page protocol.

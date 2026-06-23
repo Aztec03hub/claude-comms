@@ -357,15 +357,24 @@ def build_csp(config: dict) -> str:
     connect_origins: list[str] = ["'self'"]
 
     if api_base:
-        # Reverse-proxy mode: api_base is authoritative.
+        # Reverse-proxy mode: api_base is authoritative for the REST origin.
         connect_origins.append(api_base)
         ws_url = web_cfg.get("ws_url")
         if ws_url:
+            # Operator pinned an explicit broker WS origin (e.g. a same-origin
+            # tailscale-serve path). Trust it verbatim.
             connect_origins.append(ws_url)
-        elif api_base.startswith("https://"):
-            connect_origins.append("wss://" + api_base[len("https://") :] + "/mqtt")
-        elif api_base.startswith("http://"):
-            connect_origins.append("ws://" + api_base[len("http://") :] + "/mqtt")
+        else:
+            # Derive the external broker WS origin from the reachable host and
+            # the BROKER ws_port — NOT the api_base REST port. The broker
+            # listens on ws_port (default 9001), so an api_base-port-derived
+            # origin (e.g. ws://host:9920/mqtt) is the wrong port and blocks
+            # the real connection. The client targets ws://<host>:<ws_port>
+            # (no /mqtt in the origin — origins are scheme://host:port).
+            external_host = _external_reachable_host(config)
+            if external_host:
+                connect_origins.append(f"ws://{external_host}:{ws_port}")
+                connect_origins.append(f"wss://{external_host}:{ws_port}")
     else:
         # Direct mode: include http/https + ws/wss variants for every
         # browser-visible alias of the configured loopback bind. Both

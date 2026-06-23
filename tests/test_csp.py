@@ -174,8 +174,38 @@ def test_csp_for_api_base_uses_external_origin() -> None:
     }
     csp = build_csp(cfg)
     assert "https://comms.example.com" in csp
-    # ws derived from api_base scheme
-    assert "wss://comms.example.com/mqtt" in csp
+    # Broker WS origin uses the BROKER ws_port, NOT the api_base REST port, and
+    # is an origin (scheme://host:port) — no /mqtt path. (#17 regression: the
+    # old code derived ws from the api_base port + /mqtt, the wrong port.)
+    assert "wss://comms.example.com:9001" in csp
+    assert "ws://comms.example.com:9001" in csp
+    # And it must NOT emit the old api_base-port-derived /mqtt broker origin.
+    assert "/mqtt" not in csp
+
+
+def test_csp_api_base_broker_uses_ws_port_not_api_port() -> None:
+    """#17 regression: api_base on the REST port (9920) must NOT leak into the
+    broker WS origin. The broker lives on broker.ws_port (9001) — the CSP must
+    allow ws://<host>:9001 and wss://<host>:9001, never ws://<host>:9920/mqtt.
+    """
+    cfg = {
+        "broker": {"ws_host": "127.0.0.1", "ws_port": 9001},
+        "mcp": {"host": "127.0.0.1", "port": 9920},
+        "web": {"api_base": "https://phil-desktop.tail16c27f6.ts.net:9920"},
+    }
+    csp = build_csp(cfg)
+    host = "phil-desktop.tail16c27f6.ts.net"
+    # Broker WS on the correct port.
+    assert f"ws://{host}:9001" in csp
+    assert f"wss://{host}:9001" in csp
+    # REST origin on the api port (the api_base itself).
+    assert "https://phil-desktop.tail16c27f6.ts.net:9920" in csp
+    # Loopback REST + broker always present.
+    assert "http://localhost:9920" in csp
+    assert "ws://localhost:9001" in csp
+    # The bogus api-port-derived broker origin must be gone.
+    assert f"ws://{host}:9920/mqtt" not in csp
+    assert f"wss://{host}:9920/mqtt" not in csp
 
 
 def test_csp_for_api_base_still_allows_loopback_rest_and_broker() -> None:
