@@ -325,7 +325,20 @@ def _advertised_broker_ws(config: dict) -> dict:
     broker_cfg = config.get("broker", {}) or {}
     ws_port = broker_cfg.get("ws_port", 9001)
     ws_path = "/mqtt"
-    out: dict = {"broker_ws_port": ws_port, "broker_ws_path": ws_path}
+    # Single-origin Phase 2: the web app now bridges the embedded broker at
+    # ``/mqtt`` on its OWN port (see ``build_mqtt_ws_route``), so the browser
+    # reaches the broker on the same origin as the SPA. Advertise that so the
+    # client connects to ``ws(s)://<page-host>/mqtt`` with NO port — correct for
+    # http-localhost, http-LAN/Tailscale, AND https-tailscale-serve uniformly,
+    # all covered by the existing ``connect-src 'self'`` CSP. The legacy
+    # ``broker_ws_port`` / ``broker_ws_url`` fields stay for back-compat with
+    # cached SPA bundles that still derive ``ws://host:9001/mqtt`` (the native
+    # ``:9001`` listener is kept bound; CSP collapse is Phase 3).
+    out: dict = {
+        "broker_ws_same_origin": True,
+        "broker_ws_port": ws_port,
+        "broker_ws_path": ws_path,
+    }
 
     host = _external_reachable_host(config)
     if host:
@@ -735,6 +748,184 @@ def build_web_token_route():
         return JSONResponse({"token": token})
 
     return Route("/api/web-token", _handler, methods=["GET"])
+
+
+# ---------------------------------------------------------------------------
+# Single-origin Phase 2: in-process broker WebSocket bridge at /mqtt
+#
+# The browser reaches the embedded amqtt broker at ``ws(s)://<page-host>/mqtt``
+# (same origin as the SPA on the web port) WITHOUT a second port or a socket
+# proxy. A Starlette WebSocketRoute hands each accepted connection to amqtt's
+# PUBLIC ``Broker.external_connected(reader, writer, listener_name)`` via a pair
+# of adapters that implement amqtt's ``ReaderAdapter`` / ``WriterAdapter``
+# interface, mirroring ``amqtt/adapters.py``'s ``WebSocketsReader`` /
+# ``WebSocketsWriter`` exactly (BINARY frames only — a stray text frame would
+# corrupt the MQTT byte stream). Bridged sessions join the same
+# ``_sessions`` / ``_subscriptions`` as native TCP/WS clients, so TUI <-> web
+# <-> MCP interop, retained messages, and LWT all work unchanged.
+#
+# ── FUTURE / CLOUD NOTE (NOT a TODO, NOT PLANNED as of 2026-06-23) ──
+# This in-process bridge is ideal for personal/tailnet single-process use. For
+# public/cloud HA you would instead run an EXTERNAL broker (EMQX / Mosquitto)
+# plus a shared database, and point the web tier at it — the embedded amqtt
+# broker + SQLite assume one trusted process. Not needed for personal use.
+# ---------------------------------------------------------------------------
+
+
+class _ASGIWebSocketReader:
+    """amqtt ``ReaderAdapter`` over a Starlette ``WebSocket`` (binary frames).
+
+    Mirrors ``amqtt.adapters.WebSocketsReader``: buffers received binary frames
+    and reassembles partial reads in ``read(n)`` (one MQTT packet may arrive
+    split across multiple WS frames, or several packets may arrive in one). On
+    abrupt close Starlette raises ``WebSocketDisconnect``; we translate that to
+    EOF (return whatever is buffered, ``b""`` once drained) the same way the
+    native adapter suppresses ``websockets.ConnectionClosed`` — amqtt's reader
+    loop treats the empty/short read as a clean disconnect.
+    """
+
+    def __init__(self, websocket) -> None:  # type: ignore[no-untyped-def]
+        import io
+
+        self._ws = websocket
+        self._stream = io.BytesIO(b"")
+        self._eof = False
+
+    async def read(self, n: int = -1) -> bytes:
+        await self._feed_buffer(n)
+        return self._stream.read(n)
+
+    async def _feed_buffer(self, n: int = 1) -> None:
+        import io
+
+        from starlette.websockets import WebSocketDisconnect, WebSocketState
+
+        buffer = bytearray(self._stream.read())
+        while not self._eof and len(buffer) < n:
+            try:
+                message = await self._ws.receive_bytes()
+            except (WebSocketDisconnect, RuntimeError):
+                # WebSocketDisconnect: peer closed. RuntimeError: Starlette
+                # raises this if receive is called after a disconnect/close was
+                # already observed. Either way → EOF (mirrors the native
+                # adapter's ``suppress(ConnectionClosed)`` + break-on-None).
+                self._eof = True
+                break
+            if message is None:  # defensive; receive_bytes returns bytes
+                self._eof = True
+                break
+            buffer.extend(message)
+            if self._ws.application_state == WebSocketState.DISCONNECTED:
+                self._eof = True
+                break
+        self._stream = io.BytesIO(buffer)
+
+    def feed_eof(self) -> None:
+        self._eof = True
+
+
+class _ASGIWebSocketWriter:
+    """amqtt ``WriterAdapter`` over a Starlette ``WebSocket`` (binary frames).
+
+    Mirrors ``amqtt.adapters.WebSocketsWriter``: ``write`` buffers, ``drain``
+    flushes the buffer as one binary WS frame (natural backpressure — uvicorn's
+    ``send_bytes`` awaits the transport). ``get_peer_info`` comes from
+    ``websocket.client``; ``get_ssl_info`` is ``None`` (TLS, if any, is
+    terminated by the front proxy / uvicorn before this layer).
+    """
+
+    def __init__(self, websocket) -> None:  # type: ignore[no-untyped-def]
+        import io
+
+        self._ws = websocket
+        self._stream = io.BytesIO(b"")
+        self._closed = False
+
+    def write(self, data: bytes) -> None:
+        self._stream.write(data)
+
+    async def drain(self) -> None:
+        import io
+
+        data = self._stream.getvalue()
+        if data:
+            from starlette.websockets import WebSocketDisconnect
+
+            try:
+                await self._ws.send_bytes(data)
+            except (WebSocketDisconnect, RuntimeError):
+                # Peer gone mid-write; mark closed so further drains are no-ops.
+                self._closed = True
+        self._stream = io.BytesIO(b"")
+
+    def get_peer_info(self):  # type: ignore[no-untyped-def]
+        client = getattr(self._ws, "client", None)
+        if client is None:
+            # No peer info (e.g. ASGI server without client tuple) → amqtt logs
+            # a warning and aborts the session, which is correct here.
+            return None
+        return client.host, client.port
+
+    def get_ssl_info(self):  # type: ignore[no-untyped-def]
+        return None
+
+    async def close(self) -> None:
+        from starlette.websockets import WebSocketDisconnect, WebSocketState
+
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self._ws.application_state != WebSocketState.DISCONNECTED:
+                await self._ws.close()
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
+
+def build_mqtt_ws_route(broker_provider):  # type: ignore[no-untyped-def]
+    """Build the ``WebSocketRoute("/mqtt", ...)`` broker bridge.
+
+    ``broker_provider`` is a zero-arg callable returning the live
+    :class:`~claude_comms.broker.EmbeddedBroker` (the ``broker_holder[0]``
+    pattern used in ``_run_daemon``), or ``None`` while the broker is
+    mid-(re)start. The endpoint:
+
+      1. ``accept(subprotocol="mqtt")`` — MQTT-over-WS REQUIRES the ``mqtt``
+         subprotocol be echoed (mqtt.js sends it and rejects the socket
+         otherwise; amqtt's native WS listener sets it too).
+      2. wraps the socket in the amqtt reader/writer adapters above;
+      3. hands it to ``amqtt_broker.external_connected(reader, writer,
+         "ws-external")`` — which runs the full session until disconnect.
+
+    If the broker (or its live amqtt instance) is unavailable, the WS is closed
+    with code 1013 ("try again later") so the client retries.
+    """
+    from starlette.routing import WebSocketRoute
+    from starlette.websockets import WebSocketDisconnect
+
+    async def _endpoint(websocket):  # type: ignore[no-untyped-def]
+        # Echo the mqtt subprotocol (REQUIRED for MQTT-over-WS clients).
+        await websocket.accept(subprotocol="mqtt")
+
+        broker = broker_provider() if broker_provider else None
+        amqtt_broker = getattr(broker, "amqtt_broker", None) if broker else None
+        if amqtt_broker is None:
+            # Broker mid-restart / not started → 1013 Try Again Later.
+            await websocket.close(code=1013)
+            return
+
+        reader = _ASGIWebSocketReader(websocket)
+        writer = _ASGIWebSocketWriter(websocket)
+        try:
+            await amqtt_broker.external_connected(reader, writer, "ws-external")
+        except WebSocketDisconnect:
+            # Abrupt browser close mid-session; amqtt's session teardown (LWT,
+            # subscription cleanup) runs in external_connected's finally.
+            pass
+        finally:
+            await writer.close()
+
+    return WebSocketRoute("/mqtt", endpoint=_endpoint)
 
 
 def build_artifact_post_route(
@@ -2028,6 +2219,14 @@ def start(
                                 "/mcp",
                                 endpoint=StreamableHTTPASGIApp(_mcp_session_mgr),
                             ),
+                            # Single-origin Phase 2: bridge the embedded broker
+                            # at /mqtt on the web port via amqtt's public
+                            # external_connected. ``broker_holder[0]`` is the
+                            # live EmbeddedBroker (None while mid-restart →
+                            # endpoint closes the WS with 1013). Registered
+                            # BEFORE the static catch-all so the SPA fallback
+                            # cannot swallow it.
+                            build_mqtt_ws_route(lambda: broker_holder[0]),
                             Mount(
                                 "/assets",
                                 app=StaticFiles(directory=str(_web_dist / "assets")),

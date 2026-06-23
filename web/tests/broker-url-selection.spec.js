@@ -64,6 +64,22 @@ describe('resolveBrokerUrl — same-origin (HTTPS proxy)', () => {
     expect(resolveBrokerUrl(caps, HTTP('proxy.local'))).toBe('ws://proxy.local/mqtt');
   });
 
+  it('single-origin Phase 2: broker_ws_same_origin true on http-localhost → ws://localhost/mqtt (NO port)', () => {
+    // The Phase 2 daemon emits broker_ws_same_origin:true because it now bridges
+    // the broker at /mqtt on the web port. Even though broker_ws_port is also
+    // advertised for back-compat, the same-origin flag must win and produce a
+    // PORT-LESS ws URL on the page's own origin (covered by connect-src 'self').
+    const caps = {
+      broker_ws_same_origin: true,
+      broker_ws_port: 9001,
+      broker_ws_path: '/mqtt',
+    };
+    const url = resolveBrokerUrl(caps, HTTP('localhost'));
+    expect(url).toBe('ws://localhost/mqtt');
+    expect(url).not.toContain(':9001');
+    expect(url).not.toContain('9001');
+  });
+
   it('honors a custom path on same-origin', () => {
     const caps = { broker_ws_path: '/broker' };
     expect(resolveBrokerUrl(caps, HTTPS('box.ts.net'))).toBe('wss://box.ts.net/broker');

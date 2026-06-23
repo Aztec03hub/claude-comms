@@ -390,6 +390,14 @@ def _build_broker_config(
         "listeners": {
             "default": {"type": "tcp", "bind": f"{host}:{port}"},
             "ws-mqtt": {"type": "ws", "bind": f"{ws_host}:{ws_port}"},
+            # Single-origin Phase 2: an ``external`` listener (no ``bind``) so
+            # amqtt registers an ``ExternalServer`` for it. The web app's
+            # in-process ``/mqtt`` WebSocket bridge hands already-established
+            # connections to ``Broker.external_connected(reader, writer,
+            # "ws-external")``; the ExternalServer makes connection accounting +
+            # lifecycle work for those bridged sessions exactly like the native
+            # tcp/ws listeners. It opens no socket of its own.
+            "ws-external": {"type": "external"},
         },
         "sys_interval": 0,
         "topic-check": {"enabled": False},
@@ -606,6 +614,19 @@ class EmbeddedBroker:
     def is_running(self) -> bool:
         """Whether the broker is currently running."""
         return self._running
+
+    @property
+    def amqtt_broker(self) -> Any:
+        """The live :class:`amqtt.broker.Broker`, or ``None`` if not started.
+
+        Exposed so the web app's in-process ``/mqtt`` WebSocket bridge can call
+        ``amqtt_broker.external_connected(reader, writer, "ws-external")`` and
+        join bridged browser connections to the SAME ``_sessions`` /
+        ``_subscriptions`` as native TCP/WS clients (preserving TUI <-> web <->
+        MCP interop, retained messages, and LWT). ``None`` while the broker is
+        mid-(re)start; callers must guard for it.
+        """
+        return self._broker
 
     # -- PID file helpers --------------------------------------------------
 
