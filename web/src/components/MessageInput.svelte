@@ -20,6 +20,7 @@
   @prop {Function} onOpenEmoji - Callback invoked to open the emoji picker.
 -->
 <script>
+  import { tick } from 'svelte';
   import MentionDropdown from './MentionDropdown.svelte';
   import { Type, Code, Paperclip, Smile, SendHorizontal } from 'lucide-svelte';
   import {
@@ -688,7 +689,7 @@
    * Commit a specific candidate at the current active suggestion.
    * @param {{name:string,key:string}} candidate
    */
-  function commitCandidate(candidate) {
+  async function commitCandidate(candidate) {
     if (!activeSuggestion) return;
     const atIndex = activeSuggestion.atIndex;
     const queryEnd = atIndex + 1 + activeSuggestion.query.length;
@@ -702,14 +703,23 @@
     }
     prevText = inputValue;
     prevCursor = r.newCursor;
-    // Restore cursor + focus on the next tick so the textarea is updated
-    // before we move the caret.
-    queueMicrotask(() => {
-      if (inputEl) {
-        inputEl.focus();
-        inputEl.setSelectionRange(r.newCursor, r.newCursor);
-      }
-    });
+    // Restore cursor + focus AFTER Svelte has flushed the new bound value
+    // into the textarea DOM. We MUST await tick() here, NOT queueMicrotask:
+    // writing `inputValue` (a $state bound via bind:value) schedules a DOM
+    // write inside Svelte's flush, and a bare microtask is not guaranteed to
+    // run after that flush. If we move the caret before the grown value lands
+    // in the DOM, the value write resets the caret (browsers push it to the
+    // end of the freshly-written content), so the next character the user
+    // types arrives at the wrong offset — visually landing "after the
+    // blinking cursor", and the drift compounds with each added mention.
+    // tick() resolves only once pending state changes are applied, so
+    // setSelectionRange always runs against the up-to-date value, placing the
+    // caret immediately after the inserted @mention.
+    await tick();
+    if (inputEl) {
+      inputEl.focus();
+      inputEl.setSelectionRange(r.newCursor, r.newCursor);
+    }
   }
 
   /**
