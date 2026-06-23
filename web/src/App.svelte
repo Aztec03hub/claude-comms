@@ -678,6 +678,19 @@
     toasts = toasts.filter(t => t.id !== id);
   }
 
+  // Surface a transient System toast for a server-refused mutation
+  // (delete / archive / kick) so the user sees the reason instead of a
+  // silent no-op. Routed to children via the ``onRequestToast`` prop.
+  function requestToast(text) {
+    if (typeof text !== 'string' || !text) return;
+    addToast({
+      id: 'sys-' + Date.now(),
+      sender: { name: 'System', key: 'system', type: 'system' },
+      channel: store.activeChannel,
+      text,
+    });
+  }
+
   function handleToastActivate(detail) {
     // UX G-13: clicking a toast routes the user to the source channel.
     // If the store ships a goToMessage helper (and the toast carries a
@@ -822,7 +835,10 @@
         severity: 'danger',
       });
       if (!proceed) return;
-      await store.kickMember(channel.id, member.key);
+      const res = await store.kickMember(channel.id, member.key);
+      if (res && res.success === false) {
+        requestToast(res.error || `Could not kick ${member.name || member.key}.`);
+      }
     } else if (actionId === 'mute') {
       store.muteUserGlobally(member.key, true);
     } else if (actionId === 'unmute') {
@@ -881,6 +897,7 @@
       onStarToggle={(channelId) => store.toggleStar(channelId)}
       onConfirmDestructive={confirmDestructive}
       onShowUndoToast={showUndoToast}
+      onRequestToast={requestToast}
     />
   </div>
 
@@ -1208,6 +1225,7 @@
     }}
     onChannelJoin={(channelId) => store.joinChannel(channelId)}
     onConfirmDestructive={confirmDestructive}
+    onRequestToast={requestToast}
   />
 {/if}
 

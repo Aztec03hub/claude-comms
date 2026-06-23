@@ -359,6 +359,38 @@ export async function updateName(key, newName) {
 }
 
 /**
+ * Parse the text payload of an MCP ``content[0].text`` block into the
+ * tool's JSON result object, tolerating the concise-output framing
+ * (``<summary>\n(ctrl+o for full)\n---\n<full JSON>``) added by
+ * ``mcp_server._concise``. Tries the whole block first (bare-JSON tools /
+ * older clients), then the substring after the last ``\n---\n`` marker.
+ *
+ * @param {string} text
+ * @returns {object | null} parsed object, or null when nothing parses.
+ */
+export function parseToolText(text) {
+  if (typeof text !== 'string' || !text) return null;
+  // Fast path: the whole block is JSON (no concise framing).
+  try {
+    return JSON.parse(text);
+  } catch {
+    /* fall through to framed-body extraction */
+  }
+  // Concise framing: full JSON follows the last ``---`` line.
+  const marker = '\n---\n';
+  const idx = text.lastIndexOf(marker);
+  if (idx !== -1) {
+    const tail = text.slice(idx + marker.length);
+    try {
+      return JSON.parse(tail);
+    } catch {
+      /* not parseable */
+    }
+  }
+  return null;
+}
+
+/**
  * Generic FastMCP JSON-RPC `tools/call` helper used by v0.4.0+ channel
  * lifecycle methods in the store. Mirrors the transport pattern proven in
  * ``updateName`` (UX G-9 showstopper) but exposes a result envelope that
@@ -433,17 +465,18 @@ export async function mcpCall(toolName, args, { timeoutMs = 5000, signal } = {})
     }
 
     // FastMCP wraps tool returns in `result.structuredContent` (preferred)
-    // or `result.content[0].text` (older clients). Try both.
+    // or `result.content[0].text`. As of the concise-output change
+    // (mcp_server._concise), mutation tools return a text-only
+    // CallToolResult with NO structuredContent and a framed body shaped
+    // ``<summary>\n(ctrl+o for full)\n---\n<full JSON>`` — so the text is
+    // not bare JSON. Parse defensively: try the whole block, then the
+    // portion after the last ``\n---\n`` framing marker.
     const result = body?.result || {};
     let payload = result.structuredContent;
     if (!payload && Array.isArray(result.content)) {
       const textBlock = result.content.find((c) => c && c.type === 'text');
       if (textBlock && typeof textBlock.text === 'string') {
-        try {
-          payload = JSON.parse(textBlock.text);
-        } catch {
-          payload = null;
-        }
+        payload = parseToolText(textBlock.text);
       }
     }
 
@@ -451,7 +484,15 @@ export async function mcpCall(toolName, args, { timeoutMs = 5000, signal } = {})
       return { success: false, error: 'Server returned an empty response.' };
     }
     if (payload.status === 'error' || payload.error) {
-      return { success: false, error: payload.error || payload.message || 'Tool returned an error.' };
+      // Prefer the human-readable ``message`` so refusal reasons surface in
+      // toasts. Tools encode ``error`` either as a boolean flag (with the
+      // reason in ``message``) or as a short machine code string; fall back
+      // to it only when no message is present.
+      const reason =
+        (typeof payload.message === 'string' && payload.message) ||
+        (typeof payload.error === 'string' && payload.error) ||
+        'Tool returned an error.';
+      return { success: false, error: reason, reason: payload.reason };
     }
     return { success: true, payload };
   } catch (err) {

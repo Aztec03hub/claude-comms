@@ -13,6 +13,7 @@
   import LeaveChannelDialog from './LeaveChannelDialog.svelte';
   import StatusEditor from './StatusEditor.svelte';
   import * as notifications from '../lib/notifications.svelte.js';
+  import { isReservedChannel } from '../lib/channels.js';
   import pkg from '../../package.json';
 
   const APP_VERSION = pkg?.version || '';
@@ -31,6 +32,9 @@
     // them with vi.fn() that resolves on demand.
     onConfirmDestructive,
     onShowUndoToast,
+    // Optional. ``onRequestToast(text)`` surfaces a transient System toast
+    // (used to report a server-refused delete instead of a silent no-op).
+    onRequestToast,
   } = $props();
 
   // Footer connection-status binding (UX G-25) — three-state mirror of ConnectionStatus.svelte.
@@ -190,7 +194,12 @@
       } else if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
         ok = window.confirm(`Delete #${channelName}? This cannot be undone.`);
       }
-      if (ok) store.deleteChannel(c.id);
+      if (ok) {
+        const res = await store.deleteChannel(c.id);
+        if (res && res.success === false && typeof onRequestToast === 'function') {
+          onRequestToast(res.error || `Could not delete #${channelName}.`);
+        }
+      }
       return;
     }
     if (actionId === 'info' && typeof onBrowseChannels === 'function') onBrowseChannels();
@@ -230,6 +239,20 @@
     && store.userProfile?.key != null
     && contextMenuChannel.createdBy === store.userProfile.key
   );
+  // Real per-channel role (hydrated from the server). An admin/owner who is
+  // NOT the literal creator must still see Close/Delete, so the context menu
+  // gates on creator OR owner/admin rather than creator alone.
+  let contextMenuRole = $derived(
+    contextMenuChannel?.id != null && typeof store.getChannelRole === 'function'
+      ? store.getChannelRole(contextMenuChannel.id)
+      : null
+  );
+  let contextMenuIsAdminOrOwner = $derived(
+    contextMenuRole === 'owner' || contextMenuRole === 'admin'
+  );
+  // Reserved channels (#general / #system) can never be deleted/archived;
+  // suppress those affordances client-side rather than offer an always-403.
+  let contextMenuIsReserved = $derived(isReservedChannel(contextMenuChannel?.id));
   // v0.4.2 Wave G follow-up [VERIFY-WAVE-G-3]: resolve the current
   // notification policy for the currently-anchored context-menu channel
   // so the Q8 quickview row label re-renders when the user cycles. The
@@ -415,6 +438,8 @@
       anchorEvent={contextMenuEvent}
       isMember={contextMenuIsMember}
       isCreator={contextMenuIsCreator}
+      isAdminOrOwner={contextMenuIsAdminOrOwner}
+      isReserved={contextMenuIsReserved}
       onAction={handleContextAction}
       onClose={closeContextMenu}
       currentNotificationPolicy={contextMenuPolicy}

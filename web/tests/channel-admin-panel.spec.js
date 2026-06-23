@@ -122,7 +122,10 @@ describe('ChannelAdminPanel: role gating', () => {
     expect(getByTestId('channel-admin-action-delete')).not.toBeNull();
   });
 
-  it('admin role hides Transfer and Delete but keeps Rename/Topic/Visibility/Mode/Archive', () => {
+  it('admin role hides Transfer but keeps Rename/Topic/Visibility/Mode/Archive/Delete', () => {
+    // Unified gate (admin-kick-delete fix): Delete is now owner OR admin,
+    // matching the sidebar context menu and the broadened backend authz.
+    // Transfer remains owner-only.
     const props = makeProps({ currentChannelRole: 'admin' });
     const { getByTestId, queryByTestId } = render(ChannelAdminPanel, { props });
     expect(getByTestId('channel-admin-panel').getAttribute('data-role')).toBe('admin');
@@ -131,8 +134,8 @@ describe('ChannelAdminPanel: role gating', () => {
     expect(getByTestId('channel-admin-action-visibility')).not.toBeNull();
     expect(getByTestId('channel-admin-action-mode')).not.toBeNull();
     expect(getByTestId('channel-admin-action-archive')).not.toBeNull();
+    expect(getByTestId('channel-admin-action-delete')).not.toBeNull();
     expect(queryByTestId('channel-admin-action-transfer')).toBeNull();
-    expect(queryByTestId('channel-admin-action-delete')).toBeNull();
   });
 
   it('member role renders the empty state and zero action buttons', () => {
@@ -386,5 +389,71 @@ describe('ChannelAdminPanel: admin role destructive paths', () => {
     await flush();
     expect(onConfirmDestructive).toHaveBeenCalledTimes(1);
     expect(onConfirmDestructive.mock.calls[0][0].severity).toBe('warning');
+  });
+
+  it('admin can delete (non-creator admin sees + fires Delete)', async () => {
+    const store = makeStore();
+    const props = makeProps({ currentChannelRole: 'admin', store });
+    const { getByTestId } = render(ChannelAdminPanel, { props });
+    await fireEvent.click(getByTestId('channel-admin-action-delete'));
+    await flush();
+    expect(store.deleteChannel).toHaveBeenCalledWith('ch-1');
+  });
+});
+
+// ── 6. Reserved-channel suppression ───────────────────────────────────
+
+describe('ChannelAdminPanel: reserved channels', () => {
+  it('hides Archive + Delete for a reserved channel (#general) even for an owner', () => {
+    const props = makeProps({
+      currentChannelRole: 'owner',
+      channel: makeChannel({ id: 'general', name: 'general' }),
+    });
+    const { queryByTestId } = render(ChannelAdminPanel, { props });
+    expect(queryByTestId('channel-admin-action-archive')).toBeNull();
+    expect(queryByTestId('channel-admin-action-delete')).toBeNull();
+    // Non-destructive admin actions remain available.
+    expect(queryByTestId('channel-admin-action-rename')).not.toBeNull();
+  });
+});
+
+// ── 7. Refusal-toast feedback ─────────────────────────────────────────
+
+describe('ChannelAdminPanel: refusal feedback', () => {
+  it('surfaces a toast when a confirmed Delete is refused by the server', async () => {
+    const store = makeStore({
+      deleteChannel: vi
+        .fn()
+        .mockResolvedValue({ success: false, error: 'Only the creator, an owner, or an admin may delete.' }),
+    });
+    const onRequestToast = vi.fn();
+    const props = {
+      ...makeProps({ currentChannelRole: 'owner', store }),
+      onRequestToast,
+    };
+    const { getByTestId } = render(ChannelAdminPanel, { props });
+    await fireEvent.click(getByTestId('channel-admin-action-delete'));
+    await flush();
+    expect(onRequestToast).toHaveBeenCalledTimes(1);
+    expect(onRequestToast.mock.calls[0][0]).toContain('admin');
+  });
+
+  it('surfaces a toast when a confirmed Archive is refused by the server', async () => {
+    const store = makeStore({
+      archiveChannel: vi.fn(() => ({
+        done: Promise.resolve({ success: false, error: 'not authorized' }),
+        cancel: vi.fn(),
+      })),
+    });
+    const onRequestToast = vi.fn();
+    const props = {
+      ...makeProps({ currentChannelRole: 'owner', store }),
+      onRequestToast,
+    };
+    const { getByTestId } = render(ChannelAdminPanel, { props });
+    await fireEvent.click(getByTestId('channel-admin-action-archive'));
+    await flush();
+    expect(onRequestToast).toHaveBeenCalledTimes(1);
+    expect(onRequestToast.mock.calls[0][0]).toContain('not authorized');
   });
 });

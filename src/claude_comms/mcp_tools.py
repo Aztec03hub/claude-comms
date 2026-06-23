@@ -3103,6 +3103,7 @@ async def tool_comms_conversation_delete(
     conversation: str,
     confirm: bool = False,
     conv_data_dir: Path,
+    registry_store: RegistryStore | None = None,
 ) -> dict[str, Any]:
     """Soft-delete a conversation (v0.4.0 step 2.2).
 
@@ -3139,10 +3140,14 @@ async def tool_comms_conversation_delete(
          retained presence rows on next connect.
       5. Return ``{"deleted": True, "conversation_id": ...}``.
 
-    Authorization (v0.4.0): **creator-only**.  The caller's resolved
-    ``Participant.name`` must match ``ConversationMeta.created_by``.  A
-    v0.4.1 admin pass will broaden this to "creator OR any active human
-    member" -- see plans/v0.4.0-release.md §I.6 future work.
+    Authorization: **creator OR owner/admin**.  The caller passes when
+    either their resolved ``Participant.name`` matches
+    ``ConversationMeta.created_by`` (the original creator) OR their
+    per-channel role (``RegistryStore.get_channel_role``) is ``'owner'``
+    or ``'admin'`` -- the same role source ``tool_comms_kick`` uses.  When
+    no ``registry_store`` is wired (legacy unit-test call sites), only the
+    creator-name check applies.  Reserved conversations (``general`` /
+    ``system``) are refused outright regardless of role.
 
     Idempotence: re-calling on an already-deleted conversation returns a
     plain ``not_found`` error because the meta read short-circuits.  The
@@ -3160,13 +3165,21 @@ async def tool_comms_conversation_delete(
         return _error(f"Invalid conversation ID {conversation!r}.")
 
     if conversation in RESERVED_CONVERSATION_NAMES:
-        return _error(
-            f"Conversation {conversation!r} is reserved and cannot be deleted."
-        )
+        return {
+            **_error(
+                f"Conversation {conversation!r} is reserved and cannot be deleted."
+            ),
+            "reason": "reserved",
+            "conversation_id": conversation,
+        }
 
     meta = load_meta(conversation, conv_data_dir)
     if meta is None:
-        return _error(f"Conversation {conversation!r} not found.")
+        return {
+            **_error(f"Conversation {conversation!r} not found."),
+            "reason": "not_found",
+            "conversation_id": conversation,
+        }
 
     if meta.is_deleted:
         # Already soft-deleted -- treat as a no-op so a flaky network /
@@ -3177,12 +3190,27 @@ async def tool_comms_conversation_delete(
             f"(at {meta.deleted_at} by {meta.deleted_by!r})."
         )
 
-    # --- Authorization: creator-only for v0.4.0 ---------------------------
-    if participant.name != meta.created_by:
-        return _error(
-            f"Only the creator ({meta.created_by!r}) may delete conversation "
-            f"{conversation!r}."
-        )
+    # --- Authorization: creator OR owner/admin ----------------------------
+    # Mirror tool_comms_kick's role source. The creator (by display name)
+    # always passes; otherwise the caller needs an explicit owner/admin
+    # per-channel role row. When no RegistryStore is wired (legacy unit
+    # tests), only the creator-name check applies.
+    is_creator = participant.name == meta.created_by
+    caller_role = (
+        registry_store.get_channel_role(conversation, key)
+        if registry_store is not None
+        else "member"
+    )
+    if not is_creator and caller_role not in ("owner", "admin"):
+        return {
+            **_error(
+                f"Only the creator ({meta.created_by!r}), an owner, or an "
+                f"admin may delete conversation {conversation!r}. "
+                f"Your role: {caller_role!r}."
+            ),
+            "reason": "not_authorized",
+            "conversation_id": conversation,
+        }
 
     # --- confirm=False pre-flight ----------------------------------------
     members = registry.members(conversation)
@@ -3265,12 +3293,17 @@ async def tool_comms_conversation_archive(
     conversation: str,
     confirm: bool = False,
     conv_data_dir: Path,
+    registry_store: RegistryStore | None = None,
 ) -> dict[str, Any]:
     """Archive a conversation; preserve history, kick members, block new sends.
 
-    Authorization is creator-only for v0.4.0 (a broader admin pass lands in
-    v0.4.1). The creator is identified by ``ConversationMeta.created_by``
-    matching the caller's display name.
+    Authorization is **creator OR owner/admin**. The creator is identified
+    by ``ConversationMeta.created_by`` matching the caller's display name;
+    otherwise the caller needs an explicit ``'owner'``/``'admin'``
+    per-channel role (``RegistryStore.get_channel_role`` -- the same source
+    ``tool_comms_kick`` uses). When no ``registry_store`` is wired (legacy
+    unit tests), only the creator-name check applies. Reserved
+    conversations (``general`` / ``system``) are refused regardless.
 
     Two-phase confirmation contract:
 
@@ -3316,13 +3349,20 @@ async def tool_comms_conversation_archive(
     if meta is None:
         return _error(f"Conversation {conversation!r} not found.")
 
-    if meta.created_by != participant.name:
+    is_creator = meta.created_by == participant.name
+    caller_role = (
+        registry_store.get_channel_role(conversation, key)
+        if registry_store is not None
+        else "member"
+    )
+    if not is_creator and caller_role not in ("owner", "admin"):
         return {
             "error": "not_authorized",
             "conversation_id": conversation,
             "message": (
-                "Only the conversation creator can archive it. "
-                f"Created by {meta.created_by!r}, you are {participant.name!r}."
+                "Only the conversation creator, an owner, or an admin can "
+                f"archive it. Created by {meta.created_by!r}, you are "
+                f"{participant.name!r} with role {caller_role!r}."
             ),
         }
 

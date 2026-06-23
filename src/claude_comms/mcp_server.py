@@ -1921,7 +1921,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             ),
         ] = False,
     ) -> CallToolResult:
-        """Soft-delete a conversation. Creator-only. Two-phase: call with confirm=False first to get counts, then confirm=True to delete."""
+        """Soft-delete a conversation. Creator, owner, or admin only. Two-phase: call with confirm=False first to get counts, then confirm=True to delete."""
         _touch(key)
         assert _publish_fn is not None, "Publish function not initialised"
         result = await tool_comms_conversation_delete(
@@ -1932,6 +1932,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             conversation=conversation,
             confirm=confirm,
             conv_data_dir=_get_conv_data_dir(),
+            registry_store=_get_registry_store(),
         )
         return _concise(result, summarize_conversation_delete(result))
 
@@ -1952,7 +1953,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
     ) -> CallToolResult:
         """Archive a conversation; preserve history, eject members, block new sends.
 
-        Creator-only in v0.4.0. Two-phase: call with ``confirm=False`` first
+        Creator, owner, or admin only. Two-phase: call with ``confirm=False`` first
         to surface the blast-radius modal, then with ``confirm=True`` to
         commit. Archived conversations remain visible in the directory's
         Archived sub-tab as read-only artifacts and reject any further
@@ -1968,6 +1969,7 @@ def create_server(config: dict[str, Any] | None = None) -> FastMCP:
             conversation=conversation,
             confirm=confirm,
             conv_data_dir=_get_conv_data_dir(),
+            registry_store=_get_registry_store(),
         )
         # Publish the system event + retained-clear evicted presence only
         # on a real archive-commit. The two-phase confirm contract means

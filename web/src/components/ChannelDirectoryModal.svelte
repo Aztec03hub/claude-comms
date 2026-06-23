@@ -48,6 +48,10 @@
     // when not supplied (legacy test render) the actions fall back to the
     // original window.confirm behaviour so existing specs still pass.
     onConfirmDestructive,
+    // Optional. ``onRequestToast(text)`` forwards a server refusal reason
+    // (e.g. not-authorized / reserved) from the admin panel to App.svelte's
+    // toast queue.
+    onRequestToast,
   } = $props();
 
   // Stable ids so aria-labelledby has something to bind to. Suffix with a
@@ -379,6 +383,7 @@
                   currentChannelRole={roleForChannel(channel.id)}
                   {store}
                   {onConfirmDestructive}
+                  {onRequestToast}
                   onClose={close}
                 />
               </li>

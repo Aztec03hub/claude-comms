@@ -39,6 +39,7 @@
 -->
 <script>
   import { Hash, Lock, Globe, Pencil, UserPlus, Archive, Trash2 } from 'lucide-svelte';
+  import { isReservedChannel } from '../lib/channels.js';
 
   let {
     channel,
@@ -46,6 +47,10 @@
     store,
     onConfirmDestructive,
     onClose,
+    // Optional. ``onRequestToast(text)`` surfaces a transient System toast
+    // so a server-refused archive/delete reports its reason instead of a
+    // silent no-op.
+    onRequestToast,
   } = $props();
 
   // ── Per-role action visibility (Q6 lock-in) ──────────────────────────
@@ -57,12 +62,18 @@
   let isMember = $derived(currentChannelRole === 'member');
   let isHydrating = $derived(currentChannelRole == null);
 
+  // Reserved channels (#general / #system) can never be archived/deleted;
+  // suppress those affordances client-side to match the backend guard.
+  let isReserved = $derived(isReservedChannel(channel?.id));
+
   let canRename = $derived(isOwner || isAdmin);
   let canToggleVisibility = $derived(isOwner || isAdmin);
   let canToggleMode = $derived(isOwner || isAdmin);
   let canTransfer = $derived(isOwner);
-  let canArchive = $derived(isOwner || isAdmin);
-  let canDelete = $derived(isOwner);
+  // Unify Delete with Archive on owner OR admin (was owner-only), matching
+  // the sidebar context menu and the broadened backend authorization.
+  let canArchive = $derived((isOwner || isAdmin) && !isReserved);
+  let canDelete = $derived((isOwner || isAdmin) && !isReserved);
 
   // ── Inline rename state ──────────────────────────────────────────────
   let editingName = $state(false);
@@ -286,7 +297,19 @@
       });
       if (!ok) return;
       if (typeof store?.archiveChannel === 'function') {
-        store.archiveChannel(channel.id);
+        const handle = store.archiveChannel(channel.id);
+        // Surface a server refusal (e.g. not-authorized / reserved) instead
+        // of a silent no-op. The undoable envelope resolves ``done`` to the
+        // committed MCP result; a cancelled undo is not an error.
+        if (handle && handle.done && typeof handle.done.then === 'function') {
+          handle.done
+            .then((res) => {
+              if (res && res.success === false && !res.cancelled) {
+                onRequestToast?.(res.error || `Could not archive #${channel.name}.`);
+              }
+            })
+            .catch(() => {});
+        }
       }
       onClose?.();
     } finally {
@@ -312,7 +335,10 @@
       });
       if (!ok) return;
       if (typeof store?.deleteChannel === 'function') {
-        await store.deleteChannel(channel.id);
+        const res = await store.deleteChannel(channel.id);
+        if (res && res.success === false) {
+          onRequestToast?.(res.error || `Could not delete #${channel.name}.`);
+        }
       }
       onClose?.();
     } finally {
