@@ -1650,123 +1650,93 @@ def start(
             # (extracted for TestClient coverage); get_all_conversations_full
             # and _cors are injected at registration.
 
-            # Prepend API routes so they take priority over MCP catch-all
-            starlette_app.routes.insert(
-                0, Route("/api/messages/{channel}", _api_messages, methods=["GET"])
-            )
-            starlette_app.routes.insert(
-                1,
-                Route(
-                    "/api/messages/{channel}",
-                    _api_messages_options,
-                    methods=["OPTIONS"],
-                ),
-            )
-            starlette_app.routes.insert(2, build_identity_route(config, cors=_cors))
-            starlette_app.routes.insert(
-                3, build_identity_options_route(config, cors=_cors)
-            )
-            starlette_app.routes.insert(
-                4,
-                Route(
-                    "/api/participants/{channel}", _api_participants, methods=["GET"]
-                ),
-            )
-            starlette_app.routes.insert(
-                5,
-                Route(
-                    "/api/participants/{channel}",
-                    _api_participants_options,
-                    methods=["OPTIONS"],
-                ),
-            )
-            starlette_app.routes.insert(
-                6,
-                Route(
-                    "/api/artifacts/{conversation}",
-                    _api_artifacts_list,
-                    methods=["GET"],
-                ),
-            )
-            starlette_app.routes.insert(
-                7,
-                Route(
-                    "/api/artifacts/{conversation}",
-                    _api_artifacts_options,
-                    methods=["OPTIONS"],
-                ),
-            )
-            starlette_app.routes.insert(
-                8,
-                Route(
-                    "/api/artifacts/{conversation}/{name}",
-                    _api_artifacts_get,
-                    methods=["GET"],
-                ),
-            )
-            starlette_app.routes.insert(
-                9,
-                Route(
-                    "/api/artifacts/{conversation}/{name}",
-                    _api_artifacts_name_options,
-                    methods=["OPTIONS"],
-                ),
-            )
-            starlette_app.routes.insert(
-                10,
-                build_conversations_route(
-                    config, get_all_conversations_full, cors=_cors
-                ),
-            )
-            starlette_app.routes.insert(
-                11, build_conversations_options_route(config, cors=_cors)
-            )
-
-            # ── v0.4.2 Step 3.4: POST /api/invite + preflight ──
-            # Bridges to ``tool_comms_invite`` MCP tool. Bound here (not
-            # inside the build_invite_post_route factory) so the provider
-            # closures see the live module-level state on every request.
-            starlette_app.routes.insert(
-                12,
-                build_invite_post_route(
-                    config,
-                    registry_provider=lambda: _mcp_mod._registry,
-                    publish_fn_provider=lambda: _mcp_mod._publish_fn,
-                    conv_data_dir_provider=lambda: _mcp_mod._conv_data_dir,
-                ),
-            )
-            starlette_app.routes.insert(13, build_invite_options_route(config))
-
             # ── NEW: capabilities + bearer token + conditional POST edit ──
             # Generate a fresh bearer token for this daemon run (R3-4).
             _web_token = _generate_web_token()
             set_web_token(_web_token)
             _persist_web_token(_web_token)
 
-            # Capabilities (same-origin, no auth, cacheable).
-            starlette_app.routes.insert(14, build_capabilities_route(config))
-            # Bearer-token endpoint (loopback-only).
-            starlette_app.routes.insert(15, build_web_token_route())
-            # Notification cue fetch-and-drain (enables REMOTE hook delivery).
-            starlette_app.routes.insert(
-                16, build_notifications_route(config, cors=_cors)
-            )
-
-            # Conditional POST /api/artifacts/{conv}/{name}. Returns None
-            # when allow_remote_edits is false OR the daemon is in
-            # reverse-proxy mode; in those cases we log a one-line warning
-            # so the operator can see the feature is intentionally off.
+            # Single-origin Phase 1: assemble the full ordered REST route list
+            # ONCE so the SAME Route objects back BOTH the :9920 MCP/REST server
+            # and the web port (:9921). The web app reuses ``api_routes``
+            # verbatim (see the "3) Web server" block below), so there is one
+            # source of truth and the two surfaces can never drift. All the
+            # closures/factories below close over the shared module-level
+            # singletons (_mcp_mod._registry / _store / _publish_fn etc.), so
+            # both apps read/write the same in-process state.
+            #
+            # Conditional POST /api/artifacts/{conv}/{name}. Returns None when
+            # allow_remote_edits is false OR the daemon is in reverse-proxy
+            # mode; in those cases we log a one-line warning so the operator
+            # can see the feature is intentionally off.
             _post_route = build_artifact_post_route(
                 config,
                 registry_provider=lambda: _mcp_mod._registry,
                 publish_fn_provider=lambda: _mcp_mod._publish_fn,
                 data_dir_provider=lambda: _mcp_mod._data_dir,
             )
+
+            api_routes: list[Route] = [
+                Route("/api/messages/{channel}", _api_messages, methods=["GET"]),
+                Route(
+                    "/api/messages/{channel}",
+                    _api_messages_options,
+                    methods=["OPTIONS"],
+                ),
+                build_identity_route(config, cors=_cors),
+                build_identity_options_route(config, cors=_cors),
+                Route(
+                    "/api/participants/{channel}", _api_participants, methods=["GET"]
+                ),
+                Route(
+                    "/api/participants/{channel}",
+                    _api_participants_options,
+                    methods=["OPTIONS"],
+                ),
+                Route(
+                    "/api/artifacts/{conversation}",
+                    _api_artifacts_list,
+                    methods=["GET"],
+                ),
+                Route(
+                    "/api/artifacts/{conversation}",
+                    _api_artifacts_options,
+                    methods=["OPTIONS"],
+                ),
+                Route(
+                    "/api/artifacts/{conversation}/{name}",
+                    _api_artifacts_get,
+                    methods=["GET"],
+                ),
+                Route(
+                    "/api/artifacts/{conversation}/{name}",
+                    _api_artifacts_name_options,
+                    methods=["OPTIONS"],
+                ),
+                build_conversations_route(
+                    config, get_all_conversations_full, cors=_cors
+                ),
+                build_conversations_options_route(config, cors=_cors),
+                # ── v0.4.2 Step 3.4: POST /api/invite + preflight ──
+                # Bridges to ``tool_comms_invite`` MCP tool. The provider
+                # closures see the live module-level state on every request.
+                build_invite_post_route(
+                    config,
+                    registry_provider=lambda: _mcp_mod._registry,
+                    publish_fn_provider=lambda: _mcp_mod._publish_fn,
+                    conv_data_dir_provider=lambda: _mcp_mod._conv_data_dir,
+                ),
+                build_invite_options_route(config),
+                # Capabilities (same-origin, no auth, cacheable).
+                build_capabilities_route(config),
+                # Bearer-token endpoint (loopback-only).
+                build_web_token_route(),
+                # Notification cue fetch-and-drain (REMOTE hook delivery).
+                build_notifications_route(config, cors=_cors),
+            ]
             if _post_route is not None:
-                starlette_app.routes.insert(17, _post_route)
-                starlette_app.routes.insert(
-                    18, build_artifact_post_options_route(config)
-                )
+                api_routes.append(_post_route)
+                api_routes.append(build_artifact_post_options_route(config))
                 console.print(
                     "  [yellow]Artifact edit-in-place[/yellow] POST route registered"
                     " (allow_remote_edits=true, loopback-only, bearer-token auth)"
@@ -1780,6 +1750,12 @@ def start(
                     "  [dim]Artifact edit-in-place disabled[/dim] "
                     "(reverse-proxy mode or web.allow_remote_edits=false)"
                 )
+
+            # Prepend the REST routes onto the :9920 MCP app so they take
+            # priority over the FastMCP catch-all at /mcp. Order is preserved
+            # from ``api_routes`` (insert at ascending indices).
+            for _idx, _route in enumerate(api_routes):
+                starlette_app.routes.insert(_idx, _route)
 
             # v0.4.1 hotfix: wrap the MCP Starlette app in CORSMiddleware so
             # the browser-side /mcp calls from the web UI on :9921 (which the
@@ -1991,8 +1967,67 @@ def start(
                         return response
 
                 if _web_dist.is_dir():
+                    # Single-origin Phase 1: co-mount the full REST surface
+                    # (the SAME ``api_routes`` Route objects that back :9920)
+                    # plus the FastMCP streamable-HTTP handler at /mcp onto the
+                    # web port, so the web origin serves SPA + REST + MCP from
+                    # one port. The :9920 server stays up unchanged for compat
+                    # (existing ``claude mcp add ... :9920/mcp`` registrations
+                    # keep working).
+                    #
+                    # /mcp is registered as a ``Route("/mcp", endpoint=...)``
+                    # wrapping the SAME ``StreamableHTTPASGIApp`` /
+                    # ``_session_manager`` that the :9920 app uses — NOT a
+                    # ``Mount("/mcp", app=mcp.streamable_http_app())``. A Mount
+                    # would strip the ``/mcp`` prefix and re-add FastMCP's own
+                    # internal ``/mcp`` route, making the real path ``/mcp/mcp``
+                    # (clients POST to ``/mcp`` → 404/405). A Route at the exact
+                    # path mirrors FastMCP's own wiring (streamable_http_app
+                    # registers ``Route(streamable_http_path, streamable_app)``)
+                    # so ``/mcp`` resolves correctly.
+                    #
+                    # FastMCP is stateless_http and its session manager is
+                    # started exactly ONCE by the :9920 app's lifespan
+                    # (``streamable_http_app()`` caches ``_session_manager`` on
+                    # first call, so the second call for the web port reuses
+                    # it). The web app has no MCP lifespan of its own (Starlette
+                    # does not run a sub-app's lifespan, and a Route carries no
+                    # lifespan), so there is no double-start; the web /mcp
+                    # dispatches into the already-running shared manager.
+                    #
+                    # ORDERING IS CRITICAL: the /api/* Routes and the /mcp
+                    # Route MUST precede the static /assets mount and the ``/``
+                    # StaticFiles(html=True) catch-all, or the SPA fallback
+                    # would swallow /api and /mcp requests.
+                    #
+                    # ── FUTURE / CLOUD NOTE (NOT a TODO, NOT PLANNED as of
+                    #    2026-06-23) ──
+                    # Single-origin serving also makes cloud/public hosting
+                    # straightforward later: put the daemon behind one TLS
+                    # domain on a load balancer / reverse proxy and CSP 'self'
+                    # works the same as localhost — no per-host config.
+                    # If you ever expand to public/cloud, the TRUST MODEL must
+                    # change (today it assumes a trusted tailnet/loopback):
+                    #   1. enforce broker auth (no anonymous);
+                    #   2. replace the loopback-based write/admin gate with
+                    #      identity-based authz;
+                    #   3. add real per-user login + per-user identity (today
+                    #      the web UI adopts the daemon's single identity);
+                    #   4. for HA/scale swap the embedded amqtt broker + SQLite
+                    #      for an external broker (EMQX/Mosquitto) + shared DB.
+                    # None of this is needed for personal/tailnet use.
+                    from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+
+                    # First call cached the session manager; reuse it so the
+                    # web-port handler shares the running task group.
+                    _mcp_session_mgr = mcp.session_manager
                     web_app = Starlette(
                         routes=[
+                            *api_routes,
+                            Route(
+                                "/mcp",
+                                endpoint=StreamableHTTPASGIApp(_mcp_session_mgr),
+                            ),
                             Mount(
                                 "/assets",
                                 app=StaticFiles(directory=str(_web_dist / "assets")),
