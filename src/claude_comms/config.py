@@ -60,6 +60,12 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "ws_url": None,
         # R6-4 kill-switch: extra origins to merge into CSP connect-src.
         "csp_extra_connect_src": [],
+        # Extra CORS allow-list origins for the web UI served from a host the
+        # daemon can't auto-discover (LAN IP, Tailscale magic-DNS). Mirrors
+        # csp_extra_connect_src. When api_base is set, the web origin on
+        # api_base's host + web port is allowed automatically; use this only for
+        # an additional origin (e.g. a second name/IP for the same UI).
+        "extra_cors_origins": [],
         # R6-4 rollback escape hatch for CORS exact-match. Default true
         # enforces exact-match; set false to re-enable the legacy
         # substring-match behavior (with a deprecation warning).

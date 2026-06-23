@@ -108,3 +108,34 @@ From the laptop (on cellular/another wifi, Tailscale up):
 - Open `http://DESKTOP:9921` → web UI loads and the channel populates (broker WS
   connected). If the UI loads but no messages flow, check `csp_extra_connect_src`
   contains the exact `ws://DESKTOP:9001` origin.
+
+## 6. Troubleshooting (Windows + WSL host) — real gotchas
+
+These are the things that actually bit a Windows-desktop-hosting-via-WSL setup:
+
+- **Ports time out from the laptop but `ping <tailscale-ip>` works.** The host is
+  reachable but nothing is accepting on the daemon ports. Causes, in order:
+  1. **Daemon running inside WSL on the desktop** → its ports live in the WSL VM,
+     not on the Windows host's Tailscale interface. Fix: enable **WSL mirrored
+     networking** — add to `C:\Users\<you>\.wslconfig`:
+     `[wsl2]` / `networkingMode=mirrored`, then `wsl --shutdown` and reopen WSL.
+     Then bind `0.0.0.0` (§2). (Alternative: `netsh interface portproxy`.)
+  2. **The daemon isn't running.** `wsl --shutdown` kills it; it does NOT
+     auto-restart. After any WSL restart/reboot, run `claude-comms start` again
+     (consider an autostart). Verify locally on the desktop:
+     `curl http://localhost:9920/api/capabilities`.
+  3. **Windows Defender Firewall** blocking inbound. PowerShell as admin:
+     `New-NetFirewallRule -DisplayName "claude-comms" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 9920,9921,9001,1883`
+- **Web UI loads but says "Server unreachable / channels unavailable" or "failed
+  to fetch" when setting your name.** That's **CORS**: the web UI (`:9921`) calls
+  the API (`:9920`) cross-origin, and the API must allow the web origin. This
+  daemon auto-allows the web origin derived from `web.api_base`'s host + web port,
+  so **setting `api_base` to your Tailscale host (§2) fixes it**. For any *other*
+  origin (e.g. a second name/IP), add it to `web.extra_cors_origins`. (You can
+  confirm the bug from the laptop: `curl -D - -H "Origin: http://DESKTOP:9921" http://DESKTOP:9920/api/conversations`
+  — a healthy response includes `access-control-allow-origin`.)
+- **The web UI shows "(unset)" instead of your name.** Web identity is
+  **per-browser** (stored in that browser's localStorage), not from the daemon's
+  config identity. The UI auto-loads the daemon identity from `/api/identity` —
+  but only if CORS works (fix the point above first). Each device/browser is its
+  own participant; set your Display Name per browser, or it stays the local key.

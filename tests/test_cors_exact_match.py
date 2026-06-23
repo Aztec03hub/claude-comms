@@ -138,3 +138,39 @@ def test_cors_headers_strict_true_blocks_forged_origin() -> None:
     req = _FakeRequest("http://evil.com/http://127.0.0.1:9921")
     headers = _cors_headers(req, ALLOW, strict=True)
     assert "Access-Control-Allow-Origin" not in headers
+
+
+# ---------------------------------------------------------------------------
+# _web_cors_allow_list — cross-network (Tailscale/LAN) web origin allow-list
+# ---------------------------------------------------------------------------
+
+from claude_comms.cli import _web_cors_allow_list  # noqa: E402
+
+
+def test_web_cors_allow_list_includes_loopback_web_origins() -> None:
+    al = _web_cors_allow_list({"port": 9921})
+    assert "http://localhost:9921" in al
+    assert "http://127.0.0.1:9921" in al
+
+
+def test_web_cors_allow_list_derives_web_origin_from_api_base_host() -> None:
+    # Tailscale/LAN: api_base points at the external API host; the web origin on
+    # the same host + web port must be auto-allowed or the browser blocks every
+    # cross-origin API call (the bug this fixes).
+    al = _web_cors_allow_list(
+        {"port": 9921, "api_base": "http://phil-desktop.tail6c27f6.ts.net:9920"}
+    )
+    assert "http://phil-desktop.tail6c27f6.ts.net:9920" in al  # api_base itself
+    assert "http://phil-desktop.tail6c27f6.ts.net:9921" in al  # derived web origin
+
+
+def test_web_cors_allow_list_honors_extra_cors_origins() -> None:
+    al = _web_cors_allow_list(
+        {"port": 9921, "extra_cors_origins": ["http://foo.lan:9921"]}
+    )
+    assert "http://foo.lan:9921" in al
+
+
+def test_web_cors_allow_list_no_api_base_has_no_external_origin() -> None:
+    al = _web_cors_allow_list({"port": 9921})
+    assert all("tail" not in o for o in al)
