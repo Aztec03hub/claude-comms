@@ -370,42 +370,49 @@ def _broker_origins_for_host(host: str, ws_port: int) -> list[str]:
 def build_csp(config: dict) -> str:
     """Construct a Content-Security-Policy header value from config.
 
-    ``connect-src`` is built to be COMPREHENSIVE: for every host the page may
-    legitimately be served from, it lists BOTH the REST origin (MCP port,
-    default 9920) AND the broker WebSocket origin (ws_port, default 9001), in
-    http(s) / ws(s) variants. The covered hosts are:
+    Single-origin Phase 3: with the SPA, REST/MCP API, and broker WebSocket all
+    served from the same web port (Phases 1+2), the browser only ever talks to
+    its own origin. In that default case ``connect-src`` collapses to ``'self'``
+    — which uniformly covers REST + MCP + the ``/mqtt`` broker bridge for
+    localhost, LAN, Tailscale, and HTTPS with ZERO host knowledge. This ends the
+    host-enumeration whack-a-mole that the legacy branch below fought.
 
-      * Loopback aliases (``localhost`` + ``127.0.0.1``) — always, regardless
-        of mode, so desktop access via ``http://localhost:9921`` reaches the
-        local REST API and broker.
-      * The external/advertised reachable host from
-        ``_external_reachable_host`` (Tailscale name / LAN IP) — both REST and
-        broker, so a page served from that host can call back to it.
-      * In reverse-proxy mode (``web.api_base`` set), ``api_base`` is the
-        authoritative REST origin and the broker WS is derived on ``ws_port``.
+    Two modes:
 
-    ``web.csp_extra_connect_src`` is appended verbatim as an operator escape
-    hatch.
+      * **Default (single-origin):** ``web.api_base`` is unset. ``connect-src``
+        is just ``'self'`` (plus any ``web.csp_extra_connect_src`` escape-hatch
+        entries). No REST/broker origin enumeration is needed or emitted.
+      * **Legacy reverse-proxy compat:** ``web.api_base`` is set. The original
+        COMPREHENSIVE enumeration is preserved — for every host the page may be
+        served from it lists BOTH the REST origin (MCP port, default 9920) AND
+        the broker WebSocket origin (ws_port, default 9001) in http(s) / ws(s)
+        variants, plus the always-on loopback aliases. This keeps an operator
+        who still pins ``web.api_base`` working until that knob is retired.
+
+    ``web.csp_extra_connect_src`` is appended verbatim in BOTH modes as an
+    operator escape hatch.
 
     Note: CORS (the server's response headers) and CSP ``connect-src`` (the
     browser's permission to send the request) are independent. A REST origin
     being in the CORS allow-list does NOT make the browser allow the fetch —
-    the origin must also be in ``connect-src``. That is why every reachable
-    host's REST origin is listed here explicitly.
+    the origin must also be in ``connect-src``. That is why the legacy branch
+    lists every reachable host's REST origin explicitly. Same-origin requests
+    skip CORS entirely, so ``'self'`` alone suffices in the default mode.
     """
     web_cfg = config.get("web", {}) or {}
     mcp_cfg = config.get("mcp", {}) or {}
     broker_cfg = config.get("broker", {}) or {}
 
     api_base = web_cfg.get("api_base")
-    mcp_host = mcp_cfg.get("host", "127.0.0.1")
+    # mcp_port / ws_port only feed the LEGACY (api_base set) enumeration below;
+    # the default single-origin branch needs no port knowledge at all.
     mcp_port = mcp_cfg.get("port", 9920)
-    ws_host = broker_cfg.get("ws_host", "127.0.0.1")
     ws_port = broker_cfg.get("ws_port", 9001)
 
     connect_origins: list[str] = ["'self'"]
 
     if api_base:
+        # ── LEGACY reverse-proxy compat (web.api_base set) ─────────────────
         # Reverse-proxy mode: api_base is authoritative for the REST origin.
         connect_origins.append(api_base)
         ws_url = web_cfg.get("ws_url")
@@ -422,37 +429,17 @@ def build_csp(config: dict) -> str:
             external_host = _external_reachable_host(config)
             if external_host:
                 connect_origins.extend(_broker_origins_for_host(external_host, ws_port))
-    else:
-        # Direct mode: include http/https + ws/wss variants for every
-        # browser-visible alias of the configured loopback bind. Both
-        # schemes are included so future TLS deployment is covered.
-        for h in _expand_loopback_aliases(mcp_host):
-            connect_origins.extend(_rest_origins_for_host(h, mcp_port))
-        for h in _expand_loopback_aliases(ws_host):
+
+        # ALWAYS allow the loopback broker WebSocket and REST/MCP API in the
+        # legacy path. Desktop access via http://localhost:9921 must be able to
+        # reach ws://localhost:9001 and http://localhost:9920 (and the 127.0.0.1
+        # aliases) even when api_base / a reverse proxy is also configured for
+        # remote access. Both alias forms are distinct browser origins.
+        for h in ("localhost", "127.0.0.1"):
             connect_origins.extend(_broker_origins_for_host(h, ws_port))
-
-        # When an explicit reachable host is configured (LAN IP / Tailscale
-        # name) the page may be served FROM that host, so it must be able to
-        # reach BOTH the broker WS (advertised via /api/capabilities) AND the
-        # REST API on that same host. CSP connect-src must list both or the
-        # browser blocks the request outright — CORS does NOT cover this; CORS
-        # governs the server's response, connect-src governs whether the
-        # browser may make the request at all.
-        advertised_host = _external_reachable_host(config)
-        if advertised_host:
-            connect_origins.extend(_broker_origins_for_host(advertised_host, ws_port))
-            connect_origins.extend(_rest_origins_for_host(advertised_host, mcp_port))
-
-    # ALWAYS allow the loopback broker WebSocket and REST/MCP API regardless of
-    # mode. Desktop access via http://localhost:9921 must be able to reach
-    # ws://localhost:9001 and http://localhost:9920 (and the 127.0.0.1 aliases)
-    # even when api_base / a reverse proxy is also configured for remote access.
-    # Without this, the localhost page loops on "Reconnecting to broker" and
-    # REST fetches are CSP-blocked. Both alias forms are distinct browser
-    # origins.
-    for h in ("localhost", "127.0.0.1"):
-        connect_origins.extend(_broker_origins_for_host(h, ws_port))
-        connect_origins.extend(_rest_origins_for_host(h, mcp_port))
+            connect_origins.extend(_rest_origins_for_host(h, mcp_port))
+    # ── DEFAULT single-origin: connect-src is just 'self' (+ escape hatch).
+    # No REST/broker origin enumeration — same-origin covers everything.
 
     extra = web_cfg.get("csp_extra_connect_src") or []
     connect_origins.extend(extra)
@@ -654,6 +641,12 @@ def build_identity_route(config: dict, cors=None):
     Starlette TestClient. ``cors`` is the per-request CORS-header function
     (``_run`` injects its ``_cors``); it defaults to a no-op so tests need no
     CORS wiring.
+
+    FUTURE/CLOUD (NOT PLANNED 2026-06-23, not a TODO): the web UI today adopts
+    the daemon's SINGLE configured identity — every browser on this origin is
+    "the daemon's owner". Public/multi-user hosting would need per-user login and
+    a per-user identity (this endpoint would return the authenticated caller's
+    identity, derived from a session, not a single static config value).
     """
     from starlette.responses import JSONResponse
     from starlette.routing import Route
@@ -961,6 +954,12 @@ def build_artifact_post_route(
     from claude_comms.message import validate_conv_id
 
     async def _handler(request: Request) -> JSONResponse:
+        # FUTURE/CLOUD (NOT PLANNED 2026-06-23, not a TODO): the write/admin gate
+        # here is loopback-based — it assumes "on the same machine as the daemon"
+        # equals "the trusted operator". For any public/multi-tenant hosting this
+        # would need to become identity-based authorization (per-user login,
+        # per-request authn → authz on the conversation), since a remote browser
+        # is never loopback and many users would share one origin.
         # Defense 1: loopback only. X-Forwarded-For is NEVER consulted.
         if not _is_loopback(request):
             return JSONResponse({"error": "loopback only"}, status_code=403)
@@ -1571,6 +1570,11 @@ def start(
 
     broker_mode = config.get("broker", {}).get("mode", "host")
     web_enabled = web or config.get("web", {}).get("enabled", False)
+    # FUTURE/CLOUD (NOT PLANNED 2026-06-23, not a TODO): web.host defaults to
+    # loopback (secure by default); deployments opt into 0.0.0.0 for a trusted
+    # tailnet/LAN. For public hosting you would NOT bind 0.0.0.0 in the open —
+    # enforce broker auth (no anonymous MQTT), bind appropriately, and terminate
+    # TLS at a load balancer / reverse proxy in front of this origin.
     web_host = config.get("web", {}).get("host", "127.0.0.1")
     web_port = config.get("web", {}).get("port", 9921)
     mcp_host = config.get("mcp", {}).get("host", "127.0.0.1")

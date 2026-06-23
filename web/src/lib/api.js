@@ -5,7 +5,8 @@
  * Components and rune-declaring modules may import from this freely.
  *
  * Responsibilities:
- *  - Derive the API base URL honestly (meta override > dev/prod port heuristic).
+ *  - Derive the API base URL honestly (same-origin; host-matching meta override
+ *    only, for back-compat with a still-set `web.api_base`).
  *  - Manage a module-level bearer token cache with a shared in-flight promise.
  *  - Expose `apiGet` / `apiPost` with the R4-1 / R5-1 / R5-2 token flow:
  *      * `apiPost` always awaits `ensureToken()` and honors a per-request retry
@@ -16,15 +17,6 @@
  *        a still-warming daemon does NOT produce an unhandled-rejection log;
  *        the next `apiPost()` transparently refetches.
  */
-
-/**
- * Default API (MCP/REST) port the daemon serves on when not same-origin.
- */
-const DEFAULT_API_PORT = 9920;
-/** Vite dev-server ports — same-origin (Vite proxies /api/*). */
-const VITE_DEV_PORTS = new Set(['5173', '5174']);
-/** Production web-UI port — REST lives cross-port on DEFAULT_API_PORT. */
-const WEB_UI_PORT = '9921';
 
 /**
  * Derive the API base origin from the page, NEVER baking an absolute host that
@@ -39,21 +31,29 @@ const WEB_UI_PORT = '9921';
  * a desktop loading http://localhost:9921 would try the Tailscale IP and
  * hairpin → ERR_CONNECTION_TIMED_OUT (a host can't reach its own tailnet IP).
  *
+ * Single-origin (Phase 3): the SPA is now served ONLY from the web port, and
+ * the REST/MCP API (`/api`, `/mcp`) is co-mounted on that SAME origin (Phase 1).
+ * So the normal case is ALWAYS same-origin ('') — page-relative `/api` + `/mcp`
+ * hit the daemon that served the page, with no port math and no host knowledge.
+ * This works identically for http://localhost:9921 (desktop),
+ * http://<tailscale>:9921 (laptop), and https://<tailscale> (tailscale serve).
+ *
  * Priority:
  *   1. `<meta name="claude-comms-api-base">` — but ONLY when its hostname
- *      matches the page hostname (canonical origin for THIS host, e.g. a
- *      reverse proxy / Funnel on the Tailscale name). Mismatched meta (the
- *      desktop-on-localhost case) is ignored in favor of page-relative.
- *   2. Vite dev (5173/5174) → same-origin ('').
- *   3. Web UI on 9921 → same hostname + scheme, API port (cross-port).
- *   4. Anything else (served behind a same-origin reverse proxy) → same-origin.
+ *      matches the page hostname (canonical origin for THIS host, e.g. an
+ *      operator who still pins `web.api_base` for a reverse proxy / Funnel on
+ *      the Tailscale name). Mismatched meta (the desktop-on-localhost case) is
+ *      ignored in favor of page-relative. Kept purely for back-compat.
+ *   2. Everything else → same-origin (''). The old vite-dev / 9921→9920
+ *      cross-port heuristic is gone: REST is co-mounted on the web port, and
+ *      vite proxies `/api` in dev, so same-origin is correct everywhere.
  *
  * @returns {string} API base URL (no trailing slash), or '' for same-origin.
  */
 export function deriveApiBase() {
   if (typeof window === 'undefined') return '';
 
-  const { hostname, port, protocol } = window.location;
+  const { hostname } = window.location;
 
   const meta = document.querySelector('meta[name="claude-comms-api-base"]');
   if (meta && meta.content) {
@@ -62,15 +62,15 @@ export function deriveApiBase() {
       // Honor the meta override only when it targets the SAME host the page
       // is served from. A different host means the meta is a remote-access
       // origin that this browser may not be able to reach (hairpin); fall
-      // through to page-relative derivation instead.
+      // through to same-origin instead. Back-compat for a still-set
+      // `web.api_base`; unnecessary under single-origin.
       if (new URL(metaBase).hostname === hostname) return metaBase;
     } catch {
       // Malformed meta content → ignore, derive page-relative.
     }
   }
 
-  if (VITE_DEV_PORTS.has(port)) return '';
-  if (port === WEB_UI_PORT) return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
+  // Single-origin: the page's own origin hosts /api and /mcp.
   return '';
 }
 

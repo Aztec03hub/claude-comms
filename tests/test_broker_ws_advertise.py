@@ -145,28 +145,35 @@ def test_capabilities_flags_same_origin_broker():
 # ── CSP allows the advertised origin ──────────────────────────────────────
 
 
-def test_csp_includes_advertised_external_ws():
+def test_csp_default_no_external_ws_enumeration_single_origin():
+    """Single-origin Phase 3: with NO api_base set, the broker WS is reached via
+    the same-origin ``/mqtt`` bridge, so connect-src collapses to 'self' and
+    enumerates NO ws origin — even when extra_cors_origins names a LAN host.
+    """
     cfg = {
         "web": {"extra_cors_origins": ["http://lanbox:9921"]},
         "broker": {"ws_host": "0.0.0.0", "ws_port": 9001},
         "mcp": {"host": "127.0.0.1", "port": 9920},
     }
     csp = build_csp(cfg)
-    assert "ws://lanbox:9001" in csp
-    # loopback aliases still present for same-machine access
-    assert "ws://127.0.0.1:9001" in csp
-    assert "ws://localhost:9001" in csp
+    connect = next(d for d in csp.split("; ") if d.startswith("connect-src "))
+    assert connect == "connect-src 'self'"
+    assert "ws://lanbox:9001" not in csp
+    assert ":9001" not in csp
 
 
-def test_csp_default_has_no_external_ws():
+def test_csp_default_collapses_to_self():
+    """Default config (no api_base): connect-src is exactly 'self'."""
     cfg = {
         "web": {},
         "broker": {"ws_host": "0.0.0.0", "ws_port": 9001},
         "mcp": {"host": "127.0.0.1", "port": 9920},
     }
     csp = build_csp(cfg)
-    assert "ws://127.0.0.1:9001" in csp
-    assert "ws://localhost:9001" in csp
+    connect = next(d for d in csp.split("; ") if d.startswith("connect-src "))
+    assert connect == "connect-src 'self'"
+    assert "ws://127.0.0.1:9001" not in csp
+    assert "ws://localhost:9001" not in csp
 
 
 def test_csp_always_allows_loopback_ws_even_in_reverse_proxy_mode():
@@ -186,14 +193,17 @@ def test_csp_always_allows_loopback_ws_even_in_reverse_proxy_mode():
     assert "ws://box.ts.net:9001" in csp
 
 
-def test_csp_no_duplicate_loopback_ws():
+def test_csp_no_duplicate_self():
+    """Single-origin: 'self' appears once in the collapsed default connect-src."""
     cfg = {
         "web": {},
         "broker": {"ws_host": "127.0.0.1", "ws_port": 9001},
         "mcp": {"host": "127.0.0.1", "port": 9920},
     }
     csp = build_csp(cfg)
-    assert csp.count("ws://localhost:9001") == 1
+    connect = next(d for d in csp.split("; ") if d.startswith("connect-src "))
+    tokens = connect[len("connect-src ") :].split()
+    assert tokens == ["'self'"]
 
 
 # ── _web_ui_urls banner formatting ────────────────────────────────────────
