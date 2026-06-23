@@ -56,12 +56,18 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         # R3-1: reverse-proxy / Tailscale Funnel support. If set, UI uses
         # this as the API origin. Daemon enters "reverse-proxy mode" which
         # also disables the edit-in-place POST route.
+        # DEPRECATED under single-origin (see single-origin-design.md Phase 4);
+        # kept functional for legacy reverse-proxy deployments; scheduled for
+        # removal in a later pass.
         "api_base": None,
         # R3-6 kill-switch: feature flag for POST /api/artifacts (edit-in-place).
         # Default off; opt in after reviewing the threat model.
         "allow_remote_edits": False,
         # R3-1: explicit WebSocket URL. If null, derived from api_base or
         # defaults to ws://127.0.0.1:<broker.ws_port>.
+        # DEPRECATED under single-origin (see single-origin-design.md Phase 4);
+        # kept functional for legacy reverse-proxy deployments; scheduled for
+        # removal in a later pass.
         "ws_url": None,
         # R6-4 kill-switch: extra origins to merge into CSP connect-src.
         "csp_extra_connect_src": [],
