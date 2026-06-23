@@ -1,10 +1,14 @@
-// Page-relative API base derivation.
+// Page-relative API base derivation (single-origin, Phase 3).
 //
-// The web client must never bake an absolute REST host the current browser
-// can't reach. The confirmed bug: a `<meta name="claude-comms-api-base">`
-// pointing at the Tailscale name was honored even when the page was served
-// from http://localhost:9921 (desktop), so /api/identity hairpinned to the
-// daemon's own Tailscale IP → ERR_CONNECTION_TIMED_OUT.
+// The SPA is now served ONLY from the web port, and the REST/MCP API (/api,
+// /mcp) is co-mounted on that SAME origin (Phase 1). So the normal case is
+// always same-origin (''): apiGet/apiPost/mcpCall hit page-relative /api + /mcp.
+// The old 9921→9920 cross-port heuristic is gone.
+//
+// The `<meta name="claude-comms-api-base">` override is KEPT but honored only
+// when its hostname matches the page hostname — back-compat for an operator who
+// still pins `web.api_base`. A mismatched meta (the desktop-on-localhost case)
+// is ignored to avoid the Tailscale-IP hairpin (ERR_CONNECTION_TIMED_OUT).
 //
 // These tests pin deriveApiBase()'s precedence against a stubbed page origin.
 
@@ -35,30 +39,30 @@ afterEach(() => {
   setMeta(null);
 });
 
-describe('deriveApiBase — page-relative (no meta)', () => {
-  it('desktop localhost:9921 → cross-port localhost:9920', () => {
+describe('deriveApiBase — same-origin (no meta)', () => {
+  it('desktop localhost:9921 → same-origin ()', () => {
     setLocation({ hostname: 'localhost', port: '9921' });
-    expect(deriveApiBase()).toBe('http://localhost:9920');
+    expect(deriveApiBase()).toBe('');
   });
 
-  it('tailscale host:9921 → cross-port same host:9920', () => {
+  it('tailscale host:9921 → same-origin ()', () => {
     setLocation({ hostname: 'box.tail.ts.net', port: '9921' });
-    expect(deriveApiBase()).toBe('http://box.tail.ts.net:9920');
+    expect(deriveApiBase()).toBe('');
   });
 
-  it('https page on 9921 keeps the https scheme', () => {
+  it('https page on 9921 → same-origin ()', () => {
     setLocation({ hostname: 'box.tail.ts.net', port: '9921', protocol: 'https:' });
-    expect(deriveApiBase()).toBe('https://box.tail.ts.net:9920');
+    expect(deriveApiBase()).toBe('');
   });
 
-  it('vite dev ports → same-origin', () => {
+  it('vite dev ports → same-origin (vite proxies /api)', () => {
     setLocation({ hostname: 'localhost', port: '5173' });
     expect(deriveApiBase()).toBe('');
     setLocation({ hostname: 'localhost', port: '5174' });
     expect(deriveApiBase()).toBe('');
   });
 
-  it('reverse-proxy origin (443, no port heuristic) → same-origin', () => {
+  it('reverse-proxy origin (443, no port) → same-origin ()', () => {
     setLocation({ hostname: 'box.tail.ts.net', port: '', protocol: 'https:' });
     expect(deriveApiBase()).toBe('');
   });
@@ -71,16 +75,16 @@ describe('deriveApiBase — meta override honored only when host matches', () =>
     expect(deriveApiBase()).toBe('https://box.tail.ts.net');
   });
 
-  it('meta host != page host (desktop hairpin) → IGNORED, page-relative wins', () => {
+  it('meta host != page host (desktop hairpin) → IGNORED, same-origin wins', () => {
     setLocation({ hostname: 'localhost', port: '9921' });
     setMeta('http://phil-desktop.tail.ts.net:9920');
-    expect(deriveApiBase()).toBe('http://localhost:9920');
+    expect(deriveApiBase()).toBe('');
   });
 
-  it('malformed meta content → ignored, page-relative wins', () => {
+  it('malformed meta content → ignored, same-origin wins', () => {
     setLocation({ hostname: 'localhost', port: '9921' });
     setMeta('not a url');
-    expect(deriveApiBase()).toBe('http://localhost:9920');
+    expect(deriveApiBase()).toBe('');
   });
 
   it('meta trailing slash is stripped when honored', () => {
