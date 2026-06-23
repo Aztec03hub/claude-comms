@@ -326,7 +326,7 @@ def install_hook(
                 "No participant key found in config. Run 'claude-comms init' first."
             )
 
-    if not isinstance(participant_key, str) or not participant_key.strip():
+    if not isinstance(participant_key, str) or not participant_key.strip():  # pyright: ignore[reportUnnecessaryIsInstance]
         raise ValueError("participant_key must be a non-empty string.")
 
     # Generate and install hook script

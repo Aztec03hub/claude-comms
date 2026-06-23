@@ -382,19 +382,19 @@ class TestInstallUninstall:
 
         return home
 
-    def test_install_creates_script(self, mock_home):
+    def test_install_creates_script(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         result = install_hook(participant_key=SAMPLE_KEY)
         assert result["script_path"].exists()
         content = result["script_path"].read_text()
         assert SAMPLE_KEY in content
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix permissions test")
-    def test_install_script_is_executable(self, mock_home):
+    def test_install_script_is_executable(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         result = install_hook(participant_key=SAMPLE_KEY)
         mode = result["script_path"].stat().st_mode
         assert mode & stat.S_IXUSR  # Owner execute bit set
 
-    def test_install_creates_settings(self, mock_home):
+    def test_install_creates_settings(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         result = install_hook(participant_key=SAMPLE_KEY)
         assert result["settings_path"].exists()
         settings = json.loads(result["settings_path"].read_text())
@@ -417,19 +417,19 @@ class TestInstallUninstall:
         assert settings["existingKey"] is True
         assert "hooks" in settings
 
-    def test_install_loads_key_from_config(self, mock_home):
+    def test_install_loads_key_from_config(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         # Don't pass participant_key — should load from config
         result = install_hook()
         content = result["script_path"].read_text()
         assert SAMPLE_KEY in content
 
-    def test_install_bakes_base_url(self, mock_home):
+    def test_install_bakes_base_url(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         result = install_hook(participant_key=SAMPLE_KEY, base_url=SAMPLE_URL)
         content = result["script_path"].read_text()
         assert SAMPLE_URL in content
         assert f"/api/notifications/{SAMPLE_KEY}" in content
 
-    def test_install_default_base_url(self, mock_home):
+    def test_install_default_base_url(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         result = install_hook(participant_key=SAMPLE_KEY)
         content = result["script_path"].read_text()
         assert "http://localhost:9920/api/notifications/" in content
@@ -442,7 +442,7 @@ class TestInstallUninstall:
         with pytest.raises(ValueError, match="No participant key"):
             install_hook()
 
-    def test_uninstall_removes_script(self, mock_home):
+    def test_uninstall_removes_script(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         install_hook(participant_key=SAMPLE_KEY)
         result = uninstall_hook(participant_key=SAMPLE_KEY)
         assert result["script_removed"] is True
@@ -456,7 +456,7 @@ class TestInstallUninstall:
         settings = json.loads(settings_path.read_text())
         assert "hooks" not in settings
 
-    def test_uninstall_noop_when_not_installed(self, mock_home):
+    def test_uninstall_noop_when_not_installed(self, mock_home):  # pyright: ignore[reportUnusedParameter]
         result = uninstall_hook(participant_key=SAMPLE_KEY)
         assert result["script_removed"] is False
         assert result["settings_updated"] is False

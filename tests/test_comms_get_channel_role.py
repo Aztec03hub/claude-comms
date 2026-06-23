@@ -18,6 +18,7 @@ Tests by name (6 total):
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,7 @@ from claude_comms.registry_store import RegistryStore
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> RegistryStore:
+def store(tmp_path: Path) -> Iterator[RegistryStore]:
     """Fresh RegistryStore rooted at tmp_path."""
     s = RegistryStore.open(tmp_path)
     yield s
@@ -56,7 +57,7 @@ def _join(
     key: str,
     participant_type: str = "claude",
 ) -> None:
-    registry.join(name, conversation, key=key, participant_type=participant_type)
+    registry.join(name, conversation, key=key, participant_type=participant_type)  # pyright: ignore[reportArgumentType]
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ def _join(
 # ---------------------------------------------------------------------------
 
 
-def test_self_query_default_no_target_arg(store: RegistryStore, tmp_path: Path) -> None:
+def test_self_query_default_no_target_arg(store: RegistryStore, tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """Calling with no target arg returns the caller's own role."""
     registry = _registry_with(store)
     _join(registry, "alice", "design", key="aaaaaaaa")
@@ -86,7 +87,7 @@ def test_self_query_default_no_target_arg(store: RegistryStore, tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
-def test_target_query_returns_other_role(store: RegistryStore, tmp_path: Path) -> None:
+def test_target_query_returns_other_role(store: RegistryStore, tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """Passing target_participant_key returns that target's role."""
     registry = _registry_with(store)
     _join(registry, "alice", "design", key="aaaaaaaa")
@@ -113,7 +114,7 @@ def test_target_query_returns_other_role(store: RegistryStore, tmp_path: Path) -
 # ---------------------------------------------------------------------------
 
 
-def test_non_member_caller_rejected(store: RegistryStore, tmp_path: Path) -> None:
+def test_non_member_caller_rejected(store: RegistryStore, tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """Caller who is not a member of the conversation gets an error envelope."""
     registry = _registry_with(store)
     # Alice exists but only in "general", not in "design".
@@ -135,7 +136,8 @@ def test_non_member_caller_rejected(store: RegistryStore, tmp_path: Path) -> Non
 
 
 def test_unknown_target_returns_default_member(
-    store: RegistryStore, tmp_path: Path
+    store: RegistryStore,
+    tmp_path: Path,  # pyright: ignore[reportUnusedParameter]
 ) -> None:
     """Target key with no explicit role row reads as the default 'member'.
 
@@ -239,7 +241,7 @@ def test_post_3_0a_backfill_creator_returns_owner(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_conversation_id_rejected(store: RegistryStore, tmp_path: Path) -> None:
+def test_invalid_conversation_id_rejected(store: RegistryStore, tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """Malformed conversation id returns an error envelope."""
     registry = _registry_with(store)
     _join(registry, "alice", "design", key="aaaaaaaa")

@@ -322,7 +322,11 @@ class TestDeduplication:
         lines = [line for line in lines if line.strip()]
         assert len(lines) == 1
 
-    def test_different_ids_both_written(self, exporter: LogExporter, log_dir: Path):
+    def test_different_ids_both_written(
+        self,
+        exporter: LogExporter,
+        log_dir: Path,  # pyright: ignore[reportUnusedParameter]
+    ):
         msg1 = _make_msg(msg_id="id-aaa")
         msg2 = _make_msg(msg_id="id-bbb")
         assert exporter.write_message(msg1) is True

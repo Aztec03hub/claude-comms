@@ -56,7 +56,9 @@ def _seed_channel(
     other_key: str = "bbbbbbbb",
 ) -> None:
     """Seed an on-disk channel created by ``creator_name`` plus a second member."""
-    registry.join(creator_name, conversation, key=creator_key, participant_type="claude")
+    registry.join(
+        creator_name, conversation, key=creator_key, participant_type="claude"
+    )
     registry.join(other_name, conversation, key=other_key, participant_type="claude")
     create_conversation_atomic(
         name=conversation, topic="", created_by=creator_name, data_dir=tmp_path
@@ -256,9 +258,7 @@ async def test_archive_by_owner_non_creator_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_archive_by_member_rejected(
-    store: RegistryStore, tmp_path: Path
-) -> None:
+async def test_archive_by_member_rejected(store: RegistryStore, tmp_path: Path) -> None:
     registry = _registry_with(store)
     _seed_channel(registry, tmp_path)
     spy = PublishSpy()

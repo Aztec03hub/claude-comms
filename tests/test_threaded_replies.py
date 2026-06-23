@@ -91,7 +91,7 @@ def registered() -> tuple[ParticipantRegistry, MessageStore, str]:
     return registry, store, p.key
 
 
-async def _publish(topic: str, payload: bytes) -> None:
+async def _publish(topic: str, payload: bytes, retain: bool = False) -> None:  # pyright: ignore[reportUnusedParameter]
     return None
 
 

@@ -76,7 +76,7 @@ class ChannelItem(Widget):
         self.set_class(muted, "--muted")
         self._refresh_header()
 
-    def watch_unread_count(self, count: int) -> None:
+    def watch_unread_count(self, _count: int) -> None:
         """Update the header display with badge."""
         self._refresh_header()
 
@@ -147,7 +147,7 @@ class ChannelList(Vertical):
         """Mark the initial active channel."""
         self._update_active()
 
-    def watch_active_channel(self, conv_id: str) -> None:
+    def watch_active_channel(self, _conv_id: str) -> None:
         """Update visual state when active channel changes."""
         self._update_active()
 
@@ -185,6 +185,6 @@ class ChannelList(Vertical):
         if conv_id in self._items:
             self._items[conv_id].is_muted = muted
 
-    def on_channel_item_channel_selected(self, event: ChannelSelected) -> None:
+    def on_channel_item_channel_selected(self, _event: ChannelSelected) -> None:
         """Bubble channel selection up — handled by the app."""
         pass  # The message bubbles up to the app naturally

@@ -19,7 +19,7 @@ from claude_comms.conversation import (
     load_meta,
     save_meta,
 )
-from claude_comms.message import now_iso
+from claude_comms.message import ParticipantType, now_iso
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_conversation_archive,
@@ -52,7 +52,7 @@ def _register(
     registry: ParticipantRegistry,
     name: str = "test-claude",
     conversation: str = "general",
-    participant_type: str = "claude",
+    participant_type: ParticipantType = "claude",
 ) -> str:
     """Register a participant and return the key."""
     p = registry.join(name, conversation, participant_type=participant_type)

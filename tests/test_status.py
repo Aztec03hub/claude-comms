@@ -46,7 +46,7 @@ def _reset_throttle() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_throttle():
+def _isolate_throttle():  # pyright: ignore[reportUnusedFunction]
     """Each test gets a fresh throttle window."""
     _reset_throttle()
     yield
@@ -116,6 +116,7 @@ async def test_join_idempotent_does_not_duplicate_mcp():
     # Re-join with the existing key
     await tool_comms_join(reg, key=key, conversation="general")
     p = reg.get(key)
+    assert p is not None
     assert list(p.connections.keys()) == ["mcp"]
 
 
@@ -275,6 +276,7 @@ async def test_status_set_applies_to_every_connection():
     reg = ParticipantRegistry()
     key = await _join_claude(reg)
     p = reg.get(key)
+    assert p is not None
     # Add another connection (simulate a web tab)
     ts = now_iso()
     p.connections["web-abcd"] = ConnectionInfo(
@@ -286,8 +288,12 @@ async def test_status_set_applies_to_every_connection():
     )
     assert res["status"] == "set"
     assert set(res["applied_to_connections"]) == {"mcp", "web-abcd"}
-    assert p.connections["mcp"].activity.label == "thinking"
-    assert p.connections["web-abcd"].activity.label == "thinking"
+    mcp_activity = p.connections["mcp"].activity
+    web_activity = p.connections["web-abcd"].activity
+    assert mcp_activity is not None
+    assert web_activity is not None
+    assert mcp_activity.label == "thinking"
+    assert web_activity.label == "thinking"
 
 
 @pytest.mark.asyncio
@@ -330,6 +336,7 @@ async def test_status_clear_removes_activity():
     assert res["status"] == "cleared"
     assert res["count"] == 1
     p = reg.get(key)
+    assert p is not None
     assert p.connections["mcp"].activity is None
 
 
@@ -361,7 +368,7 @@ async def test_status_set_publishes_event():
         key=key,
         conversation="general",
         label="thinking",
-        publish_fn=fake_publish,
+        publish_fn=fake_publish,  # pyright: ignore[reportArgumentType]
     )
     assert res["status"] == "set"
     assert len(published) == 1
@@ -383,11 +390,18 @@ async def test_status_clear_publishes_event():
         published.append((topic, payload))
 
     await tool_comms_status_set(
-        reg, key=key, conversation="general", label="thinking", publish_fn=fake_publish
+        reg,
+        key=key,
+        conversation="general",
+        label="thinking",
+        publish_fn=fake_publish,  # pyright: ignore[reportArgumentType]
     )
     _reset_throttle()  # bypass throttle for the clear publish
     res = await tool_comms_status_clear(
-        reg, key=key, conversation="general", publish_fn=fake_publish
+        reg,
+        key=key,
+        conversation="general",
+        publish_fn=fake_publish,  # pyright: ignore[reportArgumentType]
     )
     assert res["status"] == "cleared"
     # Two publishes total: one set, one clear
@@ -407,10 +421,18 @@ async def test_status_set_throttled_does_not_publish():
         published.append((topic, payload))
 
     await tool_comms_status_set(
-        reg, key=key, conversation="general", label="a", publish_fn=fake_publish
+        reg,
+        key=key,
+        conversation="general",
+        label="a",
+        publish_fn=fake_publish,  # pyright: ignore[reportArgumentType]
     )
     res2 = await tool_comms_status_set(
-        reg, key=key, conversation="general", label="b", publish_fn=fake_publish
+        reg,
+        key=key,
+        conversation="general",
+        label="b",
+        publish_fn=fake_publish,  # pyright: ignore[reportArgumentType]
     )
     assert res2["status"] == "throttled"
     # Only one publish — the throttled call is a no-op
@@ -433,6 +455,7 @@ async def test_sweep_clears_expired_activity_but_keeps_connection():
         reg, key=key, conversation="general", label="thinking", ttl_seconds=60
     )
     p = reg.get(key)
+    assert p is not None
     assert p.connections["mcp"].activity is not None
 
     # Backdate expires_at so the sweep sees it as already expired.
@@ -454,6 +477,7 @@ async def test_sweep_removes_stale_connection():
     reg = ParticipantRegistry()
     key = await _join_claude(reg)
     p = reg.get(key)
+    assert p is not None
     # Backdate the connection's last_seen so it's stale
     from datetime import datetime, timedelta, timezone
 
@@ -471,6 +495,7 @@ async def test_sweep_clears_malformed_activity_timestamp():
     reg = ParticipantRegistry()
     key = await _join_claude(reg)
     p = reg.get(key)
+    assert p is not None
     # Plant a malformed activity with bad expires_at
     p.connections["mcp"].activity = Activity(
         label="thinking", set_at="ok", expires_at="not-a-real-timestamp"
@@ -509,7 +534,7 @@ async def test_working_context_manager_sets_and_clears():
 async def test_working_context_manager_clears_on_exception():
     cleared = False
 
-    async def set_status(label, ttl_seconds):
+    async def set_status(_label, _ttl_seconds):
         pass
 
     async def clear_status():
@@ -526,7 +551,7 @@ async def test_working_context_manager_clears_on_exception():
 async def test_working_swallows_set_error_by_default():
     cleared = False
 
-    async def set_status(label, ttl_seconds):
+    async def set_status(_label, _ttl_seconds):
         raise RuntimeError("broker down")
 
     async def clear_status():
@@ -565,7 +590,7 @@ async def test_working_decorator_round_trip():
 async def test_working_decorator_clears_on_exception():
     cleared = False
 
-    async def set_status(label, ttl_seconds):
+    async def set_status(_label, _ttl_seconds):
         pass
 
     async def clear_status():

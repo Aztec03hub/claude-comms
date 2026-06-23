@@ -402,7 +402,7 @@ class ClaudeCommsApp(App):
         chat_view = self.query_one("#chat-view", ChatView)
 
         # Route system-type messages through the system message renderer
-        if msg.sender.type == "system":
+        if msg.sender.type == "system":  # pyright: ignore[reportUnnecessaryComparison]
             chat_view.add_system_message(msg.body, conv=msg.conv)
         else:
             chat_view.add_message(msg)
@@ -418,7 +418,7 @@ class ClaudeCommsApp(App):
         if msg.conv != self._active_conv:
             channel_list.increment_unread(msg.conv)
 
-    async def _handle_presence(self, topic: str, payload: bytes) -> None:
+    async def _handle_presence(self, _topic: str, payload: bytes) -> None:
         """Process a presence update from MQTT.
 
         Handles both new-format topics (``claude-comms/presence/{key}/{client}-{instanceId}``)
@@ -485,7 +485,7 @@ class ClaudeCommsApp(App):
         except Exception:
             pass
 
-    async def _handle_typing(self, topic: str, payload: bytes) -> None:
+    async def _handle_typing(self, _topic: str, payload: bytes) -> None:
         """Process a typing indicator from MQTT."""
         try:
             data = json.loads(payload)

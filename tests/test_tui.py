@@ -78,7 +78,7 @@ def _make_app(conversations: list[str] | None = None) -> ClaudeCommsApp:
     config = _make_config(conversations)
     app = ClaudeCommsApp(config=config)
     # Monkey-patch the MQTT worker so it does nothing (no broker required)
-    app._start_mqtt_worker = lambda: None  # type: ignore[assignment]
+    app._start_mqtt_worker = lambda: None  # type: ignore[assignment]  # pyright: ignore[reportAttributeAccessIssue]
     return app
 
 
@@ -94,51 +94,49 @@ class TestRound1AppLaunch:
     async def test_app_starts_without_error(self):
         """The app should start in headless mode without crashing."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=(120, 40)) as _pilot:
             # App is running — just verify it's alive
-            assert pilot.app is not None
-            assert pilot.app.title == "Claude Comms"
+            assert app is not None
+            assert app.title == "Claude Comms"
 
     @pytest.mark.asyncio
     async def test_three_column_layout_renders(self):
         """Sidebar, chat area, and participant list should all be present."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=(120, 40)) as _pilot:
             # Left sidebar: ChannelList
-            channel_sidebar = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_sidebar = app.query_one("#channel-sidebar", ChannelList)
             assert channel_sidebar is not None
 
             # Center: chat area with ChatView
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             assert chat_view is not None
 
             # Right sidebar: ParticipantList
-            participant_sidebar = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_sidebar = app.query_one("#participant-sidebar", ParticipantList)
             assert participant_sidebar is not None
 
             # Horizontal container
-            app_grid = pilot.app.query_one("#app-grid", Horizontal)
+            app_grid = app.query_one("#app-grid", Horizontal)
             assert app_grid is not None
 
     @pytest.mark.asyncio
     async def test_default_channel_is_general(self):
         """The active channel should default to 'general'."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            assert pilot.app._active_conv == "general"
+        async with app.run_test(size=(120, 40)) as _pilot:
+            assert app._active_conv == "general"
 
             # Header should show the channel name
-            header = pilot.app.query_one("#channel-header", Static)
+            header = app.query_one("#channel-header", Static)
             assert "general" in str(header.content)
 
     @pytest.mark.asyncio
     async def test_channel_header_displays(self):
         """The channel header should show '# general'."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            header = pilot.app.query_one("#channel-header", Static)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            header = app.query_one("#channel-header", Static)
             text = str(header.content)
             assert "# general" in text
 
@@ -146,11 +144,11 @@ class TestRound1AppLaunch:
     async def test_input_widget_visible(self):
         """The message input widget should be present and visible."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            msg_input_area = pilot.app.query_one("#message-input-area", MessageInput)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            msg_input_area = app.query_one("#message-input-area", MessageInput)
             assert msg_input_area is not None
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             assert input_widget is not None
             assert input_widget.display is True
 
@@ -158,8 +156,8 @@ class TestRound1AppLaunch:
     async def test_input_widget_focusable(self):
         """The message input should be focusable and have focus by default."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            input_widget = app.query_one("#message-input", TextArea)
             # The app calls focus_input() on mount, so it should have focus
             assert input_widget.has_focus
 
@@ -167,10 +165,8 @@ class TestRound1AppLaunch:
     async def test_participant_list_shows_self(self):
         """Our own participant should appear in the participant list."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+        async with app.run_test(size=(120, 40)) as _pilot:
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             names = participant_list.get_names()
             assert "test-user" in names
 
@@ -178,10 +174,10 @@ class TestRound1AppLaunch:
     async def test_footer_renders(self):
         """The footer with keybinding hints should render."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=(120, 40)) as _pilot:
             from textual.widgets import Footer
 
-            footer = pilot.app.query_one(Footer)
+            footer = app.query_one(Footer)
             assert footer is not None
 
 
@@ -197,8 +193,8 @@ class TestRound2ChannelSwitching:
     async def test_channel_list_shows_all_channels(self):
         """All configured channels should appear in the sidebar."""
         app = _make_app(["general", "random", "lora-training"])
-        async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             # Check internal items dict
             assert "general" in channel_list._items
             assert "random" in channel_list._items
@@ -208,8 +204,8 @@ class TestRound2ChannelSwitching:
     async def test_active_channel_highlighted(self):
         """The active channel item should have is_active=True."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             general_item = channel_list._items["general"]
             assert general_item.is_active is True
 
@@ -218,7 +214,7 @@ class TestRound2ChannelSwitching:
         """Clicking a different channel should switch the active conversation."""
         app = _make_app(["general", "random", "lora-training"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             random_item = channel_list._items["random"]
 
             # Click the 'random' channel
@@ -227,20 +223,20 @@ class TestRound2ChannelSwitching:
 
             # Direct method: simulate the ChannelSelected message
             # Since clicking might miss due to layout, let's use the app method
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
 
-            assert pilot.app._active_conv == "random"
+            assert app._active_conv == "random"
 
     @pytest.mark.asyncio
     async def test_header_updates_on_switch(self):
         """Channel header should update when switching conversations."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
 
-            header = pilot.app.query_one("#channel-header", Static)
+            header = app.query_one("#channel-header", Static)
             assert "random" in str(header.content)
 
     @pytest.mark.asyncio
@@ -248,9 +244,9 @@ class TestRound2ChannelSwitching:
         """After switching, the old channel should no longer be active."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
 
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
 
             assert channel_list._items["general"].is_active is False
@@ -261,20 +257,20 @@ class TestRound2ChannelSwitching:
         """Switching to the already-active channel should be a no-op."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._switch_to_conv("general")
+            app._switch_to_conv("general")
             await pilot.pause()
             # Should still be general without errors
-            assert pilot.app._active_conv == "general"
+            assert app._active_conv == "general"
 
     @pytest.mark.asyncio
     async def test_chat_view_switches_conversation(self):
         """Chat view's current_conv should update on channel switch."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             assert chat_view.current_conv == "general"
 
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
 
             assert chat_view.current_conv == "random"
@@ -293,7 +289,7 @@ class TestRound3MessageSending:
         """Typing text and pressing Enter should post a MessageSubmitted event."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -316,9 +312,9 @@ class TestRound3MessageSending:
         sent_bodies: list[str] = []
 
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
+            app._send_message = lambda body: sent_bodies.append(body)  # type: ignore  # pyright: ignore[reportAttributeAccessIssue]
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -339,9 +335,9 @@ class TestRound3MessageSending:
         sent_bodies: list[str] = []
 
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
+            app._send_message = lambda body: sent_bodies.append(body)  # type: ignore  # pyright: ignore[reportAttributeAccessIssue]
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -358,9 +354,9 @@ class TestRound3MessageSending:
         sent_bodies: list[str] = []
 
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
+            app._send_message = lambda body: sent_bodies.append(body)  # type: ignore  # pyright: ignore[reportAttributeAccessIssue]
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -378,7 +374,7 @@ class TestRound3MessageSending:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
                 sender_name="test-user",
@@ -397,7 +393,7 @@ class TestRound3MessageSending:
         """System messages should appear in the chat view."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             chat_view.add_system_message("User joined the conversation")
             await pilot.pause()
 
@@ -411,7 +407,7 @@ class TestRound3MessageSending:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
                 sender_name="test-user",
@@ -453,8 +449,8 @@ class TestRound4KeyboardShortcuts:
             await pilot.pause()
 
             # Check that the modal screen was pushed
-            assert len(pilot.app.screen_stack) > 1
-            assert isinstance(pilot.app.screen, NewConversationScreen)
+            assert len(app.screen_stack) > 1
+            assert isinstance(app.screen, NewConversationScreen)
 
     @pytest.mark.asyncio
     async def test_new_conv_dialog_has_input(self):
@@ -465,7 +461,7 @@ class TestRound4KeyboardShortcuts:
             await pilot.pause()
 
             # Query from the current screen (the modal)
-            dialog_input = pilot.app.screen.query_one("#new-conv-input", Input)
+            dialog_input = app.screen.query_one("#new-conv-input", Input)
             assert dialog_input is not None
 
     @pytest.mark.asyncio
@@ -483,10 +479,10 @@ class TestRound4KeyboardShortcuts:
             await pilot.pause()
 
             # The modal should be dismissed
-            assert not isinstance(pilot.app.screen, NewConversationScreen)
+            assert not isinstance(app.screen, NewConversationScreen)
 
             # The new channel should be in the list
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             assert "test-conv" in channel_list._items
 
     @pytest.mark.asyncio
@@ -494,19 +490,19 @@ class TestRound4KeyboardShortcuts:
         """Ctrl+K should cycle through available conversations."""
         app = _make_app(["general", "random", "lora-training"])
         async with app.run_test(size=(120, 40)) as pilot:
-            assert pilot.app._active_conv == "general"
+            assert app._active_conv == "general"
 
             await pilot.press("ctrl+k")
             await pilot.pause()
-            assert pilot.app._active_conv == "random"
+            assert app._active_conv == "random"
 
             await pilot.press("ctrl+k")
             await pilot.pause()
-            assert pilot.app._active_conv == "lora-training"
+            assert app._active_conv == "lora-training"
 
             await pilot.press("ctrl+k")
             await pilot.pause()
-            assert pilot.app._active_conv == "general"  # wraps around
+            assert app._active_conv == "general"  # wraps around
 
     @pytest.mark.asyncio
     async def test_ctrl_k_single_channel_noop(self):
@@ -515,14 +511,14 @@ class TestRound4KeyboardShortcuts:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("ctrl+k")
             await pilot.pause()
-            assert pilot.app._active_conv == "general"
+            assert app._active_conv == "general"
 
     @pytest.mark.asyncio
     async def test_tab_moves_focus(self):
         """Shift+Tab moves focus away from the message input widget."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             assert input_widget.has_focus
 
             # Tab in MessageInput triggers @mention completion, so use
@@ -550,7 +546,7 @@ class TestRound5EdgeCases:
             from claude_comms.message import Message
 
             long_body = "A" * 5000
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
                 sender_name="test-user",
@@ -571,7 +567,7 @@ class TestRound5EdgeCases:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
                 sender_name="test-user",
@@ -595,7 +591,7 @@ class TestRound5EdgeCases:
             body = (
                 "Check this:\n```python\ndef hello():\n    print('world')\n```\nNeat!"
             )
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
                 sender_name="test-user",
@@ -616,7 +612,7 @@ class TestRound5EdgeCases:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             msg = Message.create(
                 sender_key="tkey0001",
                 sender_name="test-user",
@@ -636,9 +632,7 @@ class TestRound5EdgeCases:
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             # Add some participants for completion
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             participant_list.set_participant(
                 key="alice001",
                 name="alice",
@@ -655,7 +649,7 @@ class TestRound5EdgeCases:
             )
             await pilot.pause()
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -679,9 +673,7 @@ class TestRound5EdgeCases:
         """
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             participant_list.set_participant(
                 key="alice001",
                 name="alice",
@@ -698,7 +690,7 @@ class TestRound5EdgeCases:
             )
             await pilot.pause()
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -729,10 +721,10 @@ class TestRound5EdgeCases:
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             # App should be functional without broker
-            assert pilot.app._mqtt_client is None
+            assert app._mqtt_client is None
 
             # Can still interact with the UI
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.press(*list("Hello"))
             assert input_widget.text == "Hello"
@@ -744,7 +736,7 @@ class TestRound5EdgeCases:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
 
             # Add a message for 'random' while we're viewing 'general'
             msg = Message.create(
@@ -772,7 +764,7 @@ class TestRound5EdgeCases:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
 
             # Store messages for random
             for i in range(3):
@@ -787,7 +779,7 @@ class TestRound5EdgeCases:
             await pilot.pause()
 
             # Switch to random
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
 
             bubbles = chat_view.query(MessageBubble)
@@ -798,7 +790,7 @@ class TestRound5EdgeCases:
         """Receiving a message for another channel should increment unread."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
 
             channel_list.increment_unread("random")
             channel_list.increment_unread("random")
@@ -811,12 +803,12 @@ class TestRound5EdgeCases:
         """Switching to a channel should clear its unread count."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             channel_list.increment_unread("random")
             channel_list.increment_unread("random")
             await pilot.pause()
 
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
 
             assert channel_list._items["random"].unread_count == 0
@@ -826,7 +818,7 @@ class TestRound5EdgeCases:
         """Adding a channel dynamically should make it appear in the list."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             assert "new-channel" not in channel_list._items
 
             channel_list.add_channel("new-channel")
@@ -839,7 +831,7 @@ class TestRound5EdgeCases:
         """Adding a channel that already exists should be a no-op."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             initial_count = len(channel_list._items)
 
             channel_list.add_channel("general")
@@ -852,9 +844,7 @@ class TestRound5EdgeCases:
         """Updating a participant's presence should not crash."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
 
             participant_list.set_participant(
                 key="claude01",
@@ -888,24 +878,24 @@ class TestRound6StatusBar:
     async def test_status_bar_renders(self):
         """The status bar should be present in the layout."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar is not None
 
     @pytest.mark.asyncio
     async def test_status_bar_shows_disconnected(self):
         """Status bar should show disconnected when MQTT is not connected."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar.connected is False
 
     @pytest.mark.asyncio
     async def test_status_bar_shows_active_channel(self):
         """Status bar should reflect the active channel."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar.active_channel == "general"
 
     @pytest.mark.asyncio
@@ -913,25 +903,25 @@ class TestRound6StatusBar:
         """Switching channels should update the status bar active channel."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar.active_channel == "random"
 
     @pytest.mark.asyncio
     async def test_status_bar_shows_user_name(self):
         """Status bar should display the user name."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar.user_name == "test-user"
 
     @pytest.mark.asyncio
     async def test_status_bar_participant_count(self):
         """Status bar should show participant count."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            status_bar = app.query_one("#status-bar", StatusBar)
             # Should have at least 1 (ourselves)
             assert status_bar.participant_count >= 1
 
@@ -940,7 +930,7 @@ class TestRound6StatusBar:
         """Setting typing_who should update the status bar."""
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar.typing_who == ""
             status_bar.typing_who = "alice"
             await pilot.pause()
@@ -951,10 +941,10 @@ class TestRound6StatusBar:
         """Switching channels should clear the typing indicator."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
             status_bar.typing_who = "bob"
             await pilot.pause()
-            pilot.app._switch_to_conv("random")
+            app._switch_to_conv("random")
             await pilot.pause()
             assert status_bar.typing_who == ""
 
@@ -972,7 +962,7 @@ class TestRound7ChannelPreviewsAndMuted:
         """Setting a channel preview should update the item."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             channel_list.set_channel_preview("random", "alice", "Hello there")
             await pilot.pause()
             item = channel_list._items["random"]
@@ -983,7 +973,7 @@ class TestRound7ChannelPreviewsAndMuted:
         """Long previews should be truncated with ellipsis."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             channel_list.set_channel_preview(
                 "general",
                 "someone",
@@ -1002,7 +992,7 @@ class TestRound7ChannelPreviewsAndMuted:
         """Muting a channel should set is_muted flag."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             channel_list.set_channel_muted("random", True)
             await pilot.pause()
             assert channel_list._items["random"].is_muted is True
@@ -1012,7 +1002,7 @@ class TestRound7ChannelPreviewsAndMuted:
         """Unmuting a channel should clear is_muted flag."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             channel_list.set_channel_muted("general", True)
             await pilot.pause()
             assert channel_list._items["general"].is_muted is True
@@ -1025,7 +1015,7 @@ class TestRound7ChannelPreviewsAndMuted:
         """Muted channels should have the --muted CSS class."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             channel_list.set_channel_muted("random", True)
             await pilot.pause()
             item = channel_list._items["random"]
@@ -1035,8 +1025,8 @@ class TestRound7ChannelPreviewsAndMuted:
     async def test_channel_preview_hidden_initially(self):
         """Channel preview should be hidden when no preview has been set."""
         app = _make_app(["general"])
-        async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+        async with app.run_test(size=(120, 40)) as _pilot:
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             item = channel_list._items["general"]
             assert item._preview_label.display is False
 
@@ -1045,7 +1035,7 @@ class TestRound7ChannelPreviewsAndMuted:
         """Setting preview on a channel not in the list should not crash."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             # Should not raise
             channel_list.set_channel_preview("nonexistent", "user", "msg")
             await pilot.pause()
@@ -1097,9 +1087,9 @@ class TestRound9EmptyChannelAndHelp:
         """Switching to an empty channel should show a placeholder message."""
         app = _make_app(["general", "empty-chan"])
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._switch_to_conv("empty-chan")
+            app._switch_to_conv("empty-chan")
             await pilot.pause()
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             placeholders = chat_view.query(EmptyChannelMessage)
             assert len(placeholders) >= 1
 
@@ -1110,9 +1100,9 @@ class TestRound9EmptyChannelAndHelp:
         async with app.run_test(size=(120, 40)) as pilot:
             from claude_comms.message import Message
 
-            pilot.app._switch_to_conv("empty-chan")
+            app._switch_to_conv("empty-chan")
             await pilot.pause()
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
 
             # Add a message to the empty channel
             msg = Message.create(
@@ -1139,8 +1129,8 @@ class TestRound9EmptyChannelAndHelp:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("f1")
             await pilot.pause()
-            assert len(pilot.app.screen_stack) > 1
-            assert isinstance(pilot.app.screen, HelpScreen)
+            assert len(app.screen_stack) > 1
+            assert isinstance(app.screen, HelpScreen)
 
     @pytest.mark.asyncio
     async def test_help_screen_dismiss_with_escape(self):
@@ -1149,10 +1139,10 @@ class TestRound9EmptyChannelAndHelp:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("f1")
             await pilot.pause()
-            assert isinstance(pilot.app.screen, HelpScreen)
+            assert isinstance(app.screen, HelpScreen)
             await pilot.press("escape")
             await pilot.pause()
-            assert not isinstance(pilot.app.screen, HelpScreen)
+            assert not isinstance(app.screen, HelpScreen)
 
     @pytest.mark.asyncio
     async def test_help_screen_dismiss_with_f1(self):
@@ -1161,10 +1151,10 @@ class TestRound9EmptyChannelAndHelp:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("f1")
             await pilot.pause()
-            assert isinstance(pilot.app.screen, HelpScreen)
+            assert isinstance(app.screen, HelpScreen)
             await pilot.press("f1")
             await pilot.pause()
-            assert not isinstance(pilot.app.screen, HelpScreen)
+            assert not isinstance(app.screen, HelpScreen)
 
 
 # ============================================================================
@@ -1179,11 +1169,11 @@ class TestRound10TypingIndicators:
     async def test_typing_debounce_state_exists(self):
         """App should have typing debounce attributes initialised."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            assert hasattr(pilot.app, "_last_typing_publish")
-            assert hasattr(pilot.app, "_TYPING_DEBOUNCE_SECS")
-            assert pilot.app._last_typing_publish == 0.0
-            assert pilot.app._TYPING_DEBOUNCE_SECS == 2.0
+        async with app.run_test(size=(120, 40)) as _pilot:
+            assert hasattr(app, "_last_typing_publish")
+            assert hasattr(app, "_TYPING_DEBOUNCE_SECS")
+            assert app._last_typing_publish == 0.0
+            assert app._TYPING_DEBOUNCE_SECS == 2.0
 
     @pytest.mark.asyncio
     async def test_typing_resets_on_send(self):
@@ -1198,11 +1188,11 @@ class TestRound10TypingIndicators:
         sent_bodies: list[str] = []
 
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._send_message = lambda body: sent_bodies.append(body)  # type: ignore
+            app._send_message = lambda body: sent_bodies.append(body)  # type: ignore  # pyright: ignore[reportAttributeAccessIssue]
             # Manually set a recent typing timestamp
-            pilot.app._last_typing_publish = 999999.0
+            app._last_typing_publish = 999999.0
 
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -1213,7 +1203,7 @@ class TestRound10TypingIndicators:
 
             # Enter now submits via _SubmittableTextArea, which triggers
             # on_message_submitted which resets _last_typing_publish to 0.0
-            assert pilot.app._last_typing_publish == 0.0
+            assert app._last_typing_publish == 0.0
 
     @pytest.mark.asyncio
     async def test_on_input_changed_only_for_message_input(self):
@@ -1222,7 +1212,7 @@ class TestRound10TypingIndicators:
         async with app.run_test(size=(120, 40)) as pilot:
             # The app starts with _last_typing_publish == 0.0
             # TextArea does not emit Input.Changed, so the old handler won't fire
-            input_widget = pilot.app.query_one("#message-input", TextArea)
+            input_widget = app.query_one("#message-input", TextArea)
             input_widget.focus()
             await pilot.pause()
 
@@ -1231,7 +1221,7 @@ class TestRound10TypingIndicators:
 
             # TextArea doesn't trigger on_input_changed (Input.Changed),
             # so _last_typing_publish stays at 0.0
-            assert pilot.app._last_typing_publish == 0.0
+            assert app._last_typing_publish == 0.0
 
 
 # ============================================================================
@@ -1246,13 +1236,13 @@ class TestRound11LWT:
     async def test_lwt_attributes_available(self):
         """The app should have the identity attributes needed for LWT."""
         app = _make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=(120, 40)) as _pilot:
             # Verify the identity attributes the LWT uses are set
-            assert pilot.app._key == "tkey0001"
-            assert pilot.app._name == "test-user"
-            assert pilot.app._type == "human"
+            assert app._key == "tkey0001"
+            assert app._name == "test-user"
+            assert app._type == "human"
             # The active conv determines the LWT topic
-            assert pilot.app._active_conv == "general"
+            assert app._active_conv == "general"
 
 
 # ============================================================================
@@ -1281,12 +1271,10 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/peer0001/mcp-a1b2"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             assert "peer0001" in participant_list._items
             item = participant_list._items["peer0001"]
             assert item.participant_name == "peer-alice"
@@ -1311,12 +1299,10 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/peer0002/web-c3d4"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             assert "peer0002" in participant_list._items
             assert participant_list._items["peer0002"].presence == PresenceState.AWAY
 
@@ -1327,9 +1313,7 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             # First add a participant with a specific connection
             participant_list.set_participant(
                 key="peer0003",
@@ -1355,7 +1339,7 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/peer0003/mcp-e5f6"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
             # With no connections left, participant is removed
@@ -1368,9 +1352,7 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             initial_count = len(participant_list._items)
 
             # Use the app's own instance ID — should be skipped
@@ -1381,11 +1363,11 @@ class TestRound12HandlePresence:
                     "type": "human",
                     "status": "online",
                     "client": "tui",
-                    "instanceId": pilot.app._instance_id,
+                    "instanceId": app._instance_id,
                 }
             ).encode()
-            topic = f"claude-comms/presence/tkey0001/tui-{pilot.app._instance_id}"
-            await pilot.app._handle_presence(topic, payload)
+            topic = f"claude-comms/presence/tkey0001/tui-{app._instance_id}"
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
             # Should NOT add a duplicate — self-add already put us in
@@ -1409,12 +1391,10 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/tkey0001/web-ff01"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             # Should exist as the same user key (merged connections)
             assert "tkey0001" in participant_list._items
             item = participant_list._items["tkey0001"]
@@ -1427,7 +1407,7 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             topic = "claude-comms/presence/bad/web-0000"
             # Should not raise
-            await pilot.app._handle_presence(topic, b"not-json{{{")
+            await app._handle_presence(topic, b"not-json{{{")
             await pilot.pause()
 
     @pytest.mark.asyncio
@@ -1445,7 +1425,7 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/nokey/mcp-0000"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
             # Should not crash and should not add participant
 
@@ -1467,12 +1447,10 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/peer0004/mcp-g7h8"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             assert "peer0004" in participant_list._items
             assert participant_list._items["peer0004"].presence == PresenceState.OFFLINE
 
@@ -1483,7 +1461,7 @@ class TestRound12HandlePresence:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
             initial_count = status_bar.participant_count
 
             payload = json.dumps(
@@ -1497,7 +1475,7 @@ class TestRound12HandlePresence:
                 }
             ).encode()
             topic = "claude-comms/presence/peer0005/web-i9j0"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
             assert status_bar.participant_count == initial_count + 1
@@ -1526,10 +1504,10 @@ class TestRound13HandleTyping:
                 }
             ).encode()
             topic = "claude-comms/conv/general/typing/peer0001"
-            await pilot.app._handle_typing(topic, payload)
+            await app._handle_typing(topic, payload)
             await pilot.pause()
 
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
             assert status_bar.typing_who == "alice"
 
     @pytest.mark.asyncio
@@ -1539,7 +1517,7 @@ class TestRound13HandleTyping:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
             status_bar.typing_who = "alice"
             await pilot.pause()
 
@@ -1551,7 +1529,7 @@ class TestRound13HandleTyping:
                 }
             ).encode()
             topic = "claude-comms/conv/general/typing/peer0001"
-            await pilot.app._handle_typing(topic, payload)
+            await app._handle_typing(topic, payload)
             await pilot.pause()
 
             assert status_bar.typing_who == ""
@@ -1563,7 +1541,7 @@ class TestRound13HandleTyping:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
 
             payload = json.dumps(
                 {
@@ -1573,7 +1551,7 @@ class TestRound13HandleTyping:
                 }
             ).encode()
             topic = "claude-comms/conv/general/typing/tkey0001"
-            await pilot.app._handle_typing(topic, payload)
+            await app._handle_typing(topic, payload)
             await pilot.pause()
 
             assert status_bar.typing_who == ""
@@ -1584,7 +1562,7 @@ class TestRound13HandleTyping:
         app = _make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             topic = "claude-comms/conv/general/typing/bad"
-            await pilot.app._handle_typing(topic, b"broken{json")
+            await app._handle_typing(topic, b"broken{json")
             await pilot.pause()
             # No crash
 
@@ -1595,7 +1573,7 @@ class TestRound13HandleTyping:
         async with app.run_test(size=(120, 40)) as pilot:
             import json
 
-            status_bar = pilot.app.query_one("#status-bar", StatusBar)
+            status_bar = app.query_one("#status-bar", StatusBar)
 
             payload = json.dumps(
                 {
@@ -1604,7 +1582,7 @@ class TestRound13HandleTyping:
                 }
             ).encode()
             topic = "claude-comms/conv/general/typing/peer0001"
-            await pilot.app._handle_typing(topic, payload)
+            await app._handle_typing(topic, payload)
             await pilot.pause()
 
             assert status_bar.typing_who == ""
@@ -1624,20 +1602,20 @@ class TestRound14SwitchConvErrors:
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
             # Manually set _active_conv to something not in _conversations
-            pilot.app._active_conv = "nonexistent"
-            pilot.app.action_switch_conversation()
+            app._active_conv = "nonexistent"
+            app.action_switch_conversation()
             await pilot.pause()
             # Should cycle to index 0 (ValueError -> idx = -1, next_idx = 0)
-            assert pilot.app._active_conv == "general"
+            assert app._active_conv == "general"
 
     @pytest.mark.asyncio
     async def test_new_conv_invalid_name_shows_system_msg(self):
         """Creating a conv with an invalid name should show a system error."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            chat_view = pilot.app.query_one("#chat-view", ChatView)
+            chat_view = app.query_one("#chat-view", ChatView)
             # Call with invalid name (uppercase, which fails validate_conv_id)
-            pilot.app._on_new_conv_created("INVALID NAME!")
+            app._on_new_conv_created("INVALID NAME!")
             await pilot.pause()
 
             sys_msgs = chat_view.query(SystemMessage)
@@ -1648,12 +1626,12 @@ class TestRound14SwitchConvErrors:
         """Creating a valid new conv should add it and switch to it."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._on_new_conv_created("dev-chat")
+            app._on_new_conv_created("dev-chat")
             await pilot.pause()
 
-            assert "dev-chat" in pilot.app._conversations
-            assert pilot.app._active_conv == "dev-chat"
-            channel_list = pilot.app.query_one("#channel-sidebar", ChannelList)
+            assert "dev-chat" in app._conversations
+            assert app._active_conv == "dev-chat"
+            channel_list = app.query_one("#channel-sidebar", ChannelList)
             assert "dev-chat" in channel_list._items
 
     @pytest.mark.asyncio
@@ -1661,22 +1639,22 @@ class TestRound14SwitchConvErrors:
         """Creating a conv that already exists should not duplicate it."""
         app = _make_app(["general", "random"])
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._on_new_conv_created("random")
+            app._on_new_conv_created("random")
             await pilot.pause()
 
-            assert pilot.app._conversations.count("random") == 1
-            assert pilot.app._active_conv == "random"
+            assert app._conversations.count("random") == 1
+            assert app._active_conv == "random"
 
     @pytest.mark.asyncio
     async def test_new_conv_reserved_name_rejected(self):
         """Reserved names like 'system' should be rejected."""
         app = _make_app(["general"])
         async with app.run_test(size=(120, 40)) as pilot:
-            pilot.app._on_new_conv_created("system")
+            app._on_new_conv_created("system")
             await pilot.pause()
 
-            assert "system" not in pilot.app._conversations
-            assert pilot.app._active_conv == "general"
+            assert "system" not in app._conversations
+            assert app._active_conv == "general"
 
     @pytest.mark.asyncio
     async def test_show_system_when_ui_not_ready(self):
@@ -1703,12 +1681,10 @@ class TestRound14SwitchConvErrors:
                 }
             ).encode()
             topic = "claude-comms/presence/peer0006/mcp-k1l2"
-            await pilot.app._handle_presence(topic, payload)
+            await app._handle_presence(topic, payload)
             await pilot.pause()
 
-            participant_list = pilot.app.query_one(
-                "#participant-sidebar", ParticipantList
-            )
+            participant_list = app.query_one("#participant-sidebar", ParticipantList)
             item = participant_list._items["peer0006"]
             assert item.participant_name == "user-peer0006"
 
@@ -1748,7 +1724,9 @@ class TestRound14SwitchConvErrors:
 # ============================================================================
 
 
-from claude_comms.message import Message  # noqa: E402  (deferred import for clarity)
+from rich.panel import Panel  # noqa: E402
+
+from claude_comms.message import Message, ParticipantType  # noqa: E402  (deferred import for clarity)
 from claude_comms.tui.chat_view import (  # noqa: E402
     classify_mention_segments,
 )
@@ -1780,7 +1758,7 @@ def _build_message(
     *,
     sender_key: str = PHIL_KEY,
     sender_name: str = "phil",
-    sender_type: str = "human",
+    sender_type: ParticipantType = "human",
     body: str,
     mentions: list[str] | None = None,
     recipients: list[str] | None = None,
@@ -1790,7 +1768,7 @@ def _build_message(
     return Message.create(
         sender_key=sender_key,
         sender_name=sender_name,
-        sender_type=sender_type,  # type: ignore[arg-type]
+        sender_type=sender_type,
         body=body,
         conv=conv,
         recipients=recipients,
@@ -1844,14 +1822,16 @@ def _bubble_has_self_mention(message: Message, viewer_key: str) -> bool:
     return has_self
 
 
-def _bubble_panel(message: Message, viewer_key: str):
+def _bubble_panel(message: Message, viewer_key: str) -> Panel:
     """Render a MessageBubble's Panel for box-style + border-color inspection."""
     bubble = MessageBubble(
         message,
         viewer_key=viewer_key,
         name_to_key=_name_to_key(),
     )
-    return bubble.render()
+    result = bubble.render()
+    assert isinstance(result, Panel)
+    return result
 
 
 class TestRound15TuiMentionRenderParity:

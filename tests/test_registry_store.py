@@ -8,6 +8,7 @@ schema initialization, round-trip persistence, foreign-key cascades, the
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,7 @@ from claude_comms.registry_store import (
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> RegistryStore:
+def store(tmp_path: Path) -> Iterator[RegistryStore]:
     """Fresh ``RegistryStore`` rooted at ``tmp_path``."""
     s = RegistryStore.open(tmp_path)
     yield s
@@ -34,7 +35,7 @@ def store(tmp_path: Path) -> RegistryStore:
 
 
 def _make_participant(key: str, name: str, ptype: str = "claude") -> Participant:
-    return Participant(key=key, name=name, type=ptype)
+    return Participant(key=key, name=name, type=ptype)  # pyright: ignore[reportArgumentType]
 
 
 # ---------------------------------------------------------------------------

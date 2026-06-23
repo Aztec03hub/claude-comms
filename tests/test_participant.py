@@ -92,7 +92,7 @@ class TestParticipant:
 
     def test_invalid_type_rejected(self) -> None:
         with pytest.raises(ValueError):
-            Participant(key="abcdef01", name="test", type="robot")  # type: ignore[arg-type]
+            Participant(key="abcdef01", name="test", type="robot")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
 
 # ---------------------------------------------------------------------------

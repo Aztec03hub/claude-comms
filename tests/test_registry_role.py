@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ from claude_comms.registry_store import (
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> RegistryStore:
+def store(tmp_path: Path) -> Iterator[RegistryStore]:
     """Fresh ``RegistryStore`` rooted at ``tmp_path`` (data_dir == tmp_path)."""
     s = RegistryStore.open(tmp_path)
     yield s
@@ -43,7 +44,7 @@ def store(tmp_path: Path) -> RegistryStore:
 
 
 def _make_participant(key: str, name: str, ptype: str = "claude") -> Participant:
-    return Participant(key=key, name=name, type=ptype)
+    return Participant(key=key, name=name, type=ptype)  # pyright: ignore[reportArgumentType]
 
 
 def _seed_v1_db(tmp_path: Path) -> Path:
@@ -230,7 +231,7 @@ def test_invalid_role_raises(store: RegistryStore) -> None:
         # Cast through Any-ish call so the runtime CHECK is what catches it,
         # not just the static Literal type. The Literal exists for IDE / mypy
         # support; the DB is the actual enforcement boundary.
-        store.set_channel_role("general", "99999999", "superadmin")  # type: ignore[arg-type]
+        store.set_channel_role("general", "99999999", "superadmin")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
 
 # ---------------------------------------------------------------------------
