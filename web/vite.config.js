@@ -15,6 +15,14 @@ export default defineConfig({
         target: 'http://127.0.0.1:9920',
         changeOrigin: true,
       },
+      // Single-origin Phase 2: the daemon bridges the embedded broker at
+      // /mqtt on the web port (:9921). Proxy the dev server's /mqtt WS to it
+      // so `npm run dev` connects same-origin just like production.
+      '/mqtt': {
+        target: 'ws://127.0.0.1:9921',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
   build: {

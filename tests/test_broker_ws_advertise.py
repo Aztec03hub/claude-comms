@@ -121,8 +121,25 @@ def test_external_host_api_base_priority_over_ws_host():
 
 
 def test_advertised_broker_ws_shape_when_omitted():
+    # Single-origin Phase 2: the daemon now bridges the broker at /mqtt on the
+    # web port, so it always flags ``broker_ws_same_origin`` so the client uses
+    # the page-relative, port-less ``ws(s)://<page-host>/mqtt``. The legacy
+    # port/path fields stay for back-compat; ``broker_ws_url`` is still omitted
+    # for loopback/bind-all hosts with no external host configured.
     out = _advertised_broker_ws({"broker": {"ws_host": "0.0.0.0", "ws_port": 9001}})
-    assert out == {"broker_ws_port": 9001, "broker_ws_path": "/mqtt"}
+    assert out == {
+        "broker_ws_same_origin": True,
+        "broker_ws_port": 9001,
+        "broker_ws_path": "/mqtt",
+    }
+
+
+def test_capabilities_flags_same_origin_broker():
+    # The /api/capabilities payload must advertise the same-origin broker bridge
+    # so the client connects to ws(s)://<page-host>/mqtt (Phase 2).
+    body = _caps({"broker": {"ws_host": "0.0.0.0", "ws_port": 9001}})
+    assert body["broker_ws_same_origin"] is True
+    assert body["broker_ws_path"] == "/mqtt"
 
 
 # ── CSP allows the advertised origin ──────────────────────────────────────
