@@ -334,6 +334,29 @@ export class MqttChatStore {
    * @type {string}
    */
   brokerUrl = $state(defaultBrokerUrl());
+
+  /**
+   * In-UI connection diagnostics — the browser-side mirror of the
+   * ``claude-comms doctor`` CLI (single-origin design §6). Each leg is
+   * ``null`` (not yet probed), ``true`` (reachable), or ``false`` (failed):
+   *
+   *   - ``web``    — the page origin served HTML (always true once the SPA is
+   *                  running, since the daemon served this very page).
+   *   - ``rest``   — ``GET /api/capabilities`` succeeded (same-origin REST).
+   *   - ``mcp``    — a ``POST /mcp`` JSON-RPC probe succeeded (same-origin MCP).
+   *   - ``broker`` — the MQTT broker WebSocket is connected.
+   *
+   * Populated automatically during ``connect()`` (web/rest) and by the broker
+   * client's connect/error handlers (broker); the SettingsPanel calls
+   * ``runDiagnostics()`` to refresh all legs (including the MCP probe) on
+   * demand. Under single-origin all legs target the SAME origin, so a failed
+   * ``rest`` almost always means "the daemon is down", while ``rest`` ok +
+   * ``broker`` down means "web server up, broker restarting".
+   *
+   * @type {{web: boolean|null, rest: boolean|null, mcp: boolean|null, broker: boolean|null}}
+   */
+  diagnostics = $state({ web: null, rest: null, mcp: null, broker: null });
+
   typingUsers = $state({});
   pinnedMessages = $state([]);
   inAppToasts = $state(true);
@@ -1542,8 +1565,15 @@ export class MqttChatStore {
     try {
       const caps = await apiGet('/api/capabilities');
       this.brokerUrl = resolveBrokerUrl(caps);
+      // REST reached the same-origin daemon → web + REST legs are healthy.
+      this.diagnostics.web = true;
+      this.diagnostics.rest = true;
     } catch {
       this.brokerUrl = resolveBrokerUrl(null);
+      // Same-origin: a failed capabilities fetch means the daemon itself is
+      // unreachable (it serves both the page and /api). Record it so the
+      // SettingsPanel diagnostics + the App banner can say WHAT is down.
+      this.diagnostics.rest = false;
       console.warn('[claude-comms] /api/capabilities unavailable; using page-host broker URL', this.brokerUrl);
     }
 
@@ -1575,6 +1605,7 @@ export class MqttChatStore {
     this.#client.on('connect', () => {
       this.connected = true;
       this.connectionError = null;
+      this.diagnostics.broker = true;
       this.#failureCount = 0;
       this.#backoffActive = false;
       this.#subscribeAll();
@@ -1670,12 +1701,18 @@ export class MqttChatStore {
 
     this.#client.on('error', (err) => {
       this.#failureCount++;
+      this.diagnostics.broker = false;
+      // Diagnostic copy (single-origin design §6): say WHAT failed and HOW to
+      // fix it, naming the broker URL. The REST API already reached the web
+      // server (it served this page + /api/capabilities), so a broker-WS
+      // failure means the message broker specifically is unreachable — most
+      // often the daemon is mid-restart.
       if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
-        this.connectionError = 'Broker unavailable — is "claude-comms start" running? (expected at ' + this.brokerUrl + ')';
+        this.connectionError = 'Reached the web server but the message broker at ' + this.brokerUrl + ' is unreachable — the daemon may be restarting.';
       } else if (err.message?.includes('WebSocket')) {
-        this.connectionError = 'WebSocket connection failed — is "claude-comms start" running? Check broker WebSocket listener on ' + this.brokerUrl + '.';
+        this.connectionError = 'Reached the web server but the broker WebSocket at ' + this.brokerUrl + ' failed to connect — the daemon may be restarting.';
       } else {
-        this.connectionError = 'MQTT error: ' + (err.message || String(err));
+        this.connectionError = 'MQTT error talking to the broker at ' + this.brokerUrl + ': ' + (err.message || String(err));
       }
 
       // After repeated failures, activate exponential backoff
@@ -1690,6 +1727,7 @@ export class MqttChatStore {
 
     this.#client.on('offline', () => {
       this.connected = false;
+      this.diagnostics.broker = false;
       this.#failureCount++;
       if (!this.connectionError) {
         this.connectionError = 'Connection lost — waiting to reconnect...';
@@ -1708,6 +1746,66 @@ export class MqttChatStore {
     this.#client.on('message', (topic, payload) => {
       this.#receiveMqttFrame(topic, payload);
     });
+  }
+
+  /**
+   * The browser page origin (e.g. ``http://localhost:9921``) the SPA + same-
+   * origin API are served from. Used in diagnostic copy so the user sees the
+   * exact address that is (un)reachable. Empty string in non-browser/test
+   * contexts.
+   *
+   * @returns {string}
+   */
+  get pageOrigin() {
+    if (typeof window === 'undefined' || !window.location) return '';
+    return window.location.origin;
+  }
+
+  /**
+   * Refresh the in-UI connection diagnostics — the browser mirror of the
+   * ``claude-comms doctor`` CLI (single-origin design §6). Probes the
+   * same-origin REST (``GET /api/capabilities``) and MCP (``POST /mcp``
+   * ``tools/list``) surfaces and reflects the live broker connection state.
+   *
+   * ``web`` is true whenever REST is reachable (the same daemon serves both
+   * the page and ``/api`` under single-origin). The broker leg is taken from
+   * the live MQTT connection rather than re-probed, so it stays in sync with
+   * the connection banner. Never throws — each leg degrades to ``false``.
+   *
+   * Called by the SettingsPanel when its "Connection diagnostics" readout is
+   * shown / refreshed.
+   *
+   * @returns {Promise<{web: boolean, rest: boolean, mcp: boolean, broker: boolean}>}
+   */
+  async runDiagnostics() {
+    let rest = false;
+    try {
+      await apiGet('/api/capabilities');
+      rest = true;
+    } catch {
+      rest = false;
+    }
+
+    let mcp = false;
+    try {
+      const res = await mcpCall('comms_conversations', {}, { timeoutMs: 4000 });
+      // A successful envelope OR a tool-level refusal both prove the MCP
+      // endpoint is reachable and routing JSON-RPC; only a transport failure
+      // (network / non-2xx / timeout) should mark the leg down.
+      mcp = res.success === true
+        || (typeof res.error === 'string'
+          && !/HTTP \d|Network error|timed out|Aborted/i.test(res.error));
+    } catch {
+      mcp = false;
+    }
+
+    // Under single-origin REST and the page share one origin, so a reachable
+    // REST surface means the web server is up.
+    this.diagnostics.web = rest;
+    this.diagnostics.rest = rest;
+    this.diagnostics.mcp = mcp;
+    this.diagnostics.broker = this.connected;
+    return { ...this.diagnostics };
   }
 
   /**

@@ -1,5 +1,5 @@
 """
-Regression tests for ``build_csp`` and ``_expand_loopback_aliases``.
+Regression tests for ``build_csp``.
 
 Single-origin Phase 3 collapsed the default CSP to ``connect-src 'self'``.
 With the SPA, REST/MCP API, and the broker ``/mqtt`` WS bridge all served from
@@ -23,28 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from claude_comms.cli import _expand_loopback_aliases, build_csp
-
-
-# --------------------------------------------------------------------------
-# _expand_loopback_aliases (still used by the legacy api_base branch)
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "0.0.0.0", "::1"])
-def test_expand_loopback_returns_both_aliases(host: str) -> None:
-    """Every loopback bind alias must expand to {127.0.0.1, localhost}."""
-    aliases = _expand_loopback_aliases(host)
-    assert "127.0.0.1" in aliases
-    assert "localhost" in aliases
-
-
-def test_expand_non_loopback_passes_through() -> None:
-    """A LAN IP / Tailscale name is returned unchanged."""
-    assert _expand_loopback_aliases("10.0.0.5") == ["10.0.0.5"]
-    assert _expand_loopback_aliases("my-laptop.tailnet.ts.net") == [
-        "my-laptop.tailnet.ts.net"
-    ]
+from claude_comms.cli import build_csp
 
 
 # --------------------------------------------------------------------------
