@@ -397,6 +397,14 @@ def build_csp(config: dict) -> str:
             if origin not in connect_origins:
                 connect_origins.append(origin)
 
+    # ALWAYS allow the loopback REST/MCP API too (mirror the broker block), so a
+    # desktop page at http://localhost:9921 can reach http://localhost:9920 even in
+    # api_base / reverse-proxy mode. Both alias forms are distinct browser origins.
+    for h in ("localhost", "127.0.0.1"):
+        for origin in (f"http://{h}:{mcp_port}", f"https://{h}:{mcp_port}"):
+            if origin not in connect_origins:
+                connect_origins.append(origin)
+
     extra = web_cfg.get("csp_extra_connect_src") or []
     connect_origins.extend(extra)
 
