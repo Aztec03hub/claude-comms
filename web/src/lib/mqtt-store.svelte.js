@@ -189,6 +189,13 @@ export class MqttChatStore {
   channelMembers = $state({});
   connected = $state(false);
   connectionError = $state(null);
+
+  /** The actual broker WebSocket URL this client connects to (derived from the
+   *  page host, e.g. ws://<host>:9001/mqtt). Surfaced so the Settings panel shows
+   *  the real connection target instead of a hardcoded localhost fallback. */
+  get brokerUrl() {
+    return BROKER_URL;
+  }
   typingUsers = $state({});
   pinnedMessages = $state([]);
   inAppToasts = $state(true);
