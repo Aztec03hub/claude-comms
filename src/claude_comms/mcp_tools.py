@@ -17,7 +17,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -102,21 +102,45 @@ def _is_visible(msg: dict[str, Any], viewer_key: str) -> bool:
     return viewer_key in recipients or viewer_key == sender_key
 
 
+def _parse_ts(ts: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp into a timezone-aware ``datetime``.
+
+    Normalizes a trailing ``Z`` (UTC designator) to ``+00:00`` so that
+    Python <3.11 — whose ``datetime.fromisoformat`` cannot parse the ``Z``
+    suffix — still accepts UTC timestamps.  Timezone-naive results are
+    treated as UTC so they compare correctly against offset-aware values.
+    Returns ``None`` on any parse failure so callers can fall back safely.
+    """
+    try:
+        ts = ts.strip()
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(ts)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def _ts_after(msg_ts: str, anchor: str) -> bool:
     """Return True iff *msg_ts* is strictly after *anchor* in real time.
 
     ISO-8601 timestamps with mixed timezone notations (e.g. ``...-05:00`` vs
     ``...Z``) cannot be compared as strings — naive ``>`` would say
-    ``2026-05-06T11:55:49-05:00 < 2026-05-06T16:49:01Z`` even though the
-    former is six minutes *later* in UTC.  Parse both as ``datetime`` and
-    compare in real time; fall back to string comparison if either side
-    fails to parse so a malformed record never silently breaks the read
+    ``2026-06-23T07:51:00Z > 2026-06-23T03:32:54-05:00`` even though the
+    former (02:51 CST) is *earlier* in real time than the latter (03:32 CST).
+    Parse both via :func:`_parse_ts`, which normalizes the ``Z`` suffix (for
+    Python <3.11) and treats naive timestamps as UTC, then compare the
+    resulting instants.  Only if a side fails to parse do we fall back to
+    string comparison, so a malformed record never silently breaks the read
     pipeline.
     """
-    try:
-        return datetime.fromisoformat(msg_ts) > datetime.fromisoformat(anchor)
-    except (ValueError, TypeError):
-        return msg_ts > anchor
+    a = _parse_ts(msg_ts)
+    b = _parse_ts(anchor)
+    if a is not None and b is not None:
+        return a > b
+    return str(msg_ts) > str(anchor)
 
 
 # ---------------------------------------------------------------------------
