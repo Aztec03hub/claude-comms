@@ -18,27 +18,59 @@
  */
 
 /**
- * Derive the API base origin.
+ * Default API (MCP/REST) port the daemon serves on when not same-origin.
+ */
+const DEFAULT_API_PORT = 9920;
+/** Vite dev-server ports — same-origin (Vite proxies /api/*). */
+const VITE_DEV_PORTS = new Set(['5173', '5174']);
+/** Production web-UI port — REST lives cross-port on DEFAULT_API_PORT. */
+const WEB_UI_PORT = '9921';
+
+/**
+ * Derive the API base origin from the page, NEVER baking an absolute host that
+ * the current browser can't reach.
+ *
+ * The single most important rule (desktop hairpin fix): the API base is
+ * derived from ``window.location`` so the client works from ANY origin it's
+ * served at — http://localhost:9921 (desktop), http://<tailscale>:9921
+ * (laptop), https://<tailscale> (tailscale serve). A baked absolute host
+ * (e.g. the Tailscale name injected via the api-base meta tag) is honored
+ * ONLY when the page is actually being served from that same host — otherwise
+ * a desktop loading http://localhost:9921 would try the Tailscale IP and
+ * hairpin → ERR_CONNECTION_TIMED_OUT (a host can't reach its own tailnet IP).
  *
  * Priority:
- *   1. `<meta name="claude-comms-api-base">` — authoritative override for
- *      reverse-proxy / Tailscale Funnel deployments. The daemon's static
- *      server injects this when `web.api_base` is set.
- *   2. Dev mode on Vite (5173/5174) → same-origin ('' — Vite proxies /api/*).
- *   3. Production bundled on 9921 → cross-port to 9920 (same host).
- *   4. Anything else → same-origin (assume a reverse proxy forwards /api/*).
+ *   1. `<meta name="claude-comms-api-base">` — but ONLY when its hostname
+ *      matches the page hostname (canonical origin for THIS host, e.g. a
+ *      reverse proxy / Funnel on the Tailscale name). Mismatched meta (the
+ *      desktop-on-localhost case) is ignored in favor of page-relative.
+ *   2. Vite dev (5173/5174) → same-origin ('').
+ *   3. Web UI on 9921 → same hostname + scheme, API port (cross-port).
+ *   4. Anything else (served behind a same-origin reverse proxy) → same-origin.
  *
- * @returns {string} API base URL (no trailing slash), or empty string for same-origin.
+ * @returns {string} API base URL (no trailing slash), or '' for same-origin.
  */
-function deriveApiBase() {
+export function deriveApiBase() {
   if (typeof window === 'undefined') return '';
 
-  const meta = document.querySelector('meta[name="claude-comms-api-base"]');
-  if (meta && meta.content) return meta.content.replace(/\/+$/, '');
-
   const { hostname, port, protocol } = window.location;
-  if (port === '5173' || port === '5174') return '';
-  if (port === '9921') return `${protocol}//${hostname}:9920`;
+
+  const meta = document.querySelector('meta[name="claude-comms-api-base"]');
+  if (meta && meta.content) {
+    const metaBase = meta.content.replace(/\/+$/, '');
+    try {
+      // Honor the meta override only when it targets the SAME host the page
+      // is served from. A different host means the meta is a remote-access
+      // origin that this browser may not be able to reach (hairpin); fall
+      // through to page-relative derivation instead.
+      if (new URL(metaBase).hostname === hostname) return metaBase;
+    } catch {
+      // Malformed meta content → ignore, derive page-relative.
+    }
+  }
+
+  if (VITE_DEV_PORTS.has(port)) return '';
+  if (port === WEB_UI_PORT) return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
   return '';
 }
 

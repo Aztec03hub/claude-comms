@@ -57,7 +57,7 @@ broker:
   mode: "host"
   host: "0.0.0.0"          # MQTT TCP 1883 on all interfaces (incl. tailscale)
   port: 1883
-  ws_host: "0.0.0.0"       # MQTT WebSocket 9001 — KEEP 9001 (web client hardcodes it)
+  ws_host: "0.0.0.0"       # MQTT WebSocket 9001 on all interfaces (the default)
   ws_port: 9001
   auth:
     enabled: true          # network-reachable now — require credentials
@@ -70,7 +70,7 @@ web:
   enabled: true
   host: "0.0.0.0"          # web UI 9921
   port: 9921
-  api_base: "http://DESKTOP:9920"            # UI's /api + CSP target
+  api_base: "http://DESKTOP:9920"            # canonical REST/CSP origin for remote browsers
   csp_extra_connect_src:                     # let the UI open the broker WS over tailscale
     - "ws://DESKTOP:9001"
     - "ws://DESKTOP:9001/mqtt"
@@ -79,14 +79,30 @@ web:
 
 Replace `DESKTOP` with the real MagicDNS name. Restart: `claude-comms stop && claude-comms start`.
 
+> **The client is origin-aware (no baked hosts).** As of the robust-broker-URL
+> change, the web client derives BOTH its REST base and its broker WS URL from
+> the page origin (`window.location`), so the same daemon works from every
+> origin it's served at:
+> - **Desktop**, page `http://localhost:9921` → REST `http://localhost:9920`,
+>   broker `ws://localhost:9001/mqtt`. The `api_base` meta hint is **ignored
+>   here** because its host (`DESKTOP`) differs from the page host — this is
+>   what prevents the desktop hairpin (`net::ERR_CONNECTION_TIMED_OUT` from a
+>   host trying to reach its own tailnet IP). The daemon always allows the
+>   loopback broker WS in CSP, so localhost access just works.
+> - **Laptop**, page `http://DESKTOP:9921` → REST `http://DESKTOP:9920`, broker
+>   `ws://DESKTOP:9001/mqtt` (the daemon also *advertises* the broker WS URL via
+>   `/api/capabilities`, derived from `api_base`/external host).
+> - **HTTPS via `tailscale serve`** (§7) → same-origin `wss://DESKTOP/mqtt`,
+>   no explicit port, no mixed content.
+
 > Tighter option: bind to the desktop's Tailscale IP (e.g. `100.x.y.z`) instead of
 > `0.0.0.0` so even the home LAN can't reach the services — only the tailnet.
 
 ## 3. Laptop
-- **Web UI (any network):** browse to `http://DESKTOP:9921`. It works because the
-  web client derives the broker URL from `window.location.hostname` → `DESKTOP` →
-  `ws://DESKTOP:9001/mqtt` (that's why `ws_port` must stay 9001 and be in
-  `csp_extra_connect_src`).
+- **Web UI (any network):** browse to `http://DESKTOP:9921`. The web client
+  derives the broker URL from the page origin (and prefers the daemon-advertised
+  `broker_ws_url` from `/api/capabilities`) → `ws://DESKTOP:9001/mqtt`. Keep
+  `ws_port: 9001` in `csp_extra_connect_src` so the WS origin is allowed.
 - **Claude Code MCP:** point the project's `.mcp.json` at the desktop:
   ```json
   {"mcpServers": {"claude-comms": {"type": "http", "url": "http://DESKTOP:9920/mcp"}}}
@@ -139,3 +155,64 @@ These are the things that actually bit a Windows-desktop-hosting-via-WSL setup:
   config identity. The UI auto-loads the daemon identity from `/api/identity` —
   but only if CORS works (fix the point above first). Each device/browser is its
   own participant; set your Display Name per browser, or it stays the local key.
+- **On the desktop, `http://localhost:9921` loops on "Reconnecting to broker".**
+  When the daemon runs in **WSL2**, `localhost` on the Windows browser does NOT
+  reach an in-WSL **loopback** broker bind — only the Tailscale/LAN host does.
+  Two things make localhost work now: (1) the broker WS binds `0.0.0.0` by
+  default (confirm with `ss -tlnp | grep 9001` → `0.0.0.0:9001`), and (2) the
+  daemon always allows the loopback broker WS in CSP. If it still loops, you are
+  almost certainly hitting WSL2 networking, not CSP — enable **mirrored
+  networking** (above) or just use the **Tailscale/LAN host** the daemon
+  advertises (`http://DESKTOP:9921`), which the client picks up from
+  `/api/capabilities`. The browser console names the exact URL it's attempting
+  (e.g. `Reconnecting to broker (ws://localhost:9001/mqtt)...`).
+- **On the desktop, REST fails with `net::ERR_CONNECTION_TIMED_OUT` to your own
+  Tailscale name.** A host can't reach its own tailnet IP (no hairpin). The
+  client no longer bakes the `api_base` host when you load the page from a
+  *different* host: loading `http://localhost:9921` derives REST as
+  `http://localhost:9920` and ignores the `DESKTOP` `api_base` meta hint. So
+  **the desktop must use `localhost`, not its own Tailscale hostname.** (The
+  `api_base` hint is still honored on the laptop, where the page host *is*
+  `DESKTOP`.)
+
+## 7. HTTPS via `tailscale serve` (secure-context features, single origin)
+
+Plain `http://DESKTOP:9921` works inside the tailnet, but browsers treat it as
+an **insecure context**, so clipboard, notifications, and Web Crypto are
+disabled on the laptop (they ARE enabled on the desktop because `localhost` is
+always a secure context). To get all secure-context features on remote devices,
+serve the UI over HTTPS on the MagicDNS name with `tailscale serve`, putting the
+web UI and the broker WS on **one origin** (no mixed content, no extra ports):
+
+```bash
+# On the DESKTOP. Verified against Tailscale Serve docs (CLI as of 2025/2026:
+# tailscale serve v1.7x+; --https, --set-path, --bg are stable).
+
+# 1) Web UI at the root path, HTTPS on 443.
+tailscale serve --bg --https=443 http://127.0.0.1:9921
+
+# 2) Broker WebSocket at /mqtt on the SAME HTTPS origin.
+#    The broker's WS listener is on 9001; serve proxies WebSocket upgrades.
+tailscale serve --bg --https=443 --set-path=/mqtt http://127.0.0.1:9001
+
+# Confirm the mounts:
+tailscale serve status
+```
+
+Then browse to `https://DESKTOP/` from the laptop. The client detects the HTTPS
+origin and connects the broker to **`wss://DESKTOP/mqtt`** (same origin, no
+explicit port) — handled by the same-origin branch of the broker-URL resolver.
+REST is same-origin (`/api/*`) over HTTPS as well.
+
+Notes:
+- **Local stays plain HTTP.** The desktop still uses `http://localhost:9921`
+  (already a secure context); do not route the desktop through its own
+  `tailscale serve` origin — that would hairpin.
+- **No mixed content.** Because both the page and the WS are `https`/`wss` on
+  one origin, there is no `ws://`-from-`https://` block.
+- **CORS/CSP.** Same-origin requests need no cross-origin allow-listing; the
+  daemon's CSP `'self'` covers same-origin `wss`. Keep the direct `:9921`/`:9001`
+  config too if you also want the non-HTTPS path to keep working.
+- If your `tailscale serve` build differs, run `tailscale serve --help` — older
+  builds used `tailscale serve https / <target>` positional syntax; `--set-path`
+  + `--bg` is the current form.

@@ -2,12 +2,119 @@ import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
 import { API_BASE, apiGet, apiPost, mcpCall } from './api.js';
 
-// Derive the MQTT broker URL from the current page hostname.
-// API origin derivation now lives in lib/api.js (exported as API_BASE);
-// this file only handles the WebSocket side, which must be absolute since
-// it's a different port regardless of dev/prod.
-const _host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-const BROKER_URL = `ws://${_host}:9001/mqtt`;
+// Default broker port + path used when the daemon doesn't advertise its own.
+const DEFAULT_BROKER_WS_PORT = 9001;
+const DEFAULT_BROKER_WS_PATH = '/mqtt';
+
+/**
+ * Current page location, or a localhost/http default when there's no window
+ * (SSR / tests).
+ * @returns {{hostname: string, protocol: string}}
+ */
+function pageLocation() {
+  if (typeof window !== 'undefined' && window.location) {
+    return { hostname: window.location.hostname, protocol: window.location.protocol };
+  }
+  return { hostname: 'localhost', protocol: 'http:' };
+}
+
+/**
+ * WebSocket scheme matching a page protocol: ``wss`` for https pages (so a
+ * Tailscale-HTTPS deployment has no mixed-content block), ``ws`` otherwise.
+ * @param {string} protocol - e.g. ``'https:'`` or ``'http:'``.
+ * @returns {'ws'|'wss'}
+ */
+function wsScheme(protocol) {
+  return protocol === 'https:' ? 'wss' : 'ws';
+}
+
+/**
+ * Fallback broker WebSocket URL derived from the page location. Used when the
+ * daemon does not advertise an explicit ``broker_ws_url`` (the loopback /
+ * bind-all case) — the page host is the correct target, whether the user
+ * typed ``localhost`` or a Tailscale/LAN name. The scheme follows the page
+ * protocol (https→wss, http→ws) so the URL works under both.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.host]     - Host. Defaults to the page host.
+ * @param {string} [opts.protocol] - Page protocol. Defaults to the page protocol.
+ * @param {number} [opts.port]     - WS port. Defaults to {@link DEFAULT_BROKER_WS_PORT}.
+ * @param {string} [opts.path]     - WS path. Defaults to {@link DEFAULT_BROKER_WS_PATH}.
+ * @returns {string}
+ */
+export function defaultBrokerUrl(opts = {}) {
+  const loc = pageLocation();
+  const host = opts.host ?? loc.host ?? loc.hostname;
+  const protocol = opts.protocol ?? loc.protocol;
+  const port = opts.port ?? DEFAULT_BROKER_WS_PORT;
+  const path = opts.path ?? DEFAULT_BROKER_WS_PATH;
+  return `${wsScheme(protocol)}://${host}:${port}${path}`;
+}
+
+/**
+ * Same-origin broker WebSocket URL (no explicit port). Used when the page is
+ * served over HTTPS behind a reverse proxy (``tailscale serve``) that maps
+ * BOTH the web UI at ``/`` and the broker WS at a path (e.g. ``/mqtt``) onto
+ * ONE origin on port 443. Connecting to an explicit ``:9001`` would miss the
+ * proxy and trip mixed-content; ``wss://<same-origin><path>`` is correct.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.host]     - Host. Defaults to the page host.
+ * @param {string} [opts.protocol] - Page protocol. Defaults to the page protocol.
+ * @param {string} [opts.path]     - WS path. Defaults to {@link DEFAULT_BROKER_WS_PATH}.
+ * @returns {string}
+ */
+export function sameOriginBrokerUrl(opts = {}) {
+  const loc = pageLocation();
+  const host = opts.host ?? loc.hostname;
+  const protocol = opts.protocol ?? loc.protocol;
+  const path = opts.path ?? DEFAULT_BROKER_WS_PATH;
+  return `${wsScheme(protocol)}://${host}${path}`;
+}
+
+/**
+ * Resolve the broker WebSocket URL the client should connect to.
+ *
+ * Precedence:
+ *   1. Daemon-advertised explicit ``broker_ws_url`` (api_base / Tailscale /
+ *      LAN host configured) — wins so EVERY browser uses the known-good host.
+ *   2. Same-origin path when the page is served over HTTPS (assume a reverse
+ *      proxy like ``tailscale serve`` maps the broker WS onto this origin) or
+ *      when the daemon flags ``broker_ws_same_origin``. Yields
+ *      ``wss://<same-origin><path>`` (no port).
+ *   3. Fallback ``<ws|wss>://<page-host>:<port><path>`` from the page,
+ *      honoring the advertised port/path when present.
+ *
+ * This fixes both the WSL2 "Reconnecting to broker" loop (the client no longer
+ * blindly guesses) and the Tailscale-HTTPS mixed-content case.
+ *
+ * @param {object|null|undefined} caps - Parsed /api/capabilities response.
+ * @param {{hostname: string, protocol: string}} [loc] - Page location override (tests).
+ * @returns {string}
+ */
+export function resolveBrokerUrl(caps, loc = pageLocation()) {
+  const path = caps && typeof caps.broker_ws_path === 'string' && caps.broker_ws_path
+    ? caps.broker_ws_path
+    : DEFAULT_BROKER_WS_PATH;
+
+  // 1. Explicit advertised URL wins.
+  if (caps && typeof caps.broker_ws_url === 'string' && caps.broker_ws_url) {
+    return caps.broker_ws_url;
+  }
+
+  // 2. Same-origin: page is HTTPS (proxy assumption) or daemon flagged it.
+  const sameOrigin = (caps && caps.broker_ws_same_origin === true)
+    || loc.protocol === 'https:';
+  if (sameOrigin) {
+    return sameOriginBrokerUrl({ host: loc.hostname, protocol: loc.protocol, path });
+  }
+
+  // 3. Fallback: page host + advertised/default port, scheme from page protocol.
+  const port = caps && Number.isFinite(caps.broker_ws_port)
+    ? caps.broker_ws_port
+    : DEFAULT_BROKER_WS_PORT;
+  return defaultBrokerUrl({ host: loc.hostname, protocol: loc.protocol, port, path });
+}
 const TOPIC_PREFIX = 'claude-comms';
 const TYPING_TTL_MS = 5000;
 const BASE_RECONNECT_MS = 3000;
@@ -190,12 +297,15 @@ export class MqttChatStore {
   connected = $state(false);
   connectionError = $state(null);
 
-  /** The actual broker WebSocket URL this client connects to (derived from the
-   *  page host, e.g. ws://<host>:9001/mqtt). Surfaced so the Settings panel shows
-   *  the real connection target instead of a hardcoded localhost fallback. */
-  get brokerUrl() {
-    return BROKER_URL;
-  }
+  /**
+   * The actual broker WebSocket URL this client connects to. Prefers the
+   * daemon-advertised value (from /api/capabilities, resolved in connect());
+   * before connect() runs it holds the page-host fallback so the Settings
+   * panel always shows a real target. Reactive so the panel updates once the
+   * daemon advertisement is resolved.
+   * @type {string}
+   */
+  brokerUrl = $state(defaultBrokerUrl());
   typingUsers = $state({});
   pinnedMessages = $state([]);
   inAppToasts = $state(true);
@@ -1396,11 +1506,24 @@ export class MqttChatStore {
       }
     }
 
+    // Robust broker URL: ask the daemon where its broker WebSocket lives
+    // (token-free GET, already fetched elsewhere on boot). The daemon
+    // advertises an explicit host when one is configured (api_base /
+    // Tailscale / LAN); otherwise we fall back to the page host. This fixes
+    // the WSL2 case where ws://localhost:9001 can't reach the in-WSL broker.
+    try {
+      const caps = await apiGet('/api/capabilities');
+      this.brokerUrl = resolveBrokerUrl(caps);
+    } catch {
+      this.brokerUrl = resolveBrokerUrl(null);
+      console.warn('[claude-comms] /api/capabilities unavailable; using page-host broker URL', this.brokerUrl);
+    }
+
     const clientId = 'claude-comms-web-' + this.userProfile.key + '-' + this.#instanceId;
     const connKey = 'web-' + this.#instanceId;
     const presenceTopic = TOPIC_PREFIX + '/presence/' + this.userProfile.key + '/' + connKey;
 
-    this.#client = mqtt.connect(BROKER_URL, {
+    this.#client = mqtt.connect(this.brokerUrl, {
       clientId,
       clean: true,
       keepalive: 30,
@@ -1512,9 +1635,9 @@ export class MqttChatStore {
     this.#client.on('error', (err) => {
       this.#failureCount++;
       if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
-        this.connectionError = 'Broker unavailable — is "claude-comms start" running? (expected at ' + BROKER_URL + ')';
+        this.connectionError = 'Broker unavailable — is "claude-comms start" running? (expected at ' + this.brokerUrl + ')';
       } else if (err.message?.includes('WebSocket')) {
-        this.connectionError = 'WebSocket connection failed — is "claude-comms start" running? Check broker WebSocket listener on ' + BROKER_URL + '.';
+        this.connectionError = 'WebSocket connection failed — is "claude-comms start" running? Check broker WebSocket listener on ' + this.brokerUrl + '.';
       } else {
         this.connectionError = 'MQTT error: ' + (err.message || String(err));
       }
@@ -1543,7 +1666,7 @@ export class MqttChatStore {
 
     this.#client.on('reconnect', () => {
       if (this.#backoffActive) return; // suppress during backoff
-      this.connectionError = 'Reconnecting to broker...';
+      this.connectionError = 'Reconnecting to broker (' + this.brokerUrl + ')...';
     });
 
     this.#client.on('message', (topic, payload) => {
