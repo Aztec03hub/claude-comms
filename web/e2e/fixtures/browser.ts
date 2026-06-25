@@ -82,11 +82,13 @@ export const test = base.extend<E2EFixtures & E2EOptions>({
   appPage: async ({ page, daemon, consoleErrors }, use) => {
     page.on('console', (msg: ConsoleMessage) => {
       if (msg.type() === 'error') {
-        consoleErrors.push(`[console.error] ${msg.text()}`);
+        const entry = `[console.error] ${msg.text()}`;
+        if (!isBenignConsoleNoise(entry)) consoleErrors.push(entry);
       }
     });
     page.on('pageerror', (err: Error) => {
-      consoleErrors.push(`[pageerror] ${err.message}`);
+      const entry = `[pageerror] ${err.message}`;
+      if (!isBenignConsoleNoise(entry)) consoleErrors.push(entry);
     });
 
     await page.goto(daemon.baseURL);
@@ -99,6 +101,33 @@ export const test = base.extend<E2EFixtures & E2EOptions>({
 export { expect };
 
 /**
+ * Known-benign console noise that is NOT an application defect and must not
+ * fail a scenario:
+ *
+ *  - "Failed to load resource" — a slow / racey static-asset fetch.
+ *  - "WebSocket is already in CLOSING or CLOSED state." — Chromium logs this
+ *    (verbatim, both words in one phrase) when a pending publish (keepalive /
+ *    LWT / presence) races the socket teardown that `page.reload()` and
+ *    end-of-test navigation trigger. It is pure teardown noise: the page is
+ *    being torn down, the broker connection is closing, and there is no
+ *    functional impact. It surfaces only under parallel CPU contention (which
+ *    shifts the reload-vs-close timing), never in steady state. Filtered here
+ *    so the per-test console-error spy and assertNoConsoleErrors both ignore it.
+ *
+ * @param {string} entry - A collected console-error / pageerror string.
+ * @returns {boolean} true when the entry is benign noise to be ignored.
+ */
+export function isBenignConsoleNoise(entry: string): boolean {
+  return (
+    /Failed to load resource/.test(entry) ||
+    // Verbatim Chromium message: "WebSocket is already in CLOSING or CLOSED
+    // state." Match the whole phrase — a `(CLOSING|CLOSED) state` alternation
+    // does NOT match because the real text is "CLOSING or CLOSED state".
+    /WebSocket is already in CLOSING or CLOSED state/.test(entry)
+  );
+}
+
+/**
  * Assertion helper: verify no console.error or pageerror fired during the
  * test, and specifically that "state_unsafe_mutation" was not thrown.
  *
@@ -106,9 +135,9 @@ export { expect };
  * getChannelRole pure-read fix.
  */
 export function assertNoConsoleErrors(consoleErrors: string[]): void {
-  // Filter out known-benign network noise (e.g. slow static asset load).
+  // Filter out known-benign noise (slow static asset load, WS teardown race).
   // Real bugs come from app code; we want to catch THOSE.
-  const real = consoleErrors.filter((e) => !/Failed to load resource/.test(e));
+  const real = consoleErrors.filter((e) => !isBenignConsoleNoise(e));
   expect(real, `Unexpected console errors:\n${real.join('\n')}`).toEqual([]);
   // Belt-and-braces: even if the filter let one through, ban the cascade bug.
   for (const e of consoleErrors) {

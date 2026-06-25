@@ -47,27 +47,35 @@ export interface DaemonHandle {
 
 // Port budget.
 //
-// MQTT ports are PINNED to 1883 / 9001 because the web UI (mqtt-store.svelte.js)
-// hardcodes `ws://${hostname}:9001/mqtt` and we cannot patch the client per the
-// Phase 1 brief (read-only on web/src/**). This means:
-//   - tests cannot run in parallel across spec files (one broker on 9001)
-//   - Phil's dev daemon MUST be stopped before running E2E (see README)
+// EVERY port is slot-scoped so N daemons run side by side (workers > 1).
 //
-// MCP and web ports are slot-scoped so a future client refactor with config-
-// derived ws URL can flip workers>1.
-const FIXED_BROKER_PORT = 1883;
-const FIXED_BROKER_WS_PORT = 9001;
+// The MQTT ports used to be PINNED to 1883 / 9001 because the web UI was
+// believed to hardcode `ws://${hostname}:9001/mqtt`. That pin is now OBSOLETE:
+// the single-origin refactor (PRs #23-26) moved the browser's broker connection
+// to a same-origin `/mqtt` WebSocket bridged onto the daemon's WEB port. The
+// daemon advertises `broker_ws_same_origin: true` via /api/capabilities, so
+// mqtt-store's `resolveBrokerUrl()` connects to `ws://<page-host>:<web-port>/mqtt`
+// — NOT a hardcoded 9001. The daemon still BINDS a broker TCP listener
+// (broker.port) and a broker WS listener (broker.ws_port) for its own internal
+// MQTT client + non-web (TUI/MCP/doctor) clients, so both must still get a
+// unique, slot-scoped port to avoid cross-worker collisions; the browser path
+// never touches them.
+//
+// Each slot reserves a contiguous 10-port window (mcp .. mqttWs use offsets
+// 0..3), so slots never overlap.
 const PORT_BASE = {
   mcp: 9930,
   web: 9931,
+  mqttTcp: 9932,
+  mqttWs: 9933,
 };
 
 export function portsForSlot(slot: number): DaemonPorts {
   return {
     mcp: PORT_BASE.mcp + slot * 10,
     web: PORT_BASE.web + slot * 10,
-    mqttTcp: FIXED_BROKER_PORT,
-    mqttWs: FIXED_BROKER_WS_PORT,
+    mqttTcp: PORT_BASE.mqttTcp + slot * 10,
+    mqttWs: PORT_BASE.mqttWs + slot * 10,
   };
 }
 
@@ -140,15 +148,16 @@ function buildConfigYaml(opts: ConfigOptions): string {
     `  api_base: "http://127.0.0.1:${ports.mcp}"`,
     '  strict_cors: true',
     '  markdown_render_enabled: true',
-    // The web client hardcodes ws://${hostname}:9001/mqtt. In reverse-proxy
-    // mode the CSP derives its WS allow-list from api_base (port mcp), so we
-    // must whitelist the hardcoded 9001 URL explicitly. Same for localhost
-    // since the browser may resolve loopback as either.
+    // Single-origin: the browser connects to ws://<web-host>:<web-port>/mqtt
+    // (same origin as the page), which CSP connect-src 'self' already permits,
+    // so no broker-WS-port whitelist is needed. We still whitelist the slot's
+    // own broker WS port defensively for any legacy/cached bundle that derives
+    // ws://host:<ws_port>/mqtt from the advertised broker_ws_port.
     '  csp_extra_connect_src:',
-    `    - "ws://127.0.0.1:${FIXED_BROKER_WS_PORT}"`,
-    `    - "ws://127.0.0.1:${FIXED_BROKER_WS_PORT}/mqtt"`,
-    `    - "ws://localhost:${FIXED_BROKER_WS_PORT}"`,
-    `    - "ws://localhost:${FIXED_BROKER_WS_PORT}/mqtt"`,
+    `    - "ws://127.0.0.1:${ports.mqttWs}"`,
+    `    - "ws://127.0.0.1:${ports.mqttWs}/mqtt"`,
+    `    - "ws://localhost:${ports.mqttWs}"`,
+    `    - "ws://localhost:${ports.mqttWs}/mqtt"`,
     'notifications:',
     '  hook_enabled: false',
     '  sound_enabled: false',
@@ -180,17 +189,14 @@ export async function spawnDaemon(opts: SpawnDaemonOptions): Promise<DaemonHandl
   const ports = portsForSlot(opts.slot);
   const startupTimeoutMs = opts.startupTimeoutMs ?? 20000;
 
-  // Verify ports are free before we try to bind.
+  // Verify ports are free before we try to bind. All ports are slot-scoped,
+  // so a collision here means a stale e2e daemon (or another process) is
+  // squatting on this slot's window — not a pinned-port conflict.
   for (const p of [ports.mcp, ports.web, ports.mqttTcp, ports.mqttWs]) {
     if (!(await isPortFree(p))) {
-      const isMqtt = p === FIXED_BROKER_PORT || p === FIXED_BROKER_WS_PORT;
       throw new Error(
         `E2E port ${p} (slot ${opts.slot}) is already in use. ` +
-        (isMqtt
-          ? `MQTT ports (1883/9001) are pinned because the web UI hardcodes them. ` +
-            `Stop your dev claude-comms daemon (\`claude-comms stop\`) before running E2E. ` +
-            `See web/e2e/README.md for details.`
-          : `Check for stale e2e daemons (pkill -f 'claude-comms start').`)
+        `Check for stale e2e daemons (pkill -f 'claude-comms start').`
       );
     }
   }
