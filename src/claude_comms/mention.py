@@ -26,6 +26,29 @@ MENTION_PATTERN = re.compile(
 NAME_PATTERN = re.compile(r"@([\w-]+)")
 
 
+# Broadcast mention tokens that expand to "everyone currently present" in the
+# conversation. Case-insensitive, matched with or without a leading "@".
+# Also reserved as participant display names (see mcp_tools.tool_comms_join) so
+# nobody can register a name that would shadow the broadcast token.
+BROADCAST_MENTION_TOKENS = frozenset({"all", "everyone"})
+
+
+def is_broadcast_mention(token: str) -> bool:
+    """True if *token* is an ``@all`` / ``@everyone`` broadcast mention.
+
+    Matches case-insensitively, with or without a leading ``@`` and
+    surrounding whitespace.
+
+    >>> is_broadcast_mention("@all")
+    True
+    >>> is_broadcast_mention("Everyone")
+    True
+    >>> is_broadcast_mention("alice")
+    False
+    """
+    return token.strip().lstrip("@").strip().lower() in BROADCAST_MENTION_TOKENS
+
+
 def extract_mentions(body: str) -> list[str]:
     """Return the list of mentioned display names from the body prefix.
 

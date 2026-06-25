@@ -20,6 +20,7 @@ These tests pin that the helper:
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import pytest
@@ -132,3 +133,46 @@ async def test_swallows_publish_exceptions() -> None:
         name="svelte-worker",
         type_="claude",
     )
+
+
+# --------------------------------------------------------------------------
+# Presence keepalive: every read/poll tool must refresh presence (_touch)
+# --------------------------------------------------------------------------
+
+
+def _tool_body(source: str, name: str) -> str:
+    """Return the source slice of an ``@mcp.tool`` function named *name*.
+
+    Slices from ``def {name}(`` to the next tool boundary (next ``@mcp.tool``
+    decorator or top-level-of-closure ``def``), good enough to assert a call
+    appears inside the function body without importing the FastMCP wiring.
+    """
+    start = source.index(f"def {name}(")
+    rest = source[start + 1 :]
+    candidates = [
+        i for i in (rest.find("\n    @mcp.tool"), rest.find("\n    def ")) if i != -1
+    ]
+    end = min(candidates) if candidates else len(rest)
+    return rest[:end]
+
+
+def test_every_read_path_touches_presence() -> None:
+    """Regression guard: read/poll tools resurrect/refresh presence on call.
+
+    If a future edit drops ``_touch(key)`` from any of these, slow pollers
+    will flap offline between reads — exactly the keepalive bug this protects.
+    """
+    import claude_comms.mcp_server as mcp_server
+
+    source = inspect.getsource(mcp_server)
+    for name in (
+        "comms_read",
+        "comms_thread_read",
+        "comms_history",
+        "comms_check",
+        "comms_members",
+    ):
+        body = _tool_body(source, name)
+        assert "_touch(key)" in body, (
+            f"{name} must call _touch(key) to keep presence fresh"
+        )

@@ -216,7 +216,7 @@ class TestSweepOnce:
     @pytest.mark.asyncio
     async def test_sweep_removes_stale_connections(self):
         reg, p = _registry_with_participant(
-            key="abcd1234", conn_keys=["mcp"], stale_seconds=400
+            key="abcd1234", conn_keys=["mcp"], stale_seconds=700
         )
         mgr = PresenceManager(reg)
 
@@ -265,7 +265,7 @@ class TestSweepOnce:
             client="web", instance_id=None, since=fresh_ts, last_seen=fresh_ts
         )
         # Stale
-        stale_ts = _stale_iso(400)
+        stale_ts = _stale_iso(700)
         p.connections["mcp"] = ConnectionInfo(
             client="mcp", instance_id=None, since=stale_ts, last_seen=stale_ts
         )
@@ -465,3 +465,78 @@ class TestIntegration:
         publish_fn.assert_any_await(
             "claude-comms/presence/abcd1234/mcp", b"", retain=True
         )
+
+
+# ===================================================================
+# 5. Default TTL keepalive value
+# ===================================================================
+
+
+class TestDefaultTtl:
+    def test_default_ttl_is_ten_minutes(self):
+        """Keepalive: TTL must give slow pollers (~4-5 min) headroom."""
+        assert DEFAULT_CONNECTION_TTL_SECONDS == 600
+
+    def test_config_default_matches_module_default(self):
+        from claude_comms.config import _DEFAULT_CONFIG
+
+        assert (
+            _DEFAULT_CONFIG["presence"]["connection_ttl_seconds"]
+            == DEFAULT_CONNECTION_TTL_SECONDS
+        )
+
+
+# ===================================================================
+# 6. Resurrect re-publishes "online"
+# ===================================================================
+
+
+class TestResurrectPublishesOnline:
+    @pytest.mark.asyncio
+    async def test_resurrect_publishes_online_presence(self):
+        """ensure_connection on a swept participant re-announces them online.
+
+        The sweep cleared retained presence with an offline (empty) payload, so
+        other clients show the agent as gone. Resurrecting on activity must
+        publish an "online" event so the web userlist re-adds them — not just
+        the in-memory registry.
+        """
+        reg = ParticipantRegistry()
+        reg.join("alice", "general", key="abcd1234", participant_type="claude")
+        # Participant has no live connections (swept).
+        publish_fn = AsyncMock()
+        mgr = PresenceManager(reg, publish_fn=publish_fn)
+
+        mgr.ensure_connection("abcd1234", client="mcp")
+        # The publish is scheduled as a background task; let it run.
+        await asyncio.sleep(0)
+
+        assert "mcp" in reg.get("abcd1234").connections  # pyright: ignore[reportOptionalMemberAccess]
+        publish_fn.assert_awaited()
+        topic, payload, kwargs = (
+            publish_fn.await_args.args[0],
+            publish_fn.await_args.args[1],
+            publish_fn.await_args.kwargs,
+        )
+        assert topic == "claude-comms/presence/abcd1234/mcp"
+        assert kwargs.get("retain") is True
+        import json
+
+        data = json.loads(payload)
+        assert data["status"] == "online"
+        assert data["key"] == "abcd1234"
+        assert data["name"] == "alice"
+        assert data["client"] == "mcp"
+        assert data["type"] == "claude"
+
+    @pytest.mark.asyncio
+    async def test_refresh_existing_does_not_publish(self):
+        """No resurrect (connection already live) → no online publish."""
+        reg, _p = _registry_with_participant(key="abcd1234", conn_keys=["mcp"])
+        publish_fn = AsyncMock()
+        mgr = PresenceManager(reg, publish_fn=publish_fn)
+
+        mgr.ensure_connection("abcd1234", client="mcp")
+        await asyncio.sleep(0)
+
+        publish_fn.assert_not_awaited()

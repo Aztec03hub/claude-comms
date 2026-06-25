@@ -21,6 +21,7 @@ retained "online" state on the MQTT broker.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Protocol
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_CONNECTION_TTL_SECONDS = 180  # 3 min
+DEFAULT_CONNECTION_TTL_SECONDS = 600  # 10 min — headroom for slow poll cadences
 DEFAULT_SWEEP_INTERVAL_SECONDS = 30
 
 
@@ -148,6 +149,14 @@ class PresenceManager:
                 since=ts,
                 last_seen=ts,
             )
+            # Re-announce "online": the sweep that removed this connection
+            # published a retained offline (empty) payload, so web / TUI
+            # userlists currently show the agent as gone. Mirror that by
+            # publishing an online presence event for the resurrected slot
+            # so other clients see the agent return, not just our in-memory
+            # registry. Best-effort + non-blocking (ensure_connection is sync
+            # and runs on the request path).
+            self._schedule_online_publish(key, client, p.name, p.type)
             return
         for conn in p.connections.values():
             conn.last_seen = ts
@@ -281,4 +290,52 @@ class PresenceManager:
         except Exception:
             logger.exception(
                 "Failed to publish offline presence for %s/%s", key, conn_key
+            )
+
+    def _schedule_online_publish(
+        self, key: str, conn_key: str, name: str, type_: str
+    ) -> None:
+        """Fire-and-forget an online presence publish for a resurrected slot.
+
+        ``ensure_connection`` is synchronous and runs on the request path, but
+        the publish itself is async. Schedule it on the running loop when one
+        exists; outside a loop (e.g. unit tests calling ``ensure_connection``
+        directly) this is a no-op so the resurrect itself never fails.
+        """
+        if self._publish_fn is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        _ = loop.create_task(self._publish_online(key, conn_key, name, type_))
+
+    async def _publish_online(
+        self, key: str, conn_key: str, name: str, type_: str
+    ) -> None:
+        """Publish a retained "online" presence event for a single connection.
+
+        Mirror of :meth:`_publish_offline`: publishes to the new-style presence
+        topic ``claude-comms/presence/{key}/{conn_key}`` so the web userlist and
+        other subscribers re-add a previously-swept agent. Failures are logged
+        but never propagated.
+        """
+        if self._publish_fn is None:
+            return
+        topic = f"claude-comms/presence/{key}/{conn_key}"
+        payload = json.dumps(
+            {
+                "key": key,
+                "name": name,
+                "type": type_,
+                "status": "online",
+                "client": conn_key,
+                "ts": now_iso(),
+            }
+        ).encode()
+        try:
+            await self._publish_fn(topic, payload, retain=True)
+        except Exception:
+            logger.exception(
+                "Failed to publish online presence for %s/%s", key, conn_key
             )

@@ -4,11 +4,45 @@ from __future__ import annotations
 
 
 from claude_comms.mention import (
+    BROADCAST_MENTION_TOKENS,
     build_mention_prefix,
     extract_mentions,
+    is_broadcast_mention,
     resolve_mentions,
     strip_mentions,
 )
+
+
+# ---------------------------------------------------------------------------
+# is_broadcast_mention (@all / @everyone)
+# ---------------------------------------------------------------------------
+
+
+class TestIsBroadcastMention:
+    def test_all_and_everyone_are_tokens(self) -> None:
+        assert BROADCAST_MENTION_TOKENS == frozenset({"all", "everyone"})
+
+    def test_plain_tokens(self) -> None:
+        assert is_broadcast_mention("all")
+        assert is_broadcast_mention("everyone")
+
+    def test_with_at_prefix(self) -> None:
+        assert is_broadcast_mention("@all")
+        assert is_broadcast_mention("@everyone")
+
+    def test_case_insensitive(self) -> None:
+        assert is_broadcast_mention("ALL")
+        assert is_broadcast_mention("Everyone")
+        assert is_broadcast_mention("@EVERYONE")
+
+    def test_surrounding_whitespace(self) -> None:
+        assert is_broadcast_mention(" @all ")
+
+    def test_normal_names_are_not_broadcast(self) -> None:
+        assert not is_broadcast_mention("alice")
+        assert not is_broadcast_mention("@bob")
+        assert not is_broadcast_mention("allan")
+        assert not is_broadcast_mention("everyones")
 
 
 # ---------------------------------------------------------------------------

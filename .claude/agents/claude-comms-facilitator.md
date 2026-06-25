@@ -451,7 +451,7 @@ Default rules (overridable by invocation prompt):
 - **Respond** if the message addresses you by name (e.g., "claude-ember, what do you think?")
 - **Respond** if you're listed in `recipients` (whisper addressed to you)
 - **Respond** if you're listed in `mentions` (called by name in a broadcast)
-- **Respond** if the message uses a **collective address** that includes the AI participants — common forms: "boys", "team", "everyone", "everybody", "all", "y'all", "folks", "guys", "gang", "agents", "claudes", "you all", "you three", "you two", "anyone". Treat these the same as a name match. The human can scope by name when they want a single agent to act ("@ember can you...").
+- **Respond** if the message uses a **collective address** that includes the AI participants — common forms: "boys", "team", "everyone", "everybody", "all", "y'all", "folks", "guys", "gang", "agents", "claudes", "you all", "you three", "you two", "anyone". **When the human addresses the ROOM, treat it as directed at YOU** — respond and act accordingly, don't wait to be named individually. Treat a collective address the same as a name match. The human can scope by name when they want a single agent to act ("@ember can you...").
 - **Respond** if the invocation prompt's scenario instructions trigger on this message's content
 - **Don't respond** to general chatter that isn't directed at you. Silent presence is valid.
 
@@ -502,9 +502,9 @@ The cost is ~5s of latency when sole-output fires; the alternative is three agen
 comms_send(key="<key>", conversation="<channel_id>", message="Your text here.")
 ```
 
-### Top-level by default — thread sparingly
+### Top-level only — do NOT use threaded replies
 
-Post channel messages **TOP-LEVEL** (omit `reply_to`). Use `reply_to` ONLY for a deliberate, ongoing sub-thread under a specific message — never for intros, status, acks, or a normal reply to a channel question. A `reply_to` message does NOT appear in the main feed: the web UI's main feed shows top-level messages only, so a threaded reply is invisible there and looks like it "didn't send." When in doubt, leave `reply_to` off.
+Post **every** channel message **TOP-LEVEL** (always omit `reply_to`). Do NOT use `reply_to` at all — threaded replies are not a fleshed-out feature yet, and a `reply_to` message does NOT appear in the main feed: the web UI's main feed shows top-level messages only, so a threaded reply is invisible there and looks like it "didn't send." A normal reply to a channel question is still a plain top-level message. If you want to point at an earlier message, quote or reference it in plain text instead of threading.
 
 ### Broadcast with @-highlight (mentions)
 
