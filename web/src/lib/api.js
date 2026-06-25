@@ -115,6 +115,7 @@ function isTokenFree(path) {
     || bare.startsWith('/api/messages/')
     || bare.startsWith('/api/participants/')
     || bare.startsWith('/api/artifacts/')
+    || bare.startsWith('/api/reactions/')
     || bare === '/api/conversations'
     || bare.startsWith('/api/conversations/')
     || bare === '/api/identity'
@@ -245,6 +246,29 @@ export async function apiPost(path, body) {
       );
     }
   }
+}
+
+/**
+ * Batch-fetch all reactions for a conversation (who-reacted hydration).
+ *
+ * Same-origin, token-free REST GET of `/api/reactions/{conversation}`,
+ * mirroring the `/api/messages/{channel}` read pattern (it is a READ, not an
+ * `mcpCall`). Backed server-side by `get_conversation_reactions` →
+ * `ReactionsStore.get_all()`. Issued alongside `#fetchHistory` on channel
+ * activation so reactions (and their actor lists) survive a reload and appear
+ * on scrollback.
+ *
+ * @param {string} conversation - Conversation/channel id.
+ * @param {object} [opts]
+ * @param {AbortSignal} [opts.signal] - Abort signal propagated to `fetch`.
+ * @returns {Promise<{conversation: string, reactions: Object<string, Object<string, string[]>>}>}
+ *   `reactions` is `{ message_id: { emoji: [actor_key, ...] } }` in server
+ *   insertion order.
+ * @throws On non-2xx: an Error with `.status` set (caller treats as a
+ *   hydration miss and falls back to live-only reaction tracking).
+ */
+export async function getReactions(conversation, { signal } = {}) {
+  return apiGet(`/api/reactions/${encodeURIComponent(conversation)}`, { signal });
 }
 
 /**

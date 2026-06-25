@@ -722,6 +722,57 @@ def build_conversations_options_route(_config: dict, cors=None):
     return Route("/api/conversations", _handler, methods=["OPTIONS"])
 
 
+def build_reactions_route(get_conversation_reactions, cors=None):
+    """GET /api/reactions/{conversation} — all reactions for a conversation.
+
+    Returns ``{conversation, reactions: {message_id: {emoji: [actor_key,...]}}}``
+    by wrapping ``mcp_server.get_conversation_reactions`` (which delegates to the
+    conversation's ``ReactionsStore.get_all()``). The data source is injected
+    because it is imported lazily inside ``_run``; ``cors`` defaults to a no-op
+    for tests.
+
+    Same trust boundary as ``/api/messages``: token-free same-origin GET, no
+    broader auth. The web client already receives every message (incl. whispers)
+    on this single-identity origin, so the "who reacted" set is strictly less
+    sensitive than the message bodies it already displays. Registered on the
+    same shared ``api_routes`` list so the REST and web ports never drift.
+    """
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    from claude_comms.message import validate_conv_id
+
+    cors_fn = cors or _empty_cors_headers
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        conversation = request.path_params["conversation"]
+        if not validate_conv_id(conversation):
+            return JSONResponse(
+                {"error": "Invalid conversation ID"},
+                status_code=400,
+            )
+        reactions = get_conversation_reactions(conversation)
+        return JSONResponse(
+            {"conversation": conversation, "reactions": reactions},
+            headers=cors_fn(request),
+        )
+
+    return Route("/api/reactions/{conversation}", _handler, methods=["GET"])
+
+
+def build_reactions_options_route(cors=None):
+    """OPTIONS preflight for CORS on /api/reactions/{conversation}."""
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    cors_fn = cors or _empty_cors_headers
+
+    async def _handler(request):  # type: ignore[no-untyped-def]
+        return JSONResponse({}, headers=cors_fn(request))
+
+    return Route("/api/reactions/{conversation}", _handler, methods=["OPTIONS"])
+
+
 def build_web_token_route():
     """GET /api/web-token — loopback-only. Returns the in-memory bearer token.
 
@@ -1794,6 +1845,7 @@ def start(
                 get_channel_messages,
                 get_channel_participants,
                 get_conversation_artifacts,
+                get_conversation_reactions,
                 get_artifact,
                 get_all_conversations_full,
             )
@@ -1992,6 +2044,12 @@ def start(
                     config, get_all_conversations_full, cors=_cors
                 ),
                 build_conversations_options_route(config, cors=_cors),
+                # Reactions hydration: batch who-reacted for a conversation.
+                # Same trust boundary as /api/messages (token-free same-origin
+                # GET, no broader auth). future: scope to the loaded message-id
+                # window for very large conversations (get_all() is whole-conv).
+                build_reactions_route(get_conversation_reactions, cors=_cors),
+                build_reactions_options_route(cors=_cors),
                 # ── v0.4.2 Step 3.4: POST /api/invite + preflight ──
                 # Bridges to ``tool_comms_invite`` MCP tool. The provider
                 # closures see the live module-level state on every request.

@@ -246,6 +246,36 @@ def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
     return _store.get(channel, limit=count)
 
 
+def get_conversation_reactions(conversation: str) -> dict[str, dict[str, list[str]]]:
+    """Return all reactions for *conversation* as ``{message_id: {emoji: [key]}}``.
+
+    Backing function for the ``/api/reactions/{conversation}`` REST endpoint
+    added in ``cli.py``.  Mirrors :func:`get_channel_messages` (a direct,
+    same-trust-boundary read) by delegating to the conversation's
+    :class:`~claude_comms.reactions.ReactionsStore` snapshot via ``get_all()``.
+
+    This is a **pure read** and MUST NOT have filesystem or cache side effects:
+    ``ReactionsStore.__init__`` runs ``mkdir(parents=True)`` and the store is
+    cached in the module-level ``_reactions_stores`` dict, so naively building a
+    store here would let a token-free GET create a directory and an unbounded
+    cache entry for *any* well-formed conversation id.  Instead:
+
+    * reuse an already-built store (a write path created it), else
+    * only build/replay a store when the conversation's directory already
+      exists on disk; otherwise return ``{}`` with no side effect.
+    """
+    with _reactions_stores_lock:
+        store = _reactions_stores.get(conversation)
+    if store is not None:
+        return store.get_all()
+    # No cached store: only touch disk if the conversation dir already exists.
+    # A GET for a never-reacted (non-existent) conversation is side-effect-free.
+    conv_dir = _get_conv_data_dir() / conversation
+    if not conv_dir.exists():
+        return {}
+    return _get_reactions_store(conversation).get_all()
+
+
 def get_channel_participants(channel: str) -> list[dict]:
     """Return participants for *channel* from the shared registry.
 
