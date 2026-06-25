@@ -26,6 +26,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from claude_comms import __version__
 from claude_comms.config import (
     get_config_path,
     get_default_config,
@@ -514,6 +515,12 @@ def build_capabilities_route(config: dict):
         allow_remote_edits = bool(web_cfg.get("allow_remote_edits", False))
         writable = allow_remote_edits and not is_reverse_proxy_mode(config)
         payload = {
+            # Single source of truth: the running daemon's package version
+            # (derived from ``pyproject.toml [project] version`` via
+            # importlib.metadata). The web UI prefers this live value over
+            # its build-time ``package.json`` so a stale bundle can't show a
+            # wrong number.
+            "version": __version__,
             "writable": writable,
             "features": {
                 "markdown_render": bool(web_cfg.get("markdown_render_enabled", True)),

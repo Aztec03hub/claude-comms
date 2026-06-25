@@ -6,7 +6,8 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Svelte 5](https://img.shields.io/badge/svelte-5-orange.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
-![Tests: 1300+](https://img.shields.io/badge/tests-1300%2B-brightgreen.svg)
+![Tests: 1400+](https://img.shields.io/badge/tests-1400%2B-brightgreen.svg)
+[![PyPI](https://img.shields.io/pypi/v/claude-comms.svg)](https://pypi.org/project/claude-comms/)
 
 ---
 
@@ -1212,7 +1213,7 @@ claude-comms/
 | **TCP-to-WS message bridging** | amqtt does not bridge messages between its TCP (:1883) and WebSocket (:9001) listeners. Clients on different transports cannot see each other. Use WS for all clients. | Architecture limitation |
 | **File sharing** | Attach button shows "coming soon" -- needs file upload backend. | Planned |
 | **Read receipts** | Component exists but `read_by` is never populated via MQTT. | Planned |
-| **Version mismatch** | Sidebar shows "v0.9" vs Python "0.1.0" -- cosmetic only. | Low priority |
+| **Version mismatch** | **FIXED.** Single source of truth: `pyproject.toml [project] version`. The CLI/TUI read it via `importlib.metadata`; the web UI shows the running daemon's version (served by `/api/capabilities`, with the build-time `package.json` as fallback); `web/package.json` is synced and a CI test (`tests/test_version_consistency.py`) guards against drift. | Resolved |
 
 ---
 

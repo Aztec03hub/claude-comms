@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claude-comms"
-version = "0.4.4"
+version = "0.5.0"
 description = "Distributed inter-Claude messaging platform"
 requires-python = ">=3.10"
 license = "MIT"
@@ -103,3 +103,17 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# SOURCE keeps default unused-symbol / unreachable reporting so genuinely dead code or
+# unreachable branches in src/ still surface (the source-tree hits were cleaned in #34).
+# The tests/ tree intentionally carries unused throwaways — pytest fixtures pulled in for
+# their side effects, signature-parity params, mock callback args — which are noise, so the
+# unused/unreachable classes are disabled THERE ONLY via a scoped execution environment.
+# (Verified: forcing reportUnusedParameter on globally still reports 0 under tests/.)
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+reportUnusedParameter = false
+reportUnusedVariable = false
+reportUnusedFunction = false
+reportUnreachable = false
+reportUnnecessaryTypeIgnoreComment = false

@@ -357,6 +357,20 @@ export class MqttChatStore {
    */
   diagnostics = $state({ web: null, rest: null, mcp: null, broker: null });
 
+  /**
+   * The running daemon's version string, hydrated from
+   * ``GET /api/capabilities`` (``payload.version``) during ``connect()``.
+   * ``null`` until the capabilities fetch resolves. Consumers (the Sidebar
+   * brand badge) prefer this live value over the build-time
+   * ``package.json`` version so a stale bundle can never display a wrong
+   * number — the daemon is the single source of truth. Single-origin:
+   * the same daemon serves this page, so this is always the version that
+   * produced the UI being viewed once loaded.
+   *
+   * @type {string|null}
+   */
+  serverVersion = $state(null);
+
   typingUsers = $state({});
   pinnedMessages = $state([]);
   inAppToasts = $state(true);
@@ -1565,6 +1579,12 @@ export class MqttChatStore {
     try {
       const caps = await apiGet('/api/capabilities');
       this.brokerUrl = resolveBrokerUrl(caps);
+      // Single source of truth for the displayed version: the daemon
+      // advertises its own package version (derived from pyproject via
+      // importlib.metadata). Prefer it over the build-time package.json.
+      if (caps && typeof caps.version === 'string' && caps.version) {
+        this.serverVersion = caps.version;
+      }
       // REST reached the same-origin daemon → web + REST legs are healthy.
       this.diagnostics.web = true;
       this.diagnostics.rest = true;

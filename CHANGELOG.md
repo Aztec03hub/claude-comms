@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-25 01:35 PM CDT
+
+**Single-origin hardening + admin moderation + concise MCP output + diagnostics + version SSOT.** This release collapses the web deployment to a single trusted origin, lands real admin moderation (kick / channel delete / archive with server-hydrated roles), makes every MCP tool return a concise summarized payload, adds first-class connection diagnostics (`claude-comms doctor` + an in-UI readout), and introduces a single source-of-truth versioning system so the CLI, TUI, web UI, docs, and `pip install` can never drift apart again.
+
+### Added
+
+- **Version single source of truth.** `pyproject.toml [project] version` is now the one source of truth for the whole project. `claude_comms.__version__` derives from installed metadata (`importlib.metadata`); the CLI `--version` reads it. The daemon advertises its own version on `GET /api/capabilities` (`payload.version`), and the web UI's sidebar badge prefers that live value over the build-time `web/package.json` — so a stale bundle can never display a wrong number. `web/package.json` is kept in lock step and a CI test (`tests/test_version_consistency.py`) fails the build on any drift.
+- **`scripts/bump_version.py`** — one command (`python scripts/bump_version.py X.Y.Z`) validates semver, bumps `pyproject.toml` + `web/package.json` together, prepends a CHANGELOG stub, commits `Release vX.Y.Z`, and creates the annotated tag. It refuses to re-bump an existing version or clobber an existing tag, and never pushes — pushing the tag is the deliberate human action that triggers the PyPI publish workflow.
+- **README PyPI badge** — a live `img.shields.io/pypi/v/claude-comms` badge replaces hand-maintained version text near the other badges.
+- **`claude-comms doctor` + in-UI connection diagnostics** — probe the web, REST, MCP, and broker legs from the CLI, mirrored by a browser-side readout in the Settings panel so a failed leg names *what* is down.
+- **Admin moderation** — kick a participant and delete / archive a channel, gated on the participant's real server-hydrated role (`owner` / `admin`) rather than a creator-only heuristic.
+
+### Changed
+
+- **Single-origin serving.** The daemon serves the page, REST, MCP, and broker bridge from one origin, so the Content-Security-Policy collapses to `'self'` (no cross-origin `connect-src` allowances needed in the default deployment).
+- **Concise summarized output for ALL MCP tools** — every tool returns a compact, human-and-agent-readable summary instead of verbose raw payloads, reducing token cost per call.
+- **basedpyright tests-scoped diagnostics** — a `[[tool.basedpyright.executionEnvironments]]` block (`root = "tests"`) disables the unused-symbol / unreachable / unnecessary-type-ignore classes for the `tests/` tree only (pytest fixtures, signature-parity params, mock callback args are intentional throwaways); `src/` keeps full reporting.
+
+### Deprecated
+
+- **Phase 4 cross-origin config deprecation** — legacy cross-origin web configuration now emits startup deprecation warnings; the single-origin path is the supported deployment.
+
+### Verified
+
+- ruff format + ruff check clean; basedpyright introduces zero new targeted diagnostics on `src/claude_comms`.
+- Full pytest suite green, including the new `tests/test_version_consistency.py` drift guard; vitest green; `pnpm --dir web build` compiles (baking the new `0.5.0` into the bundle as the fallback).
+
+### Notes for upgraders
+
+- No schema migrations. Redeploy the desktop app / restart the daemon so the running version is `0.5.0`, then hard-refresh the browser (`Ctrl+Shift+R`) to pick up the new bundle.
+- Maintainers: pushing the `v0.5.0` tag publishes to PyPI via the release workflow.
+
 ## [0.4.4] -- 2026-05-20
 
 **Second hotfix in 24 hours**: Phil's manual Layer B re-pass against the just-shipped v0.4.3 caught 7 more user-visible regressions that the automated Playwright suite (which had passed 182/183 cold-start) missed. Demonstrates the core §I.19 principle — automated tests are built from assumptions; real eyes catch what assumptions don't think to look for. All 7 fixed with regression-pin tests + 50 new E2E tests added targeting the 7 anti-patterns that allowed each bug class to slip. No breaking changes, no schema migrations, no MCP tool changes.
