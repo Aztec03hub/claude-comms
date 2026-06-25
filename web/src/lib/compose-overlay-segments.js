@@ -38,6 +38,36 @@ import { parse as parseRichText } from './rich-text-parser.js';
 import { renderSegments as renderMentionSegments } from './mentions.js';
 
 /**
+ * Split a fenced-block token's `raw` into its opening fence (```lang + the
+ * newline), body, and closing fence (the trailing newline + ```). Concatenating
+ * open + body + close reproduces `raw` EXACTLY — this is the character-exact
+ * contract the overlay alignment depends on. Handles closed blocks, unclosed
+ * blocks (no close), empty-body blocks, and a bare opening fence (no newline).
+ *
+ * @param {{type:string, raw:string}} tok
+ * @returns {{open:string, body:string, close:string}}
+ */
+export function splitFencedBlock(tok) {
+  const raw = tok.raw ?? '';
+  const nl = raw.indexOf('\n');
+  // Bare opening fence with no newline (e.g. an unclosed ```lang at EOF).
+  if (nl === -1) return { open: raw, body: '', close: '' };
+
+  const open = raw.slice(0, nl + 1); // ```lang\n
+  const afterOpen = raw.slice(nl + 1);
+  // Unclosed block: everything after the opening fence is body, no close.
+  if (tok.type === 'unclosed-block') return { open, body: afterOpen, close: '' };
+
+  // Closed block: the closing fence is the final line of `raw`.
+  const lastNl = raw.lastIndexOf('\n');
+  if (lastNl === nl) {
+    // Only one newline → empty body; close is everything after the open fence.
+    return { open, body: '', close: afterOpen };
+  }
+  return { open, body: raw.slice(nl + 1, lastNl), close: raw.slice(lastNl) };
+}
+
+/**
  * @param {string} source - the textarea's plain-text value
  * @param {Array<{start:number,end:number,name:string,key:string}>} mentionTokens
  * @param {{atIndex:number,query:string}|null} activeSuggestion
@@ -91,9 +121,11 @@ export function composeOverlaySegments(
     }
 
     if (tok.type === 'inline-code') {
-      // Emit: opening backtick (low-alpha) + chip body + closing backtick.
-      // Backticks are kept visible at low opacity so the overlay's character
-      // count exactly matches the textarea's, preserving caret math.
+      // Emit: opening backtick + chip body + closing backtick. The backtick
+      // segments keep the characters present so the overlay's character count
+      // exactly matches the textarea's (caret math), but the CSS renders them
+      // `color: transparent` so the literal backticks DISAPPEAR once the span
+      // is complete — only the chip pill shows (Phil).
       out.push({ type: 'inline-code-tick', text: '`' });
       out.push({ type: 'inline-code', text: tok.value });
       out.push({ type: 'inline-code-tick', text: '`' });
@@ -102,16 +134,16 @@ export function composeOverlaySegments(
     }
 
     if (tok.type === 'block-code' || tok.type === 'unclosed-block') {
-      // Block tokens render the entire `raw` slice — we paint the opening
-      // fence (and lang tag) and any closing fence as low-alpha decorations
-      // and the body content as the styled block surface. For overlay
-      // simplicity in v1, render the whole raw chunk inside one block-code
-      // segment; the dedicated block-textarea handles fine-grained editing.
-      out.push({
-        type: 'block-code',
-        text: tok.raw,
-        lang: tok.lang ?? null,
-      });
+      // Split the fenced range into opening-fence / body / closing-fence so the
+      // literal ``` fences can be hidden (rendered transparent) while the body
+      // shows — only the code bubble is visible, no backticks (Phil). The fence
+      // CHARACTERS are still emitted (as block-code-fence segments) so the
+      // overlay stays character- and line-aligned with the textarea; dropping
+      // them would shift the body up relative to the caret.
+      const { open, body, close } = splitFencedBlock(tok);
+      if (open) out.push({ type: 'block-code-fence', text: open });
+      if (body) out.push({ type: 'block-code', text: body, lang: tok.lang ?? null });
+      if (close) out.push({ type: 'block-code-fence', text: close });
       i = tok.end;
       continue;
     }

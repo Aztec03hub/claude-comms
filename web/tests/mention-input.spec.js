@@ -148,7 +148,7 @@ describe('MessageInput @mention — dropdown trigger', () => {
 });
 
 describe('MessageInput @mention — explicit commit (Tab/Click)', () => {
-  it('Tab commits the highlighted candidate, no trailing space', async () => {
+  it('Tab commits the highlighted candidate, NO trailing space', async () => {
     const store = makeStore();
     const { getByTestId } = render(MessageInput, {
       props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
@@ -156,11 +156,13 @@ describe('MessageInput @mention — explicit commit (Tab/Click)', () => {
     const ta = getByTestId('message-input');
     await typeText(ta, '@cl');
     await pressKey(ta, 'Tab');
-    // After commit, the textarea's value should be `@claude-test` exactly.
+    // Per Phil: commit inserts exactly `@name` with NO trailing space. The
+    // caret sits immediately after the mention; the user types any spacing.
     expect(ta.value).toBe('@claude-test');
+    expect(ta.selectionStart).toBe('@claude-test'.length);
   });
 
-  it('clicking a candidate commits it (no trailing space)', async () => {
+  it('clicking a candidate commits it, NO trailing space', async () => {
     const store = makeStore();
     const { getByTestId, queryByTestId } = render(MessageInput, {
       props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
@@ -286,7 +288,7 @@ describe('MessageInput @mention — debounced implicit commit', () => {
     // Advance 200ms — the debounce should fire commitCandidate.
     await vi.advanceTimersByTimeAsync(200);
     await tick();
-    // After commit, dropdown is gone and text is exactly `@bob`.
+    // After commit, dropdown is gone and text is exactly `@bob` (no auto-space).
     expect(ta.value).toBe('@bob');
     expect(queryByTestId('mention-dropdown')).toBeNull();
   });
@@ -301,7 +303,7 @@ describe('MessageInput @mention — send-time recipient resolution', () => {
     const ta = getByTestId('message-input');
     await typeText(ta, '@cl');
     await pressKey(ta, 'Tab');
-    // Add a body after the mention.
+    // No auto-space on commit — the user types the separating space themselves.
     await typeText(ta, ' hello');
     expect(ta.value).toBe('@claude-test hello');
     // Click send.

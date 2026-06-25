@@ -281,10 +281,12 @@ describe('findExactMatch', () => {
 // ── commitMention ──────────────────────────────────────────────────────
 
 describe('commitMention', () => {
-  it('inserts the @name with no trailing space', () => {
+  it('inserts the @name with NO trailing space; caret right after the mention', () => {
+    // Per Phil: commit replaces the typed @partial with exactly `@name` and the
+    // caret sits immediately after it — NO auto-space. The user types spacing.
     const r = commitMention('hi @cl', [], 3, 6, { name: 'claude-test', key: 'k1' });
     expect(r.text).toBe('hi @claude-test');
-    expect(r.newCursor).toBe(15);
+    expect(r.newCursor).toBe(15); // right after `hi @claude-test`, no space
     expect(r.tokens).toHaveLength(1);
     expect(r.tokens[0]).toEqual({
       start: 3,
@@ -292,6 +294,22 @@ describe('commitMention', () => {
       name: 'claude-test',
       key: 'k1',
     });
+  });
+
+  it('does NOT append a space even at end-of-text (regression: no auto-space)', () => {
+    const r = commitMention('@cl', [], 0, 3, { name: 'iris', key: 'k-iris' });
+    expect(r.text).toBe('@iris');
+    expect(r.text.endsWith(' ')).toBe(false);
+    expect(r.newCursor).toBe('@iris'.length); // caret immediately after @iris
+  });
+
+  it('back-to-back commit produces jammed text the user spaces themselves', () => {
+    // `@cl@sol` — committing the first mention does NOT inject a separator; the
+    // literal text stays `@iris@sol`. (Visual separation is the user typing a
+    // space; readability comes from overlay alignment, not injected spaces.)
+    const r = commitMention('@cl@sol', [], 0, 3, { name: 'iris', key: 'k-iris' });
+    expect(r.text).toBe('@iris@sol');
+    expect(r.newCursor).toBe(5); // right after `@iris`, before the `@sol`
   });
 
   it('preserves text after the commit point', () => {

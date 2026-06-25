@@ -687,9 +687,22 @@
 
   /**
    * Commit a specific candidate at the current active suggestion.
+   *
+   * No trailing space is ever inserted (per Phil) — `commitMention` replaces the
+   * typed `@partial` with exactly `@name` and the caret lands immediately after
+   * it. The user types any spacing themselves.
+   *
    * @param {{name:string,key:string}} candidate
+   * @param {{restoreCaret?:boolean}} [options]
+   *   restoreCaret (default true)  — after the value flushes, focus the textarea
+   *     and move the caret to `newCursor`. The word-terminator path passes false
+   *     so the browser's default key insertion (which runs right after this
+   *     synchronous commit) keeps ownership of the caret — otherwise our async
+   *     setSelectionRange would yank the caret back in front of the just-typed
+   *     terminator.
    */
-  async function commitCandidate(candidate) {
+  async function commitCandidate(candidate, options = {}) {
+    const { restoreCaret = true } = options;
     if (!activeSuggestion) return;
     const atIndex = activeSuggestion.atIndex;
     const queryEnd = atIndex + 1 + activeSuggestion.query.length;
@@ -703,6 +716,10 @@
     }
     prevText = inputValue;
     prevCursor = r.newCursor;
+    // Word-terminator path: leave the caret alone. The synchronous state above
+    // is all we need; the default keydown insertion that follows positions the
+    // caret correctly after the terminator.
+    if (!restoreCaret) return;
     // Restore cursor + focus AFTER Svelte has flushed the new bound value
     // into the textarea DOM. We MUST await tick() here, NOT queueMicrotask:
     // writing `inputValue` (a $state bound via bind:value) schedules a DOM
@@ -719,6 +736,11 @@
     if (inputEl) {
       inputEl.focus();
       inputEl.setSelectionRange(r.newCursor, r.newCursor);
+      // The committed text can change the textarea height (longer name); keep
+      // the height + overlay scroll in lockstep so the overlay stays
+      // pixel-aligned with the textarea after the commit.
+      autoResize(inputEl);
+      ensureCaretVisible(inputEl);
     }
   }
 
@@ -749,7 +771,10 @@
       && activeSuggestion
       && !isComposing
     ) {
-      commitCandidate(exactMatch);
+      // Don't move the caret (restoreCaret:false) — the default key insertion
+      // that follows (the user-typed terminator) owns the caret. Our async
+      // setSelectionRange would otherwise yank it in front of that terminator.
+      commitCandidate(exactMatch, { restoreCaret: false });
       // Let the default insert proceed; reparseMentions() will fire on
       // the input event that follows.
       return;
@@ -1233,12 +1258,9 @@
             <span class="overlay-code-tick">{seg.text}</span>
           {:else if seg.type === 'block-code'}
             <span class="overlay-code-block">{seg.text}</span>
-          {:else}
-            {seg.text}
-          {/if}
-        {/each}
-        {#if inputValue.endsWith('\n')}<span class="overlay-trailing-newline"> </span>{/if}
-      </div>
+          {:else if seg.type === 'block-code-fence'}
+            <span class="overlay-code-block-fence">{seg.text}</span>
+          {:else}{seg.text}{/if}{/each}{#if inputValue.endsWith('\n')}<span class="overlay-trailing-newline"> </span>{/if}</div>
       <textarea
         bind:this={inputEl}
         rows="1"
@@ -1637,7 +1659,15 @@
     padding: 4px 0;
     font-size: 14px;
     font-family: inherit;
-    line-height: 1.5;
+    /* Locked to an explicit INTEGER pixel line-height (14px * 1.5 = 21px),
+       NOT the unitless `1.5`. A <textarea> is a form control the browser lays
+       out specially; with a unitless multiplier it can round each line box to
+       a different sub-pixel height than this <div>, and that tiny per-line
+       delta COMPOUNDS down the message — pushing the caret / native spellcheck
+       squigglies off the overlay baseline after several wrapped lines (the
+       vertical-drift bug). An integer px value makes every line box identical
+       in both layers. Keep this in lock-step with the textarea rule below. */
+    line-height: 21px;
     letter-spacing: normal;
     tab-size: 2;
     color: var(--text-primary);
@@ -1662,9 +1692,11 @@
   }
 
   /* Inline code chip — rounded background highlight on the value between
-     the backticks. The backticks themselves render as `overlay-code-tick`
-     spans at low opacity so the overlay stays character-aligned with the
-     textarea (caret math depends on identical character counts). The chip
+     the backticks. Once a span is COMPLETE the literal backticks DISAPPEAR
+     (Phil): the `overlay-code-tick` spans keep the backtick characters present
+     so the overlay stays character-aligned with the textarea (caret math
+     depends on identical character counts) but render them `color: transparent`
+     so only the chip pill is visible. The chip
      uses the SAME base font as the surrounding text — the "monospace
      feel" comes from the background + accent color, NOT a font swap; a
      font-family change here would shift glyph metrics and misalign the
@@ -1685,15 +1717,22 @@
     margin: 0 -2px;
   }
 
+  /* Completed inline-code backticks: invisible glyph, full width preserved.
+     `color: transparent` hides the backtick while it still occupies its
+     character cell, so the overlay text count stays identical to the textarea
+     (alignment + caret math intact) and only the chip pill shows. */
   .input-overlay .overlay-code-tick {
-    color: var(--code-chip-fg, rgb(252, 165, 165));
-    opacity: 0.45;
+    color: transparent;
   }
 
-  /* Block code — rendered as a single inline span over the entire fenced
-     range (raw text including the opening/closing fences). The dedicated
-     block textarea (when in BLOCK mode) handles fine-grained editing; the
-     overlay here is purely decorative until the user closes the fence.
+  /* Block code — the fenced range is split into three segments: the opening
+     fence line (```lang), the body, and the closing fence (```). The body
+     renders visibly; the two `overlay-code-block-fence` segments keep the
+     fence CHARACTERS present (so the overlay stays character- AND line-aligned
+     with the textarea — dropping them would shift the body up relative to the
+     caret) but render them `color: transparent` so the literal backticks
+     DISAPPEAR once the block is rendered (Phil). All three share the same
+     background so the whole region reads as one continuous code bubble.
 
      Multi-line bubble cohesion: by default an inline span with a
      background paints each visual line as a separate fragment, which Phil
@@ -1704,7 +1743,8 @@
      critically they don't fight the textarea's character flow underneath.
      A real `display: block` would shift glyph metrics and break caret
      alignment with the textarea behind us, so we stick with inline. */
-  .input-overlay .overlay-code-block {
+  .input-overlay .overlay-code-block,
+  .input-overlay .overlay-code-block-fence {
     background: var(--code-block-bg, rgba(20, 20, 24, 0.85));
     color: var(--code-block-fg, var(--text-primary));
     border-left: 2px solid var(--code-block-accent, rgba(239, 68, 68, 0.55));
@@ -1715,6 +1755,12 @@
     box-decoration-break: clone;
     /* white-space: pre-wrap is inherited from .input-overlay so newlines
        inside the block render as line breaks correctly. */
+  }
+
+  /* Fence lines: invisible glyphs (backticks/lang), full width + line height
+     preserved so the body stays aligned with the textarea caret. */
+  .input-overlay .overlay-code-block-fence {
+    color: transparent;
   }
 
   .input-wrap textarea {
@@ -1730,7 +1776,10 @@
     font-family: inherit;
     resize: none;
     overflow-y: auto;
-    line-height: 1.5;
+    /* Explicit integer px line-height — MUST match .input-overlay exactly
+       (14px * 1.5 = 21px). See the overlay rule above for why a unitless 1.5
+       causes accumulating vertical drift between the textarea and the overlay. */
+    line-height: 21px;
     /* Mirror the overlay's text-flow properties so wrap points line up.
        See plan §10.5 + §11.1 — drift here is the cursor-drift bug. */
     white-space: pre-wrap;
@@ -1743,6 +1792,20 @@
     max-height: 180px;
     position: relative;
     z-index: 2;
+    /* Hide the native scrollbar so the textarea NEVER reserves a scrollbar
+       gutter. A gutter would shrink the textarea's text-layout width while the
+       overlay (overflow: hidden, no gutter) keeps the full width — the wrap
+       points would then diverge and the overlay coloring would drift off the
+       text as content grows past one line. The textarea is still scrollable
+       via keyboard / wheel, and `handleScroll` keeps the overlay's scrollTop
+       in sync, so tall messages stay pixel-aligned in both layers. */
+    scrollbar-width: none; /* Firefox */
+  }
+
+  /* WebKit / Blink: remove the scrollbar entirely (see scrollbar-width above). */
+  .input-wrap textarea::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
 
   .input-wrap textarea:focus-visible {
@@ -1754,12 +1817,18 @@
     color: var(--text-faint);
   }
 
-  /* Native selection highlight needs to remain visible despite the
-     transparent text color. Use the browser's selection background and
-     keep selected text legible. */
+  /* Selection highlight. CRITICAL: the selected text MUST stay transparent.
+     The textarea's own glyphs are `color: transparent` so ONLY the overlay
+     paints visible text. A previous version set the selected text to
+     --text-primary, which made the textarea's normally-invisible glyphs
+     OPAQUE during selection — so both layers rendered and any sub-pixel /
+     wrap misalignment showed up as the "doubled / overlaid" text Phil
+     reported when highlighting. Keeping it transparent means selecting only
+     paints the semi-transparent ember background tint over the overlay's
+     colored glyphs — no doubling, ever. */
   .input-wrap textarea::selection {
     background: rgba(245, 158, 11, 0.32);
-    color: var(--text-primary);
+    color: transparent;
   }
 
   /* Dedicated block textarea (v2 §5.1 / §5.1.1). Mounted only while

@@ -120,7 +120,8 @@ describe('MessageInput — autocomplete commits populate mentions wire field', (
     });
     const ta = getByTestId('message-input');
 
-    // Type `@em`, accept the autocomplete via Tab → token committed.
+    // Type `@em`, accept the autocomplete via Tab → token committed. No
+    // auto-space; the user types the separator.
     await typeText(ta, '@em');
     await pressKey(ta, 'Tab');
     expect(ta.value).toBe('@ember');
@@ -273,6 +274,154 @@ describe('MessageInput — composerPrefill (profile-card prefill mechanism)', ()
   });
 });
 
+describe('MessageInput — overlay mirrors the textarea text exactly', () => {
+  // Regression for Phil's "doubled / overlaid on selection" report. The
+  // colored overlay layer is painted on top of a transparent textarea; if the
+  // overlay's rendered character stream differs from the textarea value by even
+  // one character, the colored glyphs drift off the underlying text. This test
+  // pins the invariant that the overlay's textContent equals the textarea value
+  // for multi-mention input (the @Iris @Sol shape), so coloring can never
+  // diverge from the source. (The transparent-selection CSS that prevents the
+  // textarea's own glyphs from also rendering during selection lives in the
+  // component <style> and is not observable under jsdom, which does not apply
+  // scoped stylesheet rules; this structural mirror test is the jsdom-testable
+  // half of the same invariant.)
+  test('test_overlay_textcontent_matches_value_for_two_mentions', async () => {
+    const store = makeStore();
+    const { getByTestId, container } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    // Commit two mentions with a user-typed space between them (no auto-space).
+    await typeText(ta, '@em');
+    await pressKey(ta, 'Tab');
+    await tick();
+    await typeText(ta, ' @sa');
+    await pressKey(ta, 'Tab');
+    await tick();
+
+    expect(ta.value).toBe('@ember @sage');
+
+    const overlay = container.querySelector('.input-overlay');
+    expect(overlay).not.toBeNull();
+    // The overlay's flattened text must equal the textarea value character for
+    // character — no extra template whitespace, no dropped separators.
+    expect(overlay.textContent).toBe(ta.value);
+  });
+
+  test('test_overlay_textcontent_matches_value_with_code_chip', async () => {
+    const store = makeStore();
+    const { getByTestId, container } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    // Commit a mention, then add body text containing an inline-code chip
+    // (user types the leading space; no auto-space on commit).
+    await typeText(ta, '@em');
+    await pressKey(ta, 'Tab');
+    await tick();
+    await typeText(ta, ' run `npm test`');
+    await tick();
+
+    expect(ta.value).toBe('@ember run `npm test`');
+    const overlay = container.querySelector('.input-overlay');
+    // Backticks are present in the overlay (transparent, width-preserved) so
+    // textContent still mirrors the textarea exactly.
+    expect(overlay.textContent).toBe(ta.value);
+  });
+
+  test('test_overlay_textcontent_matches_value_across_many_lines', async () => {
+    // Vertical-axis regression (Phil): after MANY wrapped/explicit lines the
+    // overlay must still mirror the textarea character-for-character — newlines
+    // included — so the colored layer wraps onto the same physical lines and
+    // the caret / spellcheck squigglies stay on the overlay baseline. jsdom
+    // does not lay out pixels, but a character-exact overlay (every newline
+    // preserved, no extra/dropped whitespace) is the prerequisite the px
+    // line-height lockdown builds on. This pins that prerequisite for a 12-line
+    // body with a committed mention on the first line.
+    const store = makeStore();
+    const { getByTestId, container } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@em');
+    await pressKey(ta, 'Tab');
+    await tick();
+    expect(ta.value).toBe('@ember');
+
+    // Append a 12-line body (newlines flow in via input events). The value does
+    // NOT end in a newline, so the overlay's trailing-newline pad span is not
+    // engaged and textContent must equal the value exactly. The user types the
+    // leading space (no auto-space on commit).
+    const body = ' ' + Array.from({ length: 12 }, (_, n) => `line ${n} content`).join('\n');
+    await typeText(ta, body);
+    await tick();
+
+    expect(ta.value).toBe('@ember' + body);
+    expect(ta.value.split('\n')).toHaveLength(12);
+    const overlay = container.querySelector('.input-overlay');
+    expect(overlay.textContent).toBe(ta.value);
+  });
+
+  test('test_completed_inline_code_backticks_render_in_hidden_tick_spans', async () => {
+    // Phil regression: a COMPLETED inline code span shows only the chip pill —
+    // the literal backticks are rendered in dedicated `overlay-code-tick` spans
+    // (CSS paints them transparent). The backtick characters are still present
+    // (alignment), but isolated in the hideable spans rather than the visible
+    // chip body or plain text.
+    const store = makeStore();
+    const { getByTestId, container } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await setText(ta, 'run `npm test` now');
+    await tick();
+
+    const overlay = container.querySelector('.input-overlay');
+    // Two backtick tick-spans bracket the chip.
+    const ticks = overlay.querySelectorAll('.overlay-code-tick');
+    expect(ticks).toHaveLength(2);
+    expect(Array.from(ticks).every((t) => t.textContent === '`')).toBe(true);
+    // The visible chip carries only the inner code, NO backticks.
+    const chip = overlay.querySelector('.overlay-code-chip');
+    expect(chip.textContent).toBe('npm test');
+    // Overlay still mirrors the textarea exactly (backticks present, just in the
+    // transparent tick spans).
+    expect(overlay.textContent).toBe(ta.value);
+  });
+
+  test('test_completed_fenced_block_fences_render_in_hidden_fence_spans', async () => {
+    // Phil regression for triple-backtick blocks: the ``` fences are rendered in
+    // `overlay-code-block-fence` spans (CSS paints them transparent) so only the
+    // code bubble shows. Setting a complete block via input keeps it inline (no
+    // block-mode entry), exercising the overlay block-code path.
+    const store = makeStore();
+    const { getByTestId, container } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await setText(ta, '```js\nfoo\nbar\n```');
+    await tick();
+
+    const overlay = container.querySelector('.input-overlay');
+    const fences = overlay.querySelectorAll('.overlay-code-block-fence');
+    // Opening fence (```js\n) and closing fence (\n```).
+    expect(fences).toHaveLength(2);
+    expect(fences[0].textContent).toBe('```js\n');
+    expect(fences[1].textContent).toBe('\n```');
+    // The visible block body carries only the code, no fences.
+    const body = overlay.querySelector('.overlay-code-block');
+    expect(body.textContent).toBe('foo\nbar');
+    // Overlay mirrors the textarea exactly (fences present, just transparent).
+    expect(overlay.textContent).toBe(ta.value);
+  });
+});
+
 describe('MessageInput — caret lands after a committed mention', () => {
   // Regression for the composer caret bug: after an autocomplete commit the
   // caret must sit immediately AFTER the inserted @mention so the next typed
@@ -304,8 +453,8 @@ describe('MessageInput — caret lands after a committed mention', () => {
     await tick();
 
     expect(ta.value).toBe('@ember');
-    // Caret immediately after the inserted mention text — restored by the
-    // component, NOT by the test helper.
+    // Caret immediately after the inserted mention (NO trailing space) —
+    // restored by the component, NOT by the test helper.
     expect(ta.selectionStart).toBe('@ember'.length);
     expect(ta.selectionEnd).toBe('@ember'.length);
   });
@@ -359,9 +508,10 @@ describe('MessageInput — caret lands after a committed mention', () => {
   });
 
   test('test_caret_after_double_mention_commit', async () => {
-    // Two mentions in a row. Each commit must base its caret on the CURRENT
-    // value, so the second mention's caret lands at the end of the whole
-    // string — not at a stale offset from the first commit.
+    // Two mentions in a row. Each commit bases its caret on the CURRENT value,
+    // so the second mention's caret lands at the end of the whole string — not
+    // at a stale offset from the first commit. The user types the separating
+    // space (no auto-space).
     const store = makeStore();
     const { getByTestId } = render(MessageInput, {
       props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
@@ -377,6 +527,7 @@ describe('MessageInput — caret lands after a committed mention', () => {
 
     // Type a separator + the second mention prefix, then commit it.
     await typeText(ta, ' @sa');
+    expect(ta.value).toBe('@ember @sa');
     ta.setSelectionRange(0, 0);
     await pressKey(ta, 'Tab');
     await tick();
@@ -386,9 +537,34 @@ describe('MessageInput — caret lands after a committed mention', () => {
     expect(ta.selectionEnd).toBe('@ember @sage'.length);
   });
 
+  test('test_commit_never_appends_space_caret_immediately_after', async () => {
+    // Regression for Phil's "no auto-space" rule: committing a mention must NOT
+    // append a trailing space, and the caret must land immediately after the
+    // mention text so the user controls all spacing themselves.
+    const store = makeStore();
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@em');
+    await pressKey(ta, 'Tab');
+    await tick();
+
+    expect(ta.value).toBe('@ember');
+    expect(ta.value.endsWith(' ')).toBe(false);
+    expect(ta.selectionStart).toBe('@ember'.length);
+
+    // Typing a fresh `@` right away jams (the user chose not to type a space);
+    // this is the accepted literal text — readability is handled by overlay
+    // alignment + correct caret, NOT by injected spaces.
+    await typeText(ta, '@sa');
+    expect(ta.value).toBe('@ember@sa');
+  });
+
   test('test_typing_continues_after_committed_mention', async () => {
     // After committing, typed characters must append after the mention, not
-    // bleed into / before it.
+    // bleed into / before it. The user types the separating space themselves.
     const store = makeStore();
     const { getByTestId } = render(MessageInput, {
       props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
