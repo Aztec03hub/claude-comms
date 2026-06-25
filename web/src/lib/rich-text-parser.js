@@ -29,11 +29,27 @@
 
 /**
  * Parse a source string into a token stream.
+ *
+ * `opts.strictInline` (default false) switches inline-code scanning from the
+ * composer's "no-flicker" rule (the FIRST backtick closes the span — see the
+ * trailing-tick stability tests) to the CommonMark-faithful rule used by the
+ * READ side: a code span opened by a run of N backticks closes only at the
+ * next run of EXACTLY N backticks on the same line, and a run of a different
+ * length inside the span is literal content. This is what lets an inline span
+ * delimited by one backtick legally CONTAIN a `` ``` `` run, e.g.
+ * `` ` ```markdown ` `` → one chip reading `` ```markdown ``. Under
+ * strictInline a single leading + trailing space is also stripped from the
+ * span content (CommonMark code-span normalization). The composer keeps the
+ * default behavior so `parse()` (and `inlineChipAtCaret`/`modeAtCaret`) stay
+ * byte-for-byte unchanged for live-typing caret math.
+ *
  * @param {string} source
+ * @param {{strictInline?: boolean}} [opts]
  * @returns {Array<{type: string, value: string, raw?: string, lang?: string|null, start?: number, end?: number}>}
  */
-export function parse(source) {
+export function parse(source, opts = {}) {
   if (typeof source !== 'string' || source.length === 0) return [];
+  const strictInline = opts.strictInline === true;
 
   const tokens = [];
   let i = 0;
@@ -163,6 +179,69 @@ export function parse(source) {
         i = source.length;
         textStart = source.length;
       }
+      continue;
+    }
+
+    // Read-side (strictInline): CommonMark-faithful inline code span. The
+    // opener is a run of `runLen` backticks; it closes only at the next run
+    // of EXACTLY `runLen` backticks on the same line. A run of a different
+    // length encountered while scanning is literal content INSIDE the span
+    // (this is what fixes the garbled render of `` ` ```markdown ` `` — the
+    // 1-tick span legally contains the 3-tick run). Supports 1/2/3-backtick
+    // delimiters uniformly.
+    if (strictInline) {
+      const delim = runLen;
+      let scan = i; // `i` is positioned just past the opener run.
+      let close = -1; // start index of the matching closing run.
+      while (scan < source.length) {
+        const c = source.charCodeAt(scan);
+        if (c === 0x0a /* \n */) break; // same-line rule → unclosed
+        if (c === 0x60 /* backtick */) {
+          const runHere = scan;
+          let runHereLen = 0;
+          while (scan < source.length && source.charCodeAt(scan) === 0x60) {
+            runHereLen++;
+            scan++;
+          }
+          if (runHereLen === delim) {
+            close = runHere;
+            break;
+          }
+          // Different-length run → literal content; keep scanning. `scan` has
+          // already advanced past this run.
+          continue;
+        }
+        scan++;
+      }
+
+      if (close !== -1 && close > i) {
+        // Non-empty span. Flush preceding text and emit the chip.
+        flushText(runStart);
+        let value = source.slice(i, close);
+        // CommonMark code-span normalization: if the content both begins and
+        // ends with a space and is not all spaces, strip one space from each
+        // end (so `` ` ```markdown ` `` chips read `` ```markdown ``).
+        if (
+          value.length >= 2 &&
+          value.charCodeAt(0) === 0x20 /* space */ &&
+          value.charCodeAt(value.length - 1) === 0x20 &&
+          value.trim() !== ''
+        ) {
+          value = value.slice(1, -1);
+        }
+        const raw = source.slice(runStart, close + delim);
+        tokens.push({
+          type: 'inline-code',
+          value,
+          raw,
+          start: runStart,
+          end: close + delim,
+        });
+        i = close + delim;
+        textStart = close + delim;
+      }
+      // Unclosed or empty span → the opener run stays literal (picked up by
+      // the next flush). `i` is already past the opener run.
       continue;
     }
 
@@ -412,7 +491,11 @@ export function parseEmphasis(text) {
  * @returns {Array<{type: string, value: string, raw?: string, lang?: string|null, start?: number, end?: number}>}
  */
 export function parseRich(source) {
-  const codeTokens = parse(source);
+  // Read-side: use the CommonMark-faithful inline-code rule so a span can
+  // legally contain a longer backtick run (the `` ` ```markdown ` `` repro)
+  // and 1/2/3-backtick delimiters all render as a single chip. The composer
+  // overlay still calls bare `parse()` and keeps the no-flicker rule.
+  const codeTokens = parse(source, { strictInline: true });
   const final = [];
   let cursor = 0;
   for (const t of codeTokens) {
