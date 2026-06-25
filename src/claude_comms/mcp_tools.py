@@ -47,7 +47,12 @@ from claude_comms.reactions import (
     ReactionsStore,
     reactions_topic,
 )
-from claude_comms.mention import build_mention_prefix, extract_mentions
+from claude_comms.mention import (
+    BROADCAST_MENTION_TOKENS,
+    build_mention_prefix,
+    extract_mentions,
+    is_broadcast_mention,
+)
 from claude_comms.message import Message, Sender, now_iso, validate_conv_id
 from claude_comms.participant import (
     Activity,
@@ -585,6 +590,12 @@ async def tool_comms_join(
         return _error(
             f"Invalid name {name!r}. Use alphanumeric, hyphens, underscores (1-64 chars)."
         )
+    if name.strip().lower() in BROADCAST_MENTION_TOKENS:
+        return _error(
+            f"Name {name!r} is reserved: 'all' and 'everyone' are the broadcast "
+            "mention tokens (@all / @everyone) and cannot be used as display "
+            "names. Please choose a different name."
+        )
 
     p = registry.join(name, conversation)
     # Synthesize an MCP connection for Claude clients so that per-connection
@@ -755,7 +766,25 @@ async def tool_comms_send(
     # are dropped. Sender-key is NOT dedup'd here — see docstring + §11 Phase A.
     resolved_mentions: list[str] | None = None
     if mentions:
-        resolved_mentions = registry.resolve_for_mentions(mentions)
+        if any(is_broadcast_mention(m) for m in mentions):
+            # @all / @everyone broadcast highlight: expand to every member of
+            # the conversation who is currently PRESENT (has a live connection).
+            # Offline members are excluded — they can't receive a notification
+            # cue anyway, and "ping everyone present" is the intended semantics.
+            # The sender is excluded too: you don't cue yourself on your own
+            # broadcast. Any normal mention tokens mixed in are resolved and
+            # unioned in (broadcast members first, dedup'd, order-preserving).
+            present_keys = [
+                m.key
+                for m in registry.members(conversation)
+                if m.is_online and m.key != sender.key
+            ]
+            explicit = registry.resolve_for_mentions(
+                [m for m in mentions if not is_broadcast_mention(m)]
+            )
+            resolved_mentions = list(dict.fromkeys(present_keys + explicit))
+        else:
+            resolved_mentions = registry.resolve_for_mentions(mentions)
         if not resolved_mentions:
             # Empty after resolution → treat as if mentions wasn't passed.
             # (Don't error: mentions is optional metadata, not a routing field.)
@@ -1808,6 +1837,12 @@ def tool_comms_update_name(
         return _error(
             f"Invalid name {new_name!r}. "
             "Use alphanumeric, hyphens, underscores (1-64 chars)."
+        )
+    if new_name.strip().lower() in BROADCAST_MENTION_TOKENS:
+        return _error(
+            f"Name {new_name!r} is reserved: 'all' and 'everyone' are the "
+            "broadcast mention tokens (@all / @everyone) and cannot be used as "
+            "display names. Please choose a different name."
         )
 
     updated = registry.update_name(key, new_name)

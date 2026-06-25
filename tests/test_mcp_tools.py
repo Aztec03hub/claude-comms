@@ -861,3 +861,142 @@ class TestPublishArchiveEvent:
         # Only the system event — no presence retained-clear on unarchive
         assert spy.call_count == 1
         assert spy.calls[0][0] == "claude-comms/system/conversations"
+
+
+# ===================================================================
+# @all / @everyone broadcast mentions
+# ===================================================================
+
+
+class TestBroadcastMentions:
+    @pytest.mark.asyncio
+    async def test_all_expands_to_present_members_excluding_sender(
+        self,
+        registry: ParticipantRegistry,
+        publish_spy,
+    ):
+        r_sender = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
+        r_carol = await tool_comms_join(registry, name="carol", conversation="general")
+
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=r_sender["key"],
+            conversation="general",
+            message="standup time",
+            mentions=["@all"],
+        )
+        assert result["status"] == "sent"
+        _, payload, _retain = publish_spy.last_call
+        msg = json.loads(payload)
+        resolved = set(msg["mentions"])
+        assert resolved == {r_bob["key"], r_carol["key"]}
+        # Sender is not pinged on their own broadcast.
+        assert r_sender["key"] not in resolved
+
+    @pytest.mark.asyncio
+    async def test_everyone_case_insensitive(
+        self,
+        registry: ParticipantRegistry,
+        publish_spy,
+    ):
+        r_sender = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
+
+        for token in ("everyone", "EVERYONE", "@Everyone", "ALL"):
+            result = await tool_comms_send(
+                registry,
+                publish_spy,
+                key=r_sender["key"],
+                conversation="general",
+                message=f"ping via {token}",
+                mentions=[token],
+            )
+            assert result["status"] == "sent"
+            _, payload, _retain = publish_spy.last_call
+            msg = json.loads(payload)
+            assert msg["mentions"] == [r_bob["key"]]
+
+    @pytest.mark.asyncio
+    async def test_all_mixes_with_normal_mentions(
+        self,
+        registry: ParticipantRegistry,
+        publish_spy,
+    ):
+        # external is registered globally but NOT a member of the conversation;
+        # an explicit mention of them must still resolve and union in.
+        r_sender = await tool_comms_join(registry, name="alice", conversation="general")
+        r_bob = await tool_comms_join(registry, name="bob", conversation="general")
+        r_ext = await tool_comms_join(registry, name="ext", conversation="other")
+
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=r_sender["key"],
+            conversation="general",
+            message="all hands + ext",
+            mentions=["@all", "ext"],
+        )
+        assert result["status"] == "sent"
+        _, payload, _retain = publish_spy.last_call
+        msg = json.loads(payload)
+        resolved = set(msg["mentions"])
+        # present members (bob) + explicit external mention; sender excluded.
+        assert resolved == {r_bob["key"], r_ext["key"]}
+
+    @pytest.mark.asyncio
+    async def test_all_with_only_sender_present_yields_no_mentions(
+        self,
+        registry: ParticipantRegistry,
+        publish_spy,
+    ):
+        r_sender = await tool_comms_join(registry, name="alice", conversation="general")
+        result = await tool_comms_send(
+            registry,
+            publish_spy,
+            key=r_sender["key"],
+            conversation="general",
+            message="anyone home?",
+            mentions=["@all"],
+        )
+        assert result["status"] == "sent"
+        _, payload, _retain = publish_spy.last_call
+        msg = json.loads(payload)
+        assert msg["mentions"] is None
+
+
+# ===================================================================
+# Reserved display names: all / everyone
+# ===================================================================
+
+
+class TestReservedNames:
+    @pytest.mark.asyncio
+    async def test_join_as_all_rejected(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="all", conversation="general")
+        assert result.get("error") is True
+        assert "reserved" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_join_as_everyone_rejected(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(
+            registry, name="everyone", conversation="general"
+        )
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_join_as_all_uppercase_rejected(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="ALL", conversation="general")
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_normal_name_still_allowed(self, registry: ParticipantRegistry):
+        result = await tool_comms_join(registry, name="allan", conversation="general")
+        assert result.get("status") == "joined"
+
+    @pytest.mark.asyncio
+    async def test_rename_to_everyone_rejected(self, registry: ParticipantRegistry):
+        r = await tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_update_name(registry, key=r["key"], new_name="Everyone")
+        assert result.get("error") is True

@@ -105,7 +105,9 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         # TTL for MCP connections — if a participant hasn't touched the server
         # (tool call, message publish, presence heartbeat) within this window,
         # their connection is removed and offline presence is published.
-        "connection_ttl_seconds": 180,
+        # 600s (10 min) leaves headroom for normal agent poll cadences (every
+        # ~4-5 min) so active-but-slow pollers don't flap offline between polls.
+        "connection_ttl_seconds": 600,
         # How often the TTL sweep runs.
         "sweep_interval_seconds": 30,
         # Default TTL for an ephemeral activity signal (comms_status_set) when
