@@ -189,6 +189,16 @@ For a one-off production-mode rebuild during development:
 cd web && pnpm install && pnpm build   # writes to src/claude_comms/web/dist/
 ```
 
+#### Updating a source install
+
+If you installed from git (editable / source checkout), one command does the whole redeploy:
+
+```bash
+claude-comms update     # git pull + web build + reinstall-if-needed + restart daemon (background, web UI)
+```
+
+It replaces the manual `git pull && cd web && pnpm build && pip install -e ".[all]" && claude-comms stop && claude-comms start --web` dance. The build and reinstall run *before* the daemon is stopped, so a failed build leaves the running daemon untouched. On a plain PyPI/wheel install it refuses and tells you to run `pip install -U claude-comms` instead. (`claude-comms --update` is an equivalent top-level shortcut.)
+
 ### 2. Initialize
 
 ```bash
@@ -392,6 +402,20 @@ Stop the running daemon. Sends SIGTERM, waits 10 seconds, escalates to SIGKILL i
 ```bash
 claude-comms stop
 ```
+
+### `claude-comms update`
+
+One-shot self-update for a **source / editable install**: `git pull --ff-only`, rebuild the web UI (pnpm, falling back to npm), reinstall the package when the version or `pyproject.toml` changed, then restart the daemon backgrounded with the web UI. Refuses on a PyPI/wheel install (use `pip install -U claude-comms` there). Aborts on the first failed step; the daemon is only stopped/started *after* a clean build + reinstall.
+
+```bash
+claude-comms update            # full redeploy, restart with web UI
+claude-comms update --no-web   # restart without the web UI
+claude-comms --update          # equivalent top-level shortcut
+```
+
+| Option | Description |
+|--------|-------------|
+| `--web` / `--no-web` | Restart with the web UI (default: yes) |
 
 ### `claude-comms send`
 

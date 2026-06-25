@@ -31,6 +31,8 @@ claude-comms tui    # TUI client (separate terminal)
 
 MCP server URL for Claude Code: `http://127.0.0.1:9920/mcp`
 
+**Updating a source install:** `claude-comms update` = git pull + web build (pnpm/npm) + reinstall-if-needed + restart daemon (background, web UI). One command replaces the manual pull/build/`pip install -e`/stop/start cycle; refuses on a PyPI/wheel install. (`claude-comms --update` is the same.)
+
 ---
 
 ## Key operational patterns (learned in production)
@@ -110,6 +112,8 @@ Bump with:
 python scripts/bump_version.py X.Y.Z   # bumps, commits, tags
 git push && git push --tags            # triggers PyPI publish workflow
 ```
+
+`claude-comms update` reinstalls the editable package whenever the post-pull `[project] version` differs from the installed `importlib.metadata` version (or `pyproject.toml` changed in the pull), which is what unsticks metadata pinned at an old version after a source update.
 
 ---
 
