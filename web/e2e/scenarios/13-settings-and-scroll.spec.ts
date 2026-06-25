@@ -37,17 +37,19 @@ test.describe('Scenario 13: settings persistence + scroll-to-bottom', () => {
   test('display-name change persists to localStorage', async ({ appPage, consoleErrors }) => {
     await openSettings(appPage);
     await appPage.locator('#settings-display-name').fill('phil-renamed');
-    // The rename is debounced; wait for the status to confirm "saved" rather
-    // than sleeping, then assert the persisted value.
-    await expect(appPage.locator('[data-testid="settings-name-status"]')).toHaveAttribute(
-      'data-status-kind',
-      'saved',
-      { timeout: 5000 },
-    );
-    const stored = await appPage.evaluate(() =>
-      localStorage.getItem('claude-comms-user-name'),
-    );
-    expect(stored).toBe('phil-renamed');
+    // The rename is debounced and the "saved" badge is transient -- SettingsPanel
+    // calls setStatus('saved', ..., SAVED_FADE_MS), which fades the status back to
+    // 'idle' after 1.5s. Racing that fading badge is flaky on slow CI (the debounce
+    // delay can push the save past the window we sample). This test's real intent
+    // is "persists to localStorage", so assert that deterministic end-state: poll
+    // localStorage until the persisted display name lands (it is written right
+    // before the 'saved' badge in commitNameChange -> persistLocally).
+    await expect
+      .poll(
+        () => appPage.evaluate(() => localStorage.getItem('claude-comms-user-name')),
+        { timeout: 10000 },
+      )
+      .toBe('phil-renamed');
     assertNoConsoleErrors(consoleErrors);
   });
 

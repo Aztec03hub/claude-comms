@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from pathlib import Path
 
 
@@ -34,9 +33,25 @@ FALLBACK_MARKER = "0+unknown"
 _VERSION_SHAPE_RE = re.compile(r"^\d+\.\d+\.\d+")
 
 
+# Match the ``[project]`` table header so we scope the version lookup to it
+# (TOML section names run until the next ``[...]`` header).
+_PROJECT_SECTION_RE = re.compile(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", re.M | re.S)
+_PROJECT_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.M)
+
+
 def _pyproject_version() -> str:
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return data["project"]["version"]
+    """Parse ``[project] version`` from pyproject without ``tomllib``.
+
+    ``tomllib`` is stdlib only on Python 3.11+, but the project supports
+    ``requires-python = ">=3.10"``; a regex keeps this test dependency-free and
+    interpreter-agnostic across 3.10-3.13.
+    """
+    text = PYPROJECT.read_text(encoding="utf-8")
+    section = _PROJECT_SECTION_RE.search(text)
+    assert section, "no [project] table found in pyproject.toml"
+    match = _PROJECT_VERSION_RE.search(section.group(1))
+    assert match, "no version key found in pyproject.toml [project] table"
+    return match.group(1)
 
 
 def _package_json_version() -> str:
