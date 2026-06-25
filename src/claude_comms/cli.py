@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
@@ -1367,6 +1368,18 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _update_callback(value: bool) -> None:
+    """Eager callback for the top-level ``--update`` convenience flag.
+
+    Runs the same one-shot update as the ``update`` subcommand, then exits.
+    ``_run_update`` is defined later in the module; it's resolved at call time,
+    so the forward reference is fine.
+    """
+    if value:
+        _run_update(web=True)
+        raise typer.Exit()
+
+
 app = typer.Typer(
     name="claude-comms",
     help="Distributed inter-Claude messaging platform.",
@@ -1384,9 +1397,20 @@ def main(
         callback=_version_callback,
         is_eager=True,
     ),
+    _update: bool = typer.Option(
+        False,
+        "--update",
+        help=(
+            "Update a source install (git pull + web build + reinstall-if-needed "
+            "+ restart daemon) and exit. Same as the `update` subcommand."
+        ),
+        callback=_update_callback,
+        is_eager=True,
+    ),
 ) -> None:
     """Distributed inter-Claude messaging platform."""
     del _version
+    del _update
 
 
 conv_app = typer.Typer(help="Conversation management commands.")
@@ -2448,6 +2472,322 @@ def stop() -> None:
         pass
     _PID_FILE.unlink(missing_ok=True)
     console.print("[green]Daemon killed.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# update — one-shot self-update for source / editable installs
+# ---------------------------------------------------------------------------
+
+
+class _UpdateStepError(RuntimeError):
+    """A subprocess step in ``claude-comms update`` failed.
+
+    Carries the command, return code, and captured stdout/stderr so the command
+    can surface a clear, actionable error and abort the sequence on first
+    failure.
+    """
+
+    def __init__(
+        self, cmd: list[str], returncode: int, stdout: str, stderr: str
+    ) -> None:
+        self.cmd = cmd
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(
+            f"Command {' '.join(cmd)!r} failed with exit code {returncode}"
+        )
+
+
+def _find_source_repo_root(start: Path | None = None) -> Path | None:
+    """Return the source-checkout root, or ``None`` for a non-git (wheel) install.
+
+    Resolves the installed ``claude_comms`` package location and walks UP looking
+    for a directory that contains BOTH ``.git`` and ``pyproject.toml`` (the
+    source / editable-install checkout). A plain PyPI/wheel install lives in
+    site-packages with no such ancestor, so this returns ``None`` — the signal
+    ``update`` uses to refuse a git pull and point the user at ``pip install -U``.
+    """
+    if start is None:
+        import claude_comms
+
+        start = Path(claude_comms.__file__).resolve()
+    for parent in (start, *start.parents):
+        if (parent / ".git").exists() and (parent / "pyproject.toml").is_file():
+            return parent
+    return None
+
+
+def _pyproject_project_version(repo_root: Path) -> str | None:
+    """Parse ``[project] version`` from ``pyproject.toml``.
+
+    Hand-rolled rather than ``tomllib`` because ``requires-python >= 3.10`` and
+    ``tomllib`` only landed in 3.11. Only reads the ``version`` key inside the
+    ``[project]`` table.
+    """
+    try:
+        text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    in_project = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_project = line == "[project]"
+            continue
+        if in_project:
+            m = re.match(r"""version\s*=\s*["']([^"']+)["']""", line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def _installed_package_version() -> str | None:
+    """Return the installed ``claude-comms`` metadata version, or ``None``."""
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _meta_version
+
+    try:
+        return _meta_version("claude-comms")
+    except PackageNotFoundError:
+        return None
+
+
+def _select_web_package_manager(
+    web_dir: Path, which=shutil.which
+) -> tuple[str, list[str], list[str]] | None:
+    """Pick the JS package manager for rebuilding the web UI.
+
+    Prefers ``pnpm`` (the repo ships ``pnpm-lock.yaml`` and the hatch build hook
+    uses it): ``pnpm install --frozen-lockfile`` + ``pnpm build``. Falls back to
+    ``npm`` when pnpm is absent — ``npm ci`` when a ``package-lock.json`` exists,
+    else ``npm install`` (``npm ci`` requires a lockfile) — + ``npm run build``.
+    Returns ``(name, install_cmd, build_cmd)``, or ``None`` when neither manager
+    is on PATH. ``which`` is injectable for testing.
+    """
+    if which("pnpm"):
+        return (
+            "pnpm",
+            ["pnpm", "install", "--frozen-lockfile"],
+            ["pnpm", "build"],
+        )
+    if which("npm"):
+        install_cmd = (
+            ["npm", "ci"]
+            if (web_dir / "package-lock.json").is_file()
+            else ["npm", "install"]
+        )
+        return ("npm", install_cmd, ["npm", "run", "build"])
+    return None
+
+
+def _should_reinstall(
+    old_version: str | None,
+    new_version: str | None,
+    pyproject_changed: bool,
+) -> bool:
+    """Decide whether an editable reinstall is needed after the pull.
+
+    Reinstall when ``pyproject.toml`` changed in the pull (deps/metadata may have
+    moved), when either version is unknown (be safe), or when the post-pull
+    source version differs from the installed metadata version — the classic
+    "metadata stuck at the old version" case this command exists to fix. An
+    editable reinstall is cheap and idempotent, so erring toward reinstall is
+    the robust choice.
+    """
+    if pyproject_changed:
+        return True
+    if old_version is None or new_version is None:
+        return True
+    return old_version != new_version
+
+
+def _run_subprocess_step(
+    cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess step capturing output; raise ``_UpdateStepError`` on failure."""
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise _UpdateStepError(cmd, proc.returncode, proc.stdout, proc.stderr)
+    return proc
+
+
+def _git_rev(repo_root: Path) -> str | None:
+    """Return ``git rev-parse HEAD`` for ``repo_root``, or ``None`` on failure."""
+    try:
+        proc = _run_subprocess_step(["git", "rev-parse", "HEAD"], cwd=repo_root)
+    except _UpdateStepError:
+        return None
+    return proc.stdout.strip()
+
+
+def _git_changed_files(repo_root: Path, old_rev: str, new_rev: str) -> list[str]:
+    """Return the files changed between two revs (empty if same / on error)."""
+    if not old_rev or not new_rev or old_rev == new_rev:
+        return []
+    try:
+        proc = _run_subprocess_step(
+            ["git", "diff", "--name-only", old_rev, new_rev], cwd=repo_root
+        )
+    except _UpdateStepError:
+        return []
+    return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def _run_update(web: bool = True) -> None:
+    """Shared implementation for ``claude-comms update`` / ``--update``.
+
+    Steps, aborting on the first failure: (1) locate the source checkout,
+    (2) ``git pull --ff-only``, (3) rebuild the web UI, (4) reinstall the
+    package when needed, then LAST (5) restart the daemon and (6) verify.
+    Build/install run BEFORE the daemon is stopped, so a failed build leaves the
+    running daemon untouched.
+    """
+    console.print("[bold]claude-comms update[/bold]\n")
+
+    # ── 1. Locate the source checkout ─────────────────────────────────────
+    repo_root = _find_source_repo_root()
+    if repo_root is None:
+        console.print(
+            "[red]Not a source/editable install.[/red] This looks like a "
+            "PyPI/wheel install (no .git checkout found above the package).\n"
+            "Run [bold]pip install -U claude-comms[/bold] to update from PyPI."
+        )
+        raise typer.Exit(1)
+    console.print(f"[green]✓[/green] Source checkout: {repo_root}")
+
+    old_version = _installed_package_version()
+
+    # ── 2. git pull --ff-only ─────────────────────────────────────────────
+    old_rev = _git_rev(repo_root)
+    console.print("[bold]→ git pull --ff-only[/bold]")
+    try:
+        pull = _run_subprocess_step(["git", "pull", "--ff-only"], cwd=repo_root)
+    except _UpdateStepError as exc:
+        console.print(
+            "[red]git pull failed.[/red] The working tree may be dirty or the "
+            "branch is not fast-forwardable. Resolve it and re-run."
+        )
+        if exc.stderr.strip():
+            console.print(f"[dim]{exc.stderr.strip()}[/dim]")
+        raise typer.Exit(1) from exc
+    pull_msg = pull.stdout.strip() or pull.stderr.strip()
+    if pull_msg:
+        console.print(f"[dim]{pull_msg}[/dim]")
+    new_rev = _git_rev(repo_root)
+
+    changed = _git_changed_files(repo_root, old_rev or "", new_rev or "")
+    pyproject_changed = "pyproject.toml" in changed
+    new_version = _pyproject_project_version(repo_root)
+
+    # ── 3. Rebuild the web UI ─────────────────────────────────────────────
+    web_dir = repo_root / "web"
+    pm = _select_web_package_manager(web_dir)
+    if pm is None:
+        console.print(
+            "[red]No JS package manager found.[/red] Install pnpm (preferred) "
+            "or npm to rebuild the web UI, then re-run."
+        )
+        raise typer.Exit(1)
+    pm_name, install_cmd, build_cmd = pm
+    env = os.environ.copy()
+    env["CI"] = "true"
+    console.print(f"[bold]→ Rebuild web UI ({pm_name})[/bold]")
+    for step_cmd in (install_cmd, build_cmd):
+        console.print(f"[dim]  $ {' '.join(step_cmd)}[/dim]")
+        try:
+            _run_subprocess_step(step_cmd, cwd=web_dir, env=env)
+        except _UpdateStepError as exc:
+            console.print(f"[red]Web build step failed:[/red] {' '.join(step_cmd)}")
+            if exc.stderr.strip():
+                console.print(f"[dim]{exc.stderr.strip()[-2000:]}[/dim]")
+            console.print(
+                "[yellow]Daemon left untouched (build failed before restart).[/yellow]"
+            )
+            raise typer.Exit(1) from exc
+    console.print("[green]✓[/green] Web UI rebuilt")
+
+    # ── 4. Reinstall if needed (metadata / version / deps) ────────────────
+    if _should_reinstall(old_version, new_version, pyproject_changed):
+        reason = (
+            "pyproject.toml changed"
+            if pyproject_changed
+            else f"version {old_version} → {new_version}"
+        )
+        console.print(f"[bold]→ Reinstall editable package[/bold] ({reason})")
+        reinstall_cmd = [sys.executable, "-m", "pip", "install", "-e", ".[all]"]
+        console.print(f"[dim]  $ {' '.join(reinstall_cmd)}[/dim]")
+        try:
+            _run_subprocess_step(reinstall_cmd, cwd=repo_root, env=env)
+        except _UpdateStepError as exc:
+            console.print("[red]pip reinstall failed.[/red]")
+            if exc.stderr.strip():
+                console.print(f"[dim]{exc.stderr.strip()[-2000:]}[/dim]")
+            console.print(
+                "[yellow]Daemon left untouched (reinstall failed before "
+                "restart).[/yellow]"
+            )
+            raise typer.Exit(1) from exc
+        console.print("[green]✓[/green] Package reinstalled")
+    else:
+        console.print(
+            "[dim]Skipping reinstall (version + pyproject.toml unchanged).[/dim]"
+        )
+
+    # ── 5. Restart the daemon (LAST, so a failed build never takes it down) ─
+    console.print("[bold]→ Restart daemon (background, web UI)[/bold]")
+    try:
+        stop()
+    except typer.Exit:
+        # ``stop`` exits 0 when nothing is running — fine, we're about to start.
+        pass
+    try:
+        start(background=True, web=web)
+    except typer.Exit as exc:
+        console.print(
+            "[red]Daemon failed to restart.[/red] Run "
+            "[bold]claude-comms start --web -b[/bold] manually."
+        )
+        raise typer.Exit(1) from exc
+
+    # ── 6. Verify + report ────────────────────────────────────────────────
+    running = _is_daemon_running()
+    health = (
+        f"[green]daemon up[/green] (PID {_read_pid()})"
+        if running
+        else "[red]daemon not detected[/red]"
+    )
+    shown_new = new_version or old_version or "unknown"
+    console.print(
+        f"\n[bold green]Updated to v{shown_new}, daemon restarted.[/bold green] "
+        f"{health}"
+    )
+    if old_version and new_version and old_version != new_version:
+        console.print(f"[dim]version: {old_version} → {new_version}[/dim]")
+    if not running:
+        raise typer.Exit(1)
+
+
+@app.command()
+def update(
+    web: bool = typer.Option(
+        True, "--web/--no-web", help="Restart with the web UI (default: yes)."
+    ),
+) -> None:
+    """Update a source/editable install and redeploy in one shot.
+
+    Pulls the latest source (``git pull --ff-only``), rebuilds the web UI,
+    reinstalls the package when the version or ``pyproject.toml`` changed, then
+    restarts the daemon (backgrounded, with the web UI). Refuses to run on a
+    plain PyPI/wheel install — use ``pip install -U claude-comms`` there.
+    """
+    _run_update(web=web)
 
 
 # ---------------------------------------------------------------------------
