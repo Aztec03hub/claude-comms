@@ -2088,28 +2088,38 @@ def start(
                 )
             )
 
-            # Create persistent MQTT publish client for MCP tools
+            # Create persistent MQTT publish client for MCP tools.
+            #
+            # Wrapped in a ResilientPublisher: the bare long-lived client used
+            # to publish with no timeout and no reconnect handling, so a stalled
+            # qos=1 PUBACK (or a silently dropped connection to the embedded
+            # broker) made ``await ...publish(...)`` hang forever -> the MCP
+            # tool call (comms_send et al.) spun indefinitely and blocked the
+            # orchestrator. ResilientPublisher bounds every publish and
+            # reconnects+retries once on failure. See publisher.py.
             import aiomqtt
             from claude_comms.broker import generate_client_id
+            from claude_comms.publisher import ResilientPublisher
 
-            pub_client_id = generate_client_id("mcp-pub", "00000000")
-            pub_client = aiomqtt.Client(
-                hostname=broker_host,
-                port=broker_port,
-                identifier=pub_client_id,
-            )
-            _ = await pub_client.__aenter__()
+            def _make_pub_client() -> aiomqtt.Client:
+                # Fresh client id on every (re)connect avoids broker-side id
+                # collisions when the previous connection is being torn down.
+                return aiomqtt.Client(
+                    hostname=broker_host,
+                    port=broker_port,
+                    identifier=generate_client_id("mcp-pub", "00000000"),
+                )
 
-            async def _do_publish(
-                topic: str, payload: bytes, retain: bool = False
-            ) -> None:
-                # v0.4.2 Step 3.14: ``retain`` widening so the profile_status
-                # auto-expire + set/clear publish paths (and the long-standing
-                # ``publish_mcp_presence_on_join`` + ``_publish_offline``
-                # callers) reach the broker with the retained-message flag
-                # intact. Default False preserves every existing call-site
-                # behaviour where the kwarg was previously omitted.
-                await pub_client.publish(topic, payload, qos=1, retain=retain)
+            _publisher = ResilientPublisher(_make_pub_client)
+            await _publisher.start()
+
+            # ``retain`` widening (v0.4.2 Step 3.14) preserved: the
+            # profile_status auto-expire + set/clear paths (and the long-standing
+            # ``publish_mcp_presence_on_join`` + ``_publish_offline`` callers)
+            # reach the broker with the retained-message flag intact. Default
+            # False preserves every existing call-site where the kwarg was
+            # previously omitted. Signature matches the former ``_do_publish``.
+            _do_publish = _publisher.publish
 
             _mcp_mod._publish_fn = _do_publish
 
@@ -2355,7 +2365,7 @@ def start(
                 except Exception:
                     _daemon_logger.exception("Failed to stop presence manager")
             _ = mqtt_sub_task.cancel()
-            await pub_client.__aexit__(None, None, None)
+            await _publisher.stop()
             if web_task is not None and web_uvi_server is not None:
                 web_uvi_server.should_exit = True
             # Wait for tasks to finish (broker_task unblocks via shutdown_event)
