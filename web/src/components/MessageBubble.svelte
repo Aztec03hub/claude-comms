@@ -20,6 +20,7 @@
   import CodeBlock from './CodeBlock.svelte';
   import MessageActions from './MessageActions.svelte';
   import ReactionBar from './ReactionBar.svelte';
+  import ReactionDetailsPanel from './ReactionDetailsPanel.svelte';
   import ReadReceipt from './ReadReceipt.svelte';
   import LinkPreview from './LinkPreview.svelte';
   import { Lock, AlertCircle } from 'lucide-svelte';
@@ -261,6 +262,34 @@
     onContextMenu({ x: e.clientX, y: e.clientY, message });
   }
 
+  // ── Reactions who-reacted (hover tooltip + detail panel) ──
+  // Resolve a reactor key → { name, isSelf } at render time, so a later name
+  // change or late-arriving participant record updates the rendered lists
+  // automatically (reactive to the `participants` prop). Self renders "You"
+  // (handled by the consuming components via `isSelf`).
+  function resolveReactor(actorKey) {
+    return {
+      name: participants?.[actorKey]?.name ?? actorKey,
+      isSelf: actorKey === currentUser?.key,
+    };
+  }
+
+  // Detail-panel open state owned here (M7): the pill click stays a toggle;
+  // the panel opens from the tooltip "See all" control or a long-press.
+  let detailsOpen = $state(false);
+  let detailsEmoji = $state(null);
+  let detailsAnchor = $state(null);
+
+  function openReactionDetails(emoji, anchorRect) {
+    detailsEmoji = emoji;
+    detailsAnchor = anchorRect;
+    detailsOpen = true;
+  }
+
+  function closeReactionDetails() {
+    detailsOpen = false;
+  }
+
   function handleAvatarClick() {
     const p = participants[message.sender.key] || message.sender;
     onShowProfile(p);
@@ -350,8 +379,20 @@
     {#if message.reactions?.length}
       <ReactionBar
         reactions={message.reactions}
+        {resolveReactor}
         onAddReaction={() => onReact?.(message)}
         onToggleReaction={(emoji) => onReact?.(message, emoji)}
+        onOpenDetails={openReactionDetails}
+      />
+    {/if}
+
+    {#if detailsOpen && message.reactions?.length}
+      <ReactionDetailsPanel
+        reactions={message.reactions}
+        {resolveReactor}
+        anchorRect={detailsAnchor}
+        initialEmoji={detailsEmoji}
+        onClose={closeReactionDetails}
       />
     {/if}
 

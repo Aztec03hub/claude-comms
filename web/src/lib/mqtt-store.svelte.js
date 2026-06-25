@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
-import { API_BASE, apiGet, apiPost, mcpCall } from './api.js';
+import { API_BASE, apiGet, apiPost, mcpCall, getReactions } from './api.js';
 
 // Default broker port + path used when the daemon doesn't advertise its own.
 const DEFAULT_BROKER_WS_PORT = 9001;
@@ -582,6 +582,20 @@ export class MqttChatStore {
    */
   #parseFailureTimestamps = [];
   #seenIds = new Set();
+  /**
+   * Per-channel reaction-hydration buffer (who-reacted feature, plan §4.2).
+   *
+   * Shape: ``{ [channel: string]: Array<{message_id, emoji, actorKey, op}> }``.
+   * The PRESENCE of a key marks hydration as in-flight for that channel; the
+   * array records every live reaction event (in arrival order, INCLUDING self
+   * events) that lands while the batch ``GET /api/reactions/{channel}`` is in
+   * flight. On the response the snapshot rebuilds ``users[]`` and the buffer is
+   * replayed over it (race-correct: a remove arriving mid-fetch is honored, a
+   * removed actor is never resurrected). The buffer is discarded on fetch
+   * failure or channel switch. Keyed per channel so concurrent activations
+   * never cross-contaminate.
+   */
+  #reactionHydration = {};
   #typingTimers = {};
   #myTypingTimer = null;
   #seenMessageIds = new Set();
@@ -1001,6 +1015,59 @@ export class MqttChatStore {
   }
 
   /**
+   * Test-only seam: dispatch a synthetic reaction event through
+   * ``#handleRemoteReaction`` (the direct-apply / buffering path) without an
+   * MQTT broker. Used by ``tests/mqtt-store-reactions.spec.js``.
+   *
+   * @param {string} channel - Target conversation id.
+   * @param {object} msg - Reaction wire payload {message_id, emoji, op, actor_key}.
+   */
+  _handleRemoteReactionForTest(channel, msg) {
+    this.#handleRemoteReaction(channel, msg);
+  }
+
+  /**
+   * Test-only seam: run the full reaction hydration for a channel (start the
+   * buffer, fetch the snapshot via the injected ``getReactions``, await an
+   * optional history promise, then reconcile). Mirrors ``#hydrateChannel`` +
+   * ``#fetchReactions`` but lets the test await completion.
+   *
+   * @param {string} channel
+   * @param {Promise<any>} [historyDone]
+   */
+  async _fetchReactionsForTest(channel, historyDone) {
+    this.#reactionHydration[channel] = this.#reactionHydration[channel] ?? [];
+    await this.#fetchReactions(channel, historyDone);
+  }
+
+  /**
+   * Test-only seam: mark a channel's reaction hydration as in-flight and start
+   * its buffer, WITHOUT issuing the fetch. Lets a test interleave live events
+   * (via ``_handleRemoteReactionForTest``) before calling
+   * ``_reconcileReactionsForTest``. Returns the live buffer array.
+   *
+   * @param {string} channel
+   * @returns {Array} the per-channel buffer
+   */
+  _startReactionHydrationForTest(channel) {
+    this.#reactionHydration[channel] = [];
+    return this.#reactionHydration[channel];
+  }
+
+  /**
+   * Test-only seam: reconcile a snapshot + the current per-channel buffer
+   * (snapshot rebuild then buffered replay), then clear the in-flight marker.
+   *
+   * @param {string} channel
+   * @param {object} snapshot - {message_id: {emoji: [actor_key]}}
+   */
+  _reconcileReactionsForTest(channel, snapshot) {
+    const buffer = this.#reactionHydration[channel] ?? [];
+    this.#reconcileReactions(snapshot, buffer);
+    delete this.#reactionHydration[channel];
+  }
+
+  /**
    * Fetch message history from the REST API for a given channel.
    * Messages are deduplicated against the seen-ID set so live MQTT
    * messages that arrived before the history response don't appear twice.
@@ -1156,6 +1223,190 @@ export class MqttChatStore {
     } catch {
       // Participant fetch failed — not critical, MQTT presence still works
     }
+  }
+
+  // ── Reactions hydration (who-reacted feature, plan §4.2) ──────────────────
+
+  /**
+   * Add or remove a single actor from a message's per-emoji reaction entry,
+   * then recompute the DERIVED ``count`` and ``active`` fields from ``users``.
+   *
+   * ``users`` is the single source of truth (server insertion order):
+   * ``count === users.length`` and ``active === users.includes(selfKey)`` are
+   * never set independently, which structurally prevents count/active drift.
+   * Idempotent: adding an actor already present, or removing one already
+   * absent, is a no-op (this is what makes the hydration buffer-replay safe to
+   * apply over a snapshot that may already reflect some buffered events).
+   *
+   * @param {object} target  - The message object (must be a member of
+   *   ``this.messages`` so the mutation is reactive).
+   * @param {string} emoji   - The emoji token.
+   * @param {string} actorKey - The reactor's 8-hex participant key.
+   * @param {'add'|'remove'} op
+   */
+  #applyReactionUser(target, emoji, actorKey, op) {
+    if (!emoji || !actorKey) return;
+    if (!target.reactions) target.reactions = [];
+    const selfKey = this.userProfile.key;
+    const idx = target.reactions.findIndex(r => r.emoji === emoji);
+
+    if (op === 'add') {
+      if (idx === -1) {
+        // Build the entry fully before pushing so no post-push mutation is
+        // needed (a freshly-pushed plain object isn't the $state proxy yet).
+        target.reactions.push({
+          emoji,
+          users: [actorKey],
+          count: 1,
+          active: actorKey === selfKey,
+        });
+        return;
+      }
+      const entry = target.reactions[idx];
+      if (!entry.users) entry.users = [];
+      if (entry.users.includes(actorKey)) return; // dedup / idempotent
+      entry.users.push(actorKey);
+      entry.count = entry.users.length;
+      entry.active = entry.users.includes(selfKey);
+    } else if (op === 'remove') {
+      if (idx === -1) return;
+      const entry = target.reactions[idx];
+      const nextUsers = (entry.users || []).filter(k => k !== actorKey);
+      if (nextUsers.length === 0) {
+        // Last reactor removed → the pill disappears (existing behavior).
+        target.reactions.splice(idx, 1);
+        return;
+      }
+      entry.users = nextUsers;
+      entry.count = nextUsers.length;
+      entry.active = nextUsers.includes(selfKey);
+    }
+  }
+
+  /**
+   * Batch-hydrate a channel's historical reactions and reconcile them with any
+   * live events that arrived during the fetch (plan §4.2 — snapshot + buffered
+   * replay). Called alongside ``#fetchHistory`` on channel activation.
+   *
+   * The caller MUST start the per-channel buffer (set
+   * ``this.#reactionHydration[channel] = []``) synchronously BEFORE the first
+   * ``await`` so no live event is missed; this method assumes the buffer is
+   * already in place. It awaits both the snapshot GET and the in-flight history
+   * fetch (so reconciliation only runs once the messages exist) and then
+   * rebuilds + replays.
+   *
+   * @param {string} channel - The channel being hydrated.
+   * @param {Promise<any>} [historyDone] - The companion ``#fetchHistory``
+   *   promise; awaited so snapshot messages are present before reconcile.
+   */
+  async #fetchReactions(channel, historyDone) {
+    let data;
+    try {
+      data = await getReactions(channel);
+    } catch {
+      // Hydration miss (daemon warming / GET failed): discard the buffer and
+      // fall back to plain direct-apply. Live events were already applied
+      // during buffering, so we only lose the historical snapshot — degrades
+      // to today's behavior. The next channel activation re-attempts.
+      delete this.#reactionHydration[channel];
+      return;
+    }
+    // Wait for history so the snapshot's messages are in ``this.messages``.
+    if (historyDone) {
+      try {
+        await historyDone;
+      } catch {
+        // History failed — reconcile whatever messages did load.
+      }
+    }
+    const buffer = this.#reactionHydration[channel];
+    // Stale response (channel switched away, or buffer already dropped) → drop
+    // it. Per-channel keying means this can never touch another channel's data.
+    if (!buffer || channel !== this.activeChannel) {
+      delete this.#reactionHydration[channel];
+      return;
+    }
+    this.#reconcileReactions(data.reactions || {}, buffer);
+    delete this.#reactionHydration[channel];
+  }
+
+  /**
+   * Reconcile a reactions snapshot with the buffered live events (plan §4.2).
+   *
+   * 1. For each ``message_id`` present in BOTH the snapshot and
+   *    ``this.messages``: rebuild ``users[]`` from the snapshot (authoritative
+   *    base). Messages with no snapshot entry keep their live-tracked
+   *    ``users[]`` untouched; snapshot entries for unknown messages are ignored
+   *    (bounds memory + work).
+   * 2. Replay the buffered events in arrival order over the rebuilt base
+   *    (``add`` → ensure present, ``remove`` → ensure absent). The replay path
+   *    does NOT skip self — it rebuilds from the authoritative snapshot, so it
+   *    must re-include self where the server recorded it.
+   *
+   * @param {Object<string, Object<string, string[]>>} snapshot
+   * @param {Array<{message_id: string, emoji: string, actorKey: string, op: string}>} buffer
+   */
+  #reconcileReactions(snapshot, buffer) {
+    const selfKey = this.userProfile.key;
+
+    for (const [messageId, byEmoji] of Object.entries(snapshot)) {
+      const target = this.messages.find(m => m.id === messageId);
+      if (!target) continue;
+      const reactions = [];
+      for (const [emoji, users] of Object.entries(byEmoji || {})) {
+        const u = Array.isArray(users) ? [...users] : [];
+        if (u.length === 0) continue;
+        reactions.push({
+          emoji,
+          users: u,
+          count: u.length,
+          active: u.includes(selfKey),
+        });
+      }
+      target.reactions = reactions;
+    }
+
+    for (const ev of buffer) {
+      const target = this.messages.find(m => m.id === ev.message_id);
+      if (!target) continue;
+      this.#applyReactionUser(target, ev.emoji, ev.actorKey, ev.op);
+    }
+  }
+
+  /**
+   * Kick off both message-history and reaction hydration for a channel.
+   *
+   * Starts the per-channel reaction buffer synchronously (so live reaction
+   * events arriving during the fetch window are captured for replay) BEFORE
+   * any ``await``, then issues the history fetch and the reactions fetch
+   * together. Used by every channel-activation path.
+   *
+   * @param {string} channel
+   */
+  #hydrateChannel(channel) {
+    // Mark hydration in-flight + start buffering live events for this channel
+    // before any await yields the event loop to incoming MQTT.
+    this.#reactionHydration[channel] = [];
+    const historyDone = this.#fetchHistory(channel);
+    this.#fetchReactions(channel, historyDone);
+  }
+
+  /**
+   * Resolve a reactor's participant key to a display name + self flag, at
+   * RENDER time (plan §4.3). Reactive to ``this.participants`` so a later name
+   * change or late-arriving participant record updates rendered reaction lists
+   * automatically. Falls back to the raw 8-hex key when the participant is
+   * unknown (reactor left the channel / not yet hydrated). The caller renders
+   * "You" when ``isSelf`` is true.
+   *
+   * @param {string} actorKey - The reactor's 8-hex participant key.
+   * @returns {{ name: string, isSelf: boolean }}
+   */
+  resolveReactor(actorKey) {
+    return {
+      name: this.participants[actorKey]?.name ?? actorKey,
+      isSelf: actorKey === this.userProfile.key,
+    };
   }
 
   /**
@@ -1695,8 +1946,9 @@ export class MqttChatStore {
       };
       this.participants[this.userProfile.key].lastOffline = null;
 
-      // Fetch message history from the REST API so messages survive page refresh
-      this.#fetchHistory(this.activeChannel);
+      // Fetch message history + reaction hydration from the REST API so
+      // messages and who-reacted state survive a page refresh.
+      this.#hydrateChannel(this.activeChannel);
       // Start polling participant list from the server to discover
       // TUI/MCP clients whose presence may not bridge across transports
       this.#startParticipantPolling();
@@ -2188,8 +2440,8 @@ export class MqttChatStore {
       this.#subscribeAll();
     }
 
-    // Fetch history and participants for the new channel
-    this.#fetchHistory(channelId);
+    // Fetch history (+ reaction hydration) and participants for the new channel
+    this.#hydrateChannel(channelId);
     this.#fetchParticipants(channelId);
   }
 
@@ -2562,22 +2814,17 @@ export class MqttChatStore {
       msg.reactions = [];
     }
 
-    // Optimistic local update — server's re-broadcast will correct any drift.
+    // Optimistic local update. ``users`` is the source of truth; toggle self
+    // in/out of it and let #applyReactionUser recompute count/active. The
+    // server's resolved re-broadcast for self is ignored (#handleRemoteReaction
+    // self-echo guard), so this optimistic write is the live truth for self
+    // until a hydration snapshot supersedes it.
+    const selfKey = this.userProfile.key;
     const existing = msg.reactions.find(r => r.emoji === emoji);
-    if (existing) {
-      if (existing.active) {
-        existing.count--;
-        existing.active = false;
-        if (existing.count <= 0) {
-          msg.reactions = msg.reactions.filter(r => r.emoji !== emoji);
-        }
-      } else {
-        existing.count++;
-        existing.active = true;
-      }
-    } else {
-      msg.reactions.push({ emoji, count: 1, active: true });
-    }
+    const selfActive = existing
+      ? (existing.users || []).includes(selfKey)
+      : false;
+    this.#applyReactionUser(msg, emoji, selfKey, selfActive ? 'remove' : 'add');
 
     // Broadcast toggle intent to server + other clients
     if (this.#client && this.connected) {
@@ -5134,31 +5381,31 @@ export class MqttChatStore {
     // upgraded yet — strip after a deprecation window.
     const op = msg.op || msg.action;
     const actorKey = msg.actor_key || msg.sender?.key;
+    if (!op || !actorKey) return;
 
-    // Ignore our own broadcasts (we already applied locally via optimistic update)
+    // If this channel is mid-hydration, record the event (in arrival order,
+    // INCLUDING self events) so the snapshot/buffered-replay reconciliation can
+    // re-apply it over the authoritative snapshot. The event is STILL applied
+    // live below (except self) so the UI stays responsive during the fetch.
+    const buffer = this.#reactionHydration[channel];
+    if (buffer) {
+      buffer.push({
+        message_id: msg.message_id,
+        emoji: msg.emoji,
+        actorKey,
+        op,
+      });
+    }
+
+    // Ignore our own broadcasts on the DIRECT-APPLY path: the optimistic update
+    // already wrote self into ``users``. (The hydration replay path above does
+    // NOT skip self — it rebuilds from the authoritative snapshot.)
     if (actorKey === this.userProfile.key) return;
 
     const target = this.messages.find(m => m.id === msg.message_id);
     if (!target) return;
 
-    if (!target.reactions) target.reactions = [];
-
-    if (op === 'add') {
-      const existing = target.reactions.find(r => r.emoji === msg.emoji);
-      if (existing) {
-        existing.count++;
-      } else {
-        target.reactions.push({ emoji: msg.emoji, count: 1, active: false });
-      }
-    } else if (op === 'remove') {
-      const existing = target.reactions.find(r => r.emoji === msg.emoji);
-      if (existing) {
-        existing.count--;
-        if (existing.count <= 0) {
-          target.reactions = target.reactions.filter(r => r.emoji !== msg.emoji);
-        }
-      }
-    }
+    this.#applyReactionUser(target, msg.emoji, actorKey, op);
   }
 
   /**

@@ -246,6 +246,19 @@ def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
     return _store.get(channel, limit=count)
 
 
+def get_conversation_reactions(conversation: str) -> dict[str, dict[str, list[str]]]:
+    """Return all reactions for *conversation* as ``{message_id: {emoji: [key]}}``.
+
+    Backing function for the ``/api/reactions/{conversation}`` REST endpoint
+    added in ``cli.py``.  Mirrors :func:`get_channel_messages` (a direct,
+    same-trust-boundary read) by delegating straight to the conversation's
+    :class:`~claude_comms.reactions.ReactionsStore` snapshot via
+    ``get_all()``.  Lazily constructs the store on first access, so an empty
+    dict is returned for a conversation that has never had a reaction.
+    """
+    return _get_reactions_store(conversation).get_all()
+
+
 def get_channel_participants(channel: str) -> list[dict]:
     """Return participants for *channel* from the shared registry.
 
