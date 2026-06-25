@@ -784,9 +784,24 @@ class _ASGIWebSocketReader:
         self._stream = io.BytesIO(b"")
         self._eof = False
 
-    async def read(self, n: int = -1) -> bytes:
+    async def read(self, n: int = -1) -> bytes | None:
         await self._feed_buffer(n)
-        return self._stream.read(n)
+        data = self._stream.read(n)
+        if not data and self._eof:
+            # Clean EOF with nothing buffered: return amqtt's no-data sentinel
+            # (``None``), NOT ``b""``. amqtt's ``read_or_raise`` only treats
+            # ``None`` (or IncompleteReadError/ConnectionReset/BrokenPipe) as a
+            # disconnect; an empty ``bytes`` slips through to ``unpack("!B", b"")``
+            # which raises ``struct.error``. That exception is caught by amqtt's
+            # generic reader-loop handler (handler.py:540) instead of the clean
+            # ``if not fixed_header: break`` EOF path, and the noisy teardown can
+            # race the broker's message loop so the abnormal-disconnect will (LWT)
+            # is silently dropped. The native ``StreamReaderAdapter`` avoids this
+            # because ``readexactly`` raises ``IncompleteReadError`` on EOF, which
+            # ``read_or_raise`` maps to ``None``. Returning ``None`` here puts the
+            # WS bridge on that same deterministic EOF path so LWT fires reliably.
+            return None
+        return data
 
     async def _feed_buffer(self, n: int = 1) -> None:
         import io

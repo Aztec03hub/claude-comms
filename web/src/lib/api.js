@@ -322,18 +322,20 @@ export async function updateName(key, newName) {
       return { success: false, error: msg };
     }
 
-    // FastMCP wraps tool returns in `result.structuredContent` (or
-    // `result.content[0].text` for older clients). Try both.
+    // FastMCP wraps tool returns in `result.structuredContent` (preferred) or
+    // `result.content[0].text`. As of the concise-output change
+    // (mcp_server._concise), `comms_update_name` returns a text-only
+    // CallToolResult with NO structuredContent and a framed body shaped
+    // ``<summary>\n(ctrl+o for full)\n---\n<full JSON>`` — so the text is NOT
+    // bare JSON. Use the shared `parseToolText` helper (same path the generic
+    // tool caller uses) instead of a naive `JSON.parse`, which silently failed
+    // on the framed body and surfaced every rename as "empty response".
     const result = body?.result || {};
     let payload = result.structuredContent;
     if (!payload && Array.isArray(result.content)) {
       const textBlock = result.content.find((c) => c && c.type === 'text');
       if (textBlock && typeof textBlock.text === 'string') {
-        try {
-          payload = JSON.parse(textBlock.text);
-        } catch {
-          payload = null;
-        }
+        payload = parseToolText(textBlock.text);
       }
     }
 
