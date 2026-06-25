@@ -16,8 +16,6 @@
   import { isReservedChannel } from '../lib/channels.js';
   import pkg from '../../package.json';
 
-  const APP_VERSION = pkg?.version || '';
-
   let {
     store,
     onCreateChannel,
@@ -36,6 +34,13 @@
     // (used to report a server-refused delete instead of a silent no-op).
     onRequestToast,
   } = $props();
+
+  // Version badge: prefer the live daemon version from /api/capabilities
+  // (``store.serverVersion``, single source of truth) so the badge always
+  // reflects the running daemon; fall back to the build-time package.json
+  // version until the capabilities fetch resolves. A stale bundle can't show
+  // a wrong number once the daemon answers.
+  let appVersion = $derived(store.serverVersion || pkg?.version || '');
 
   // Footer connection-status binding (UX G-25) — three-state mirror of ConnectionStatus.svelte.
   let connectionLabel = $derived(store.connected ? 'Online' : (store.connectionError ? 'Offline' : 'Reconnecting…'));
@@ -316,7 +321,7 @@
   <div class="sidebar-brand">
     <div class="brand-icon">CC</div>
     <h1>Claude Comms</h1>
-    <span class="brand-version" data-testid="sidebar-version">v{APP_VERSION}</span>
+    <span class="brand-version" data-testid="sidebar-version">v{appVersion}</span>
   </div>
 
   <div class="search-wrap">

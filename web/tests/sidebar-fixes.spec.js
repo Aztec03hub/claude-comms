@@ -83,7 +83,20 @@ describe('Sidebar G-5 — version label', () => {
     const versionEl = getByTestId('sidebar-version');
     // The component imports package.json the same way this test does,
     // so they must agree. If package.json bumps, this test bumps with it.
+    // (No live daemon version yet → build-time fallback.)
     expect(versionEl.textContent).toBe(`v${pkg.version}`);
+  });
+
+  it('prefers the live daemon version (store.serverVersion) over package.json', () => {
+    // Single source of truth: once /api/capabilities resolves, the store
+    // carries the running daemon's version and the badge shows THAT, not the
+    // build-time bundle constant — a stale bundle can't display a wrong number.
+    const store = makeStore();
+    store.serverVersion = '9.9.9';
+    const { getByTestId } = renderSidebar(store);
+
+    const versionEl = getByTestId('sidebar-version');
+    expect(versionEl.textContent).toBe('v9.9.9');
   });
 });
 
