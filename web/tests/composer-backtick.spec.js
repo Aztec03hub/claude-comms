@@ -102,8 +102,9 @@ describe('MessageInput backtick overlay', () => {
     const overlay = getOverlay(container);
     const block = overlay.querySelector('.overlay-code-block');
     expect(block).toBeTruthy();
-    // The block span contains the entire raw range including fences.
-    expect(block.textContent).toContain('foo');
+    // The visible block body holds the code; the ``` fences are in separate
+    // (transparent) fence spans, not in the body.
+    expect(block.textContent).toBe('foo');
   });
 
   it('does NOT render block-code when triple-tick is mid-line', async () => {
@@ -163,7 +164,12 @@ describe('MessageInput backtick overlay', () => {
     expect(ta.selectionStart).toBe(1);
   });
 
-  it('block-code span includes the lang tag in raw output (rendered in overlay)', async () => {
+  it('block-code overlay hides the ``` fences + lang; body shows; full text preserved', async () => {
+    // Phil regression: once the block renders, the literal ``` fences (and the
+    // lang tag on the opening fence) DISAPPEAR — they move into transparent
+    // `overlay-code-block-fence` spans so only the code bubble shows. The body
+    // span carries only the code; the overlay still mirrors the source exactly
+    // (fences present but transparent → alignment preserved).
     const store = makeStore();
     const { container } = render(MessageInput, {
       props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
@@ -174,8 +180,16 @@ describe('MessageInput backtick overlay', () => {
     const overlay = getOverlay(container);
     const block = overlay.querySelector('.overlay-code-block');
     expect(block).toBeTruthy();
-    expect(block.textContent).toContain('python');
-    expect(block.textContent).toContain('x = 1');
+    // The VISIBLE block body is just the code — no lang tag, no fences.
+    expect(block.textContent).toBe('x = 1');
+    expect(block.textContent).not.toContain('python');
+    // The lang tag + fences live in the hidden fence spans (transparent in CSS).
+    const fences = overlay.querySelectorAll('.overlay-code-block-fence');
+    expect(fences).toHaveLength(2);
+    expect(fences[0].textContent).toBe('```python\n');
+    expect(fences[1].textContent).toBe('\n```');
+    // Overlay still character-exact with the textarea.
+    expect(overlay.textContent).toBe(ta.value);
   });
 
   it('multiple inline chips on one line each render as separate chips', async () => {

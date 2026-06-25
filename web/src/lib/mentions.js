@@ -259,6 +259,12 @@ export function findExactMatch(query, candidates) {
  * Replace the range `[atIndex, queryEnd)` in `text` with `'@' + candidate.name`,
  * inserting a new mention token at that range and returning the updated state.
  *
+ * NO trailing space is ever appended (per Phil): the committed text is exactly
+ * `@name` and the returned cursor sits IMMEDIATELY after it. The user types any
+ * spacing themselves. Consecutive mentions reading correctly (`@Iris @Sol`)
+ * comes from the overlay staying pixel-aligned with the textarea + the caret
+ * landing in the right place + stable parsing — NOT from injecting spaces.
+ *
  * @param {string} text
  * @param {Array<{start:number,end:number,name:string,key:string}>} tokens
  * @param {number} atIndex   - index of the '@' starting the suggestion
@@ -297,7 +303,7 @@ export function commitMention(text, tokens, atIndex, queryEnd, candidate) {
   return {
     text: newTextValue,
     tokens: updatedTokens,
-    newCursor: newEnd,
+    newCursor: newEnd, // caret immediately after `@name`, no trailing space
   };
 }
 
