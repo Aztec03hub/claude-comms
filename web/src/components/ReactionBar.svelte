@@ -36,6 +36,10 @@
     onOpenDetails,
   } = $props();
 
+  // Stable per-instance id base for aria linkage (pill ↔ its tooltip names).
+  const uid = $props.id();
+  const tooltipId = (i) => `${uid}-rtt-${i}`;
+
   /** Default resolver when none is injected (key passthrough, no self mark). */
   function resolve(key) {
     return resolveReactor ? resolveReactor(key) : { name: key, isSelf: false };
@@ -98,7 +102,7 @@
 </script>
 
 <div class="reactions">
-  {#each reactions as reaction (reaction.emoji)}
+  {#each reactions as reaction, i (reaction.emoji)}
     <span class="reaction-wrap">
       <button
         class="reaction"
@@ -110,12 +114,21 @@
         onpointercancel={cancelPress}
         aria-label="{reaction.emoji} reaction, {reaction.count} {reaction.count === 1 ? 'person' : 'people'}"
         aria-pressed={reaction.active}
+        aria-describedby={tooltipId(i)}
       >
         <span class="emoji" aria-hidden="true">{reaction.emoji}</span>
         <span class="count">{reaction.count}</span>
       </button>
-      <span class="reaction-tooltip" role="tooltip">
-        <span class="tooltip-names">{tooltipText(reaction)}</span>
+      <!--
+        The hover/focus popover. ``role="tooltip"`` lives ONLY on the
+        non-interactive names span (a tooltip must not be an interactive
+        container); the "See all" control is a sibling button, not inside the
+        tooltip role. The pill links to the names via ``aria-describedby``.
+      -->
+      <span class="reaction-tooltip">
+        <span class="tooltip-names" role="tooltip" id={tooltipId(i)}>
+          {tooltipText(reaction)}
+        </span>
         <button
           type="button"
           class="tooltip-see-all"

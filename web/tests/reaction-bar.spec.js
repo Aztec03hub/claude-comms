@@ -108,3 +108,65 @@ describe('ReactionBar regression: pill click still toggles', () => {
     expect(onAddReaction).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ReactionBar long-press (touch / no-hover panel open)', () => {
+  it('opens the panel after a 500ms long-press and suppresses the ensuing toggle', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOpenDetails = vi.fn();
+      const onToggleReaction = vi.fn();
+      const { getByLabelText } = render(ReactionBar, {
+        props: {
+          reactions: [reaction('👍', ['bbbbbbbb'])],
+          resolveReactor: makeResolver({ bbbbbbbb: 'Alice' }),
+          onOpenDetails,
+          onToggleReaction,
+        },
+      });
+      const pill = getByLabelText(/👍 reaction/);
+
+      await fireEvent.pointerDown(pill);
+      // Just before the threshold: nothing opens yet.
+      vi.advanceTimersByTime(499);
+      expect(onOpenDetails).not.toHaveBeenCalled();
+      // Crossing 500ms fires the long-press → the panel opens.
+      vi.advanceTimersByTime(1);
+      expect(onOpenDetails).toHaveBeenCalledTimes(1);
+      expect(onOpenDetails.mock.calls[0][0]).toBe('👍');
+
+      // The click that the OS dispatches after a long-press must NOT toggle.
+      await fireEvent.click(pill);
+      expect(onToggleReaction).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a short press (released before 500ms) toggles and does not open the panel', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOpenDetails = vi.fn();
+      const onToggleReaction = vi.fn();
+      const { getByLabelText } = render(ReactionBar, {
+        props: {
+          reactions: [reaction('👍', ['bbbbbbbb'])],
+          resolveReactor: makeResolver(),
+          onOpenDetails,
+          onToggleReaction,
+        },
+      });
+      const pill = getByLabelText(/👍 reaction/);
+
+      await fireEvent.pointerDown(pill);
+      vi.advanceTimersByTime(200);
+      await fireEvent.pointerUp(pill); // releasing cancels the long-press timer
+      vi.advanceTimersByTime(500); // even past the threshold, nothing opens
+      expect(onOpenDetails).not.toHaveBeenCalled();
+
+      await fireEvent.click(pill);
+      expect(onToggleReaction).toHaveBeenCalledWith('👍');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

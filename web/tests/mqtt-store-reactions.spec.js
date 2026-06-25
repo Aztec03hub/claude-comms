@@ -252,6 +252,121 @@ describe('hydration: snapshot + buffered replay (race-correct)', () => {
   });
 });
 
+describe('hydration generation token (M-1: rapid A→B→A re-activation)', () => {
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('discards the superseded same-channel fetch and does not resurrect a removed actor', async () => {
+    const store = makeStore();
+    store.messages = [{ id: 'm1', channel: 'A', reactions: [] }];
+    store.activeChannel = 'A';
+
+    const get1 = deferred();
+    const get2 = deferred();
+    getReactionsMock
+      .mockReturnValueOnce(get1.promise) // GET#1 (generation 1)
+      .mockReturnValueOnce(get2.promise); // GET#2 (generation 2)
+
+    // Activation #1 of A (gen 1): GET#1 in flight.
+    store._hydrateChannelForTest('A');
+
+    // The user visits B; A's live reaction events keep arriving on A's topic
+    // (live-applied + buffered into A's gen-1 buffer).
+    store.activeChannel = 'B';
+    store._handleRemoteReactionForTest('A', { message_id: 'm1', emoji: '👍', op: 'add', actor_key: ALICE });
+    store._handleRemoteReactionForTest('A', { message_id: 'm1', emoji: '👍', op: 'add', actor_key: BOB });
+    store._handleRemoteReactionForTest('A', { message_id: 'm1', emoji: '👍', op: 'remove', actor_key: ALICE });
+    // Live truth now: [BOB] (Alice was removed during the B visit).
+
+    // Re-activate A (gen 2): fresh buffer, GET#2 in flight.
+    store.activeChannel = 'A';
+    store._hydrateChannelForTest('A');
+
+    // GET#1 (stale, gen 1) resolves LAST-WRITER style with an OLD snapshot that
+    // still lists Alice. The generation token must cause it to be DISCARDED.
+    get1.resolve({ conversation: 'A', reactions: { m1: { '👍': [ALICE, BOB] } } });
+    await flush();
+
+    // GET#2 (current, gen 2) resolves with the corrected snapshot (no Alice).
+    get2.resolve({ conversation: 'A', reactions: { m1: { '👍': [BOB] } } });
+    await flush();
+
+    const r = reactionFor(store, 'm1', '👍');
+    expect(r.users).toEqual([BOB]); // Alice NOT resurrected by the stale GET#1
+    expect(r.count).toBe(1);
+  });
+
+  it('discards a response that lands after switching away from the channel', async () => {
+    const store = makeStore();
+    store.messages = [{ id: 'm1', channel: 'A', reactions: [] }];
+    store.activeChannel = 'A';
+
+    const get1 = deferred();
+    getReactionsMock.mockReturnValueOnce(get1.promise);
+
+    store._hydrateChannelForTest('A'); // gen 1, GET in flight
+
+    // Switch away to B before the response lands (no re-activation of A).
+    store.activeChannel = 'B';
+
+    // The A response arrives now — it must be discarded (channel no longer the
+    // in-flight target) rather than mutating m1.
+    get1.resolve({ conversation: 'A', reactions: { m1: { '👍': [ALICE, BOB] } } });
+    await flush();
+
+    expect(reactionFor(store, 'm1', '👍')).toBeUndefined();
+  });
+});
+
+describe('M-2: optimistic self survives a reconcile during hydration', () => {
+  it('restores a self reaction whose echo lands AFTER reconcile wiped the optimistic write', () => {
+    const store = makeStore();
+    seedMessage(store); // m1
+
+    // Hydration in-flight (buffer started) for the channel.
+    store._startReactionHydrationForTest('general');
+
+    // User reacts on a historical (in-snapshot) message → optimistic self add.
+    store.addReaction('m1', '👍');
+    expect(reactionFor(store, 'm1', '👍').users).toEqual([SELF]);
+
+    // The GET returns a snapshot taken server-side BEFORE our toggle (no self).
+    // Reconcile rebuilds from it → the optimistic self entry is wiped, and the
+    // buffer (which never held the optimistic click) is cleared.
+    store._reconcileReactionsForTest('general', { m1: { '👍': [ALICE] } });
+    expect(reactionFor(store, 'm1', '👍').users).toEqual([ALICE]);
+
+    // The server's self-echo arrives AFTER reconcile (buffer already gone).
+    store._handleRemoteReactionForTest('general', {
+      message_id: 'm1', emoji: '👍', op: 'add', actor_key: SELF,
+    });
+
+    // M-2 fix: the post-reconcile self-echo is APPLIED (not dropped by the
+    // self-echo guard) because the rendered state disagrees with it — so the
+    // self reaction is restored instead of being permanently lost.
+    const r = reactionFor(store, 'm1', '👍');
+    expect(r.users).toEqual([ALICE, SELF]);
+    expect(r.active).toBe(true);
+  });
+
+  it('still drops a self-echo that merely confirms the current state (no double count / flicker)', () => {
+    const store = makeStore();
+    seedMessage(store);
+    store.addReaction('m1', '🎉'); // optimistic self add (no hydration involved)
+    // Echo agrees with what we already render → must be a no-op.
+    store._handleRemoteReactionForTest('general', {
+      message_id: 'm1', emoji: '🎉', op: 'add', actor_key: SELF,
+    });
+    const r = reactionFor(store, 'm1', '🎉');
+    expect(r.users).toEqual([SELF]);
+    expect(r.count).toBe(1);
+  });
+});
+
 describe('resolveReactor', () => {
   it('flags self (isSelf true) for the local key so the UI renders "You"', () => {
     const store = makeStore();

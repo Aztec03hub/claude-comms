@@ -25,7 +25,7 @@
   @prop {Function} onClose - Invoked on Esc / outside-click / empty.
 -->
 <script>
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
   import { portal } from '../lib/portal.js';
 
   let {
@@ -38,6 +38,23 @@
 
   let panelEl = $state(null);
 
+  // Stable per-instance id base for tab ↔ tabpanel aria linkage.
+  const uid = $props.id();
+  const tabId = (i) => `${uid}-tab-${i}`;
+  const panelId = `${uid}-panel`;
+
+  // Restore focus to whatever triggered the panel (the pill / "See all"
+  // control) when the panel is destroyed, instead of dropping focus to <body>.
+  onMount(() => {
+    const trigger =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    return () => {
+      if (trigger && trigger.isConnected) trigger.focus();
+    };
+  });
+
   // Selected emoji. Starts null; the $effect below seeds it (from initialEmoji
   // when valid, else the first reaction) and keeps it valid as reactions
   // mutate live. Writable because clicking an emoji row re-points it.
@@ -47,6 +64,9 @@
     reactions.find((r) => r.emoji === selectedEmoji) ?? null
   );
   const selectedUsers = $derived(selectedReaction?.users ?? []);
+  const selectedIndex = $derived(
+    reactions.findIndex((r) => r.emoji === selectedEmoji)
+  );
 
   // Keep the selection valid as reactions change (live add/remove). If every
   // emoji is gone, close; if the selected one is unset/vanished, seed it from
@@ -154,6 +174,7 @@
   bind:this={panelEl}
   class="reaction-details"
   role="dialog"
+  aria-modal="true"
   aria-label="Who reacted"
   tabindex="-1"
   style:left="{pos.left}px"
@@ -162,12 +183,14 @@
   {@attach portal()}
 >
   <div class="emoji-list" role="tablist" aria-label="Reactions">
-    {#each reactions as reaction (reaction.emoji)}
+    {#each reactions as reaction, i (reaction.emoji)}
       <button
         type="button"
         class="emoji-row"
         class:selected={reaction.emoji === selectedEmoji}
         role="tab"
+        id={tabId(i)}
+        aria-controls={panelId}
         aria-selected={reaction.emoji === selectedEmoji}
         data-emoji-row={reaction.emoji}
         tabindex={reaction.emoji === selectedEmoji ? 0 : -1}
@@ -182,7 +205,13 @@
     {/each}
   </div>
 
-  <div class="user-list" role="tabpanel" aria-label="Reactors">
+  <div
+    class="user-list"
+    role="tabpanel"
+    id={panelId}
+    aria-labelledby={selectedIndex >= 0 ? tabId(selectedIndex) : undefined}
+    aria-label="Reactors"
+  >
     {#if selectedReaction}
       <div class="user-list-header">
         <span class="header-emoji" aria-hidden="true">{selectedReaction.emoji}</span>

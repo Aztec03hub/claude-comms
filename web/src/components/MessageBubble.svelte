@@ -290,6 +290,17 @@
     detailsOpen = false;
   }
 
+  // L-1: the panel's wrapper {#if} can unmount it (when the last reaction is
+  // removed) BEFORE the panel's own empty→onClose effect runs, leaving
+  // ``detailsOpen`` stuck true — which would spontaneously re-open the panel if
+  // a new reaction later arrives. Make this the single source of truth: force
+  // the flag false whenever there are no reactions to show.
+  $effect(() => {
+    if (detailsOpen && !message.reactions?.length) {
+      detailsOpen = false;
+    }
+  });
+
   function handleAvatarClick() {
     const p = participants[message.sender.key] || message.sender;
     onShowProfile(p);

@@ -111,6 +111,45 @@ class TestGetConversationReactions:
     ) -> None:
         assert mcp_mod.get_conversation_reactions("never-used") == {}
 
+    def test_get_of_nonexistent_conv_creates_no_dir_or_cache(
+        self, reactions_data_dir: Path
+    ) -> None:
+        """A pure GET must not mkdir or cache a store for a conversation that
+        has never had a reaction (M-3: read must be side-effect-free)."""
+        result = mcp_mod.get_conversation_reactions("ghost-conv")
+        assert result == {}
+        # No directory was created on disk for the non-existent conversation.
+        assert not (reactions_data_dir / "ghost-conv").exists()
+        # No store was cached for it either (unbounded-growth guard).
+        assert "ghost-conv" not in mcp_mod._reactions_stores
+
+    def test_get_reuses_existing_store_after_write(
+        self, reactions_data_dir: Path
+    ) -> None:
+        """Once a write path has built+cached the store, a later GET reads it
+        (the dir now exists and the cache hit short-circuits the disk check)."""
+        store = mcp_mod._get_reactions_store("general")
+        store.apply(message_id="m1", emoji="👍", actor_key="aabbccdd", op="add")
+        assert mcp_mod.get_conversation_reactions("general") == {
+            "m1": {"👍": ["aabbccdd"]}
+        }
+
+    def test_get_reads_existing_dir_without_cached_store(
+        self, reactions_data_dir: Path
+    ) -> None:
+        """When the conversation dir already exists on disk but no store is
+        cached (e.g. fresh process after a restart), the GET builds the store
+        and replays the persisted reactions."""
+        # Simulate a prior process having persisted reactions for the conv.
+        store = mcp_mod._get_reactions_store("general")
+        store.apply(message_id="m1", emoji="🎉", actor_key="deadbeef", op="add")
+        # Drop the in-memory cache, keeping the on-disk dir + log.
+        mcp_mod._reactions_stores.clear()
+        assert (reactions_data_dir / "general").exists()
+        assert mcp_mod.get_conversation_reactions("general") == {
+            "m1": {"🎉": ["deadbeef"]}
+        }
+
     def test_remove_reflected_in_snapshot(self, reactions_data_dir: Path) -> None:
         store = mcp_mod._get_reactions_store("general")
         store.apply(message_id="m1", emoji="👍", actor_key="aabbccdd", op="add")

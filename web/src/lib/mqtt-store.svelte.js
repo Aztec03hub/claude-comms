@@ -596,6 +596,16 @@ export class MqttChatStore {
    * never cross-contaminate.
    */
   #reactionHydration = {};
+  /**
+   * Per-channel hydration GENERATION token (monotonic counter, bumped on every
+   * channel activation in ``#hydrateChannel``). Each in-flight ``#fetchReactions``
+   * captures the generation it was started with; on the response it only
+   * reconciles when the channel's CURRENT generation still matches. This closes
+   * the rapid ``A → B → A`` re-activation race where an older snapshot for A
+   * could otherwise be paired with a freshly-reset buffer and resurrect a
+   * removed actor: the superseded (older-generation) fetch is discarded instead.
+   */
+  #reactionGeneration = {};
   #typingTimers = {};
   #myTypingTimer = null;
   #seenMessageIds = new Set();
@@ -1037,7 +1047,22 @@ export class MqttChatStore {
    */
   async _fetchReactionsForTest(channel, historyDone) {
     this.#reactionHydration[channel] = this.#reactionHydration[channel] ?? [];
-    await this.#fetchReactions(channel, historyDone);
+    const gen = (this.#reactionGeneration[channel] ?? 0) + 1;
+    this.#reactionGeneration[channel] = gen;
+    await this.#fetchReactions(channel, gen, historyDone);
+  }
+
+  /**
+   * Test-only seam: run a full channel activation (``#hydrateChannel``) so the
+   * per-channel generation token + buffer reset behave exactly as in production.
+   * Used by ``tests/mqtt-store-reactions.spec.js`` to drive the rapid A→B→A
+   * overlapping-hydration race (M-1) where the superseded fetch must be
+   * discarded rather than reconciled against the fresh buffer.
+   *
+   * @param {string} channel
+   */
+  _hydrateChannelForTest(channel) {
+    this.#hydrateChannel(channel);
   }
 
   /**
@@ -1296,10 +1321,13 @@ export class MqttChatStore {
    * rebuilds + replays.
    *
    * @param {string} channel - The channel being hydrated.
+   * @param {number} gen - The hydration generation this fetch belongs to (from
+   *   ``#hydrateChannel``); the response is discarded if a newer activation has
+   *   superseded it.
    * @param {Promise<any>} [historyDone] - The companion ``#fetchHistory``
    *   promise; awaited so snapshot messages are present before reconcile.
    */
-  async #fetchReactions(channel, historyDone) {
+  async #fetchReactions(channel, gen, historyDone) {
     let data;
     try {
       data = await getReactions(channel);
@@ -1308,7 +1336,7 @@ export class MqttChatStore {
       // fall back to plain direct-apply. Live events were already applied
       // during buffering, so we only lose the historical snapshot — degrades
       // to today's behavior. The next channel activation re-attempts.
-      delete this.#reactionHydration[channel];
+      this.#discardHydration(channel, gen);
       return;
     }
     // Wait for history so the snapshot's messages are in ``this.messages``.
@@ -1319,15 +1347,38 @@ export class MqttChatStore {
         // History failed — reconcile whatever messages did load.
       }
     }
-    const buffer = this.#reactionHydration[channel];
-    // Stale response (channel switched away, or buffer already dropped) → drop
-    // it. Per-channel keying means this can never touch another channel's data.
-    if (!buffer || channel !== this.activeChannel) {
-      delete this.#reactionHydration[channel];
+    // Stale response → DISCARD without reconciling. Two cases:
+    //   (a) a newer activation for this channel superseded us (rapid A→B→A
+    //       re-switch): the current buffer belongs to that newer generation, so
+    //       reconciling our OLDER snapshot against it could resurrect a removed
+    //       actor (the M-1 hole). The generation mismatch catches this even
+    //       though the channel is active again.
+    //   (b) the channel was switched away and not re-activated.
+    // ``#discardHydration`` only drops the buffer if it is still ours (it must
+    // not delete the newer generation's buffer in case (a)).
+    if (this.#reactionGeneration[channel] !== gen || channel !== this.activeChannel) {
+      this.#discardHydration(channel, gen);
       return;
     }
+    const buffer = this.#reactionHydration[channel];
+    if (!buffer) return;
     this.#reconcileReactions(data.reactions || {}, buffer);
-    delete this.#reactionHydration[channel];
+    this.#discardHydration(channel, gen);
+  }
+
+  /**
+   * Drop a channel's in-flight reaction buffer, but ONLY if it still belongs to
+   * generation ``gen``. A newer ``#hydrateChannel`` activation may have already
+   * replaced the buffer (and bumped the generation); in that case the stale
+   * fetch must leave the newer buffer untouched.
+   *
+   * @param {string} channel
+   * @param {number} gen
+   */
+  #discardHydration(channel, gen) {
+    if (this.#reactionGeneration[channel] === gen) {
+      delete this.#reactionHydration[channel];
+    }
   }
 
   /**
@@ -1384,11 +1435,16 @@ export class MqttChatStore {
    * @param {string} channel
    */
   #hydrateChannel(channel) {
+    // Bump the per-channel generation so a still-in-flight fetch from a previous
+    // activation of THIS channel (rapid A→B→A) is recognized as superseded and
+    // discarded rather than reconciled against this fresh buffer.
+    const gen = (this.#reactionGeneration[channel] ?? 0) + 1;
+    this.#reactionGeneration[channel] = gen;
     // Mark hydration in-flight + start buffering live events for this channel
     // before any await yields the event loop to incoming MQTT.
     this.#reactionHydration[channel] = [];
     const historyDone = this.#fetchHistory(channel);
-    this.#fetchReactions(channel, historyDone);
+    this.#fetchReactions(channel, gen, historyDone);
   }
 
   /**
@@ -5397,13 +5453,27 @@ export class MqttChatStore {
       });
     }
 
-    // Ignore our own broadcasts on the DIRECT-APPLY path: the optimistic update
-    // already wrote self into ``users``. (The hydration replay path above does
-    // NOT skip self — it rebuilds from the authoritative snapshot.)
-    if (actorKey === this.userProfile.key) return;
-
     const target = this.messages.find(m => m.id === msg.message_id);
     if (!target) return;
+
+    // Our own broadcasts on the DIRECT-APPLY path are normally a no-op: the
+    // optimistic update already wrote self into ``users`` (skipping avoids a
+    // double count / flip-flop on rapid toggles). EXCEPTION (M-2): a hydration
+    // reconcile that lands BETWEEN our optimistic write and this echo rebuilds
+    // ``users`` from a server snapshot taken before our toggle, wiping the
+    // optimistic self entry. The echo is then the only signal that can restore
+    // it, so re-assert self whenever the echo's terminal state DISAGREES with
+    // what we currently render. ``#applyReactionUser`` is idempotent, so this
+    // stays a no-op in the normal already-consistent case.
+    if (actorKey === this.userProfile.key) {
+      const entry = (target.reactions || []).find(r => r.emoji === msg.emoji);
+      const selfPresent = !!entry && (entry.users || []).includes(actorKey);
+      const wantsPresent = op === 'add';
+      if (wantsPresent !== selfPresent) {
+        this.#applyReactionUser(target, msg.emoji, actorKey, op);
+      }
+      return;
+    }
 
     this.#applyReactionUser(target, msg.emoji, actorKey, op);
   }
