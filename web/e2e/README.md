@@ -24,18 +24,18 @@ but are NOT picked up by `playwright.config.js` (testDir is `./e2e/scenarios`).
 ## Run the suite
 
 ```bash
-# IMPORTANT: stop any running dev daemon first (MQTT ports collide).
-claude-comms stop
-
 cd web
 pnpm playwright install chromium    # one-time per machine
-pnpm playwright test                # run every scenario
+pnpm playwright test                # run every scenario (parallel: one worker per spec file)
 pnpm playwright test scenarios/01   # just the reference scenario
 PLAYWRIGHT_HEADED=1 pnpm playwright test  # see the browser
 ```
 
-The fixture preflight-checks ports 1883 / 9001 / 9930 / 9931 (slot 0); if any
-are occupied the test throws a clear error before spawning a daemon.
+Every daemon port is slot-scoped, so spec files run side by side on separate
+workers and there is no longer any conflict with Phil's dev daemon (which lives
+on 9920/9921/1883/9001 — a different range). The fixture preflight-checks the
+slot's four ports (mcp/web/broker-tcp/broker-ws) before spawning; if any are
+occupied (a stale e2e daemon) it throws a clear error.
 
 ## Regenerate baselines
 
@@ -49,12 +49,36 @@ pnpm playwright test --update-snapshots
 Inspect the diff in `web/e2e/__screenshots__/` before committing. Each scenario
 owns its own baselines; check that you only changed what you meant to change.
 
+### CI-matching baselines
+
+Baselines committed from a local machine (WSL2 fonts) drift from GitHub's
+runner render (different font anti-aliasing), so a local `--update-snapshots`
+baseline can diff a few percent on CI. To regenerate baselines that MATCH the
+CI runner, run the `E2E visual smoke` workflow on your branch with the
+`update_baselines` input set to `true`:
+
+```bash
+gh workflow run ci.yml --ref <your-branch> -f update_baselines=true
+```
+
+The job runs `playwright test --grep "screenshot:" --update-snapshots` on
+`ubuntu-latest` and commits the regenerated `*-linux.png` baselines back to the
+branch. Tolerance is a uniform 2% (`maxDiffPixelRatio: 0.02`, see
+`fixtures/screenshot.ts`) which absorbs residual sub-2% AA noise once baselines
+are CI-matched. The visual job does NOT run on push/PR (it never blocked merge,
+and off-CI baselines made it perpetually red); it is on-demand only.
+
 ## Architecture (per `.worklogs/v043-e2e-architecture.md`)
 
 - **Option B per-test-file daemon.** Each `NN-name.spec.ts` file gets a fresh
-  daemon on a port-slot derived from its `NN` prefix. Slot 0 = ports 9930/9931
-  (MCP/web) + 1893/9011 (MQTT TCP/WS). Slot 1 = +10 on each. Plenty of headroom
-  before colliding with Phil's dev daemon on 9920/9921/1883/9001.
+  daemon on a port-slot derived from its `NN` prefix. Slot N = ports
+  `mcp=9930+N*10`, `web=9931+N*10`, `broker-tcp=9932+N*10`, `broker-ws=9933+N*10`
+  (see `fixtures/daemon.ts` `portsForSlot`). Every port is slot-scoped, so N
+  daemons run concurrently with full isolation. The browser never touches the
+  broker WS port: single-origin (PRs #23-26) bridges the broker onto the daemon's
+  own web port at `/mqtt` (`broker_ws_same_origin: true` via /api/capabilities),
+  so the client connects to `ws://<page-host>:<web-port>/mqtt`. The slot's
+  broker TCP/WS ports exist only for the daemon's own + non-web MQTT clients.
 
 - **Isolated $HOME.** The CLI doesn't expose `--data-dir` or `--port-mcp` flags.
   Instead, we spawn the daemon with `HOME=/tmp/cc-e2e-<random>` so every
@@ -102,22 +126,20 @@ owns its own baselines; check that you only changed what you meant to change.
 
 ## Troubleshooting
 
-- **`E2E port 1883/9001 is already in use`** — your dev daemon is running.
-  `claude-comms stop` before E2E. The web UI hardcodes `ws://localhost:9001/mqtt`
-  so we cannot reassign these ports; lifting that requires a client-side
-  refactor.
-
-- **`E2E port 9930/9931 is already in use`** — a previous e2e daemon didn't
-  clean up. `pkill -f 'claude-comms start'` and re-run.
+- **`E2E port <port> (slot N) is already in use`** — a previous e2e daemon
+  didn't clean up its slot. `pkill -f 'claude-comms start'` and re-run. (The
+  old "stop your dev daemon, MQTT ports are pinned to 1883/9001" caveat is gone:
+  all ports are slot-scoped now, so the dev daemon no longer collides.)
 
 - **`Daemon failed to emit "Daemon running"`** — usually means the daemon
   crashed during startup. The error message includes the last 30 log lines;
   check for missing dependencies (`pip install -e .` if running from source)
   or invalid config.yaml syntax.
 
-- **Screenshot diff in CI but not locally** — fonts likely differ. Phil's WSL2
-  uses one font set, GitHub Actions uses another. v0.4.3 ships baselines
-  generated on Phil's machine; CI tuning is deferred to v0.4.4.
+- **Screenshot diff in CI but not locally** — fonts differ (WSL2 vs GitHub
+  Actions render). Regenerate CI-matching baselines via the on-demand visual
+  workflow (see "CI-matching baselines" above) rather than committing local
+  baselines. Tolerance is a uniform 2% (`maxDiffPixelRatio: 0.02`).
 
 - **`expect(consoleErrors).toEqual([])` fails** — read the failure message; it
   prints every collected error. Network 4xx/5xx during static asset load gets

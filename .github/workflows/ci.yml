@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # On-demand visual-smoke run. With update_baselines=true the visual job
+  # regenerates the screenshot baselines ON THE CI RUNNER (so they match
+  # GitHub's font render) and commits them back to the triggering branch.
+  workflow_dispatch:
+    inputs:
+      update_baselines:
+        description: "Regenerate screenshot baselines on the CI runner and commit them back to this branch"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -113,15 +122,23 @@ jobs:
           path: web/test-results/
           retention-days: 7
 
-  # Non-blocking visual smoke: runs the ~29 screenshot tests WITH snapshot
-  # comparison. continue-on-error keeps it from reding the build (pixel
-  # baselines flake run-to-run on CI, audit W-6/W-7); it exists to surface
-  # visual diffs for manual review via the uploaded artifact. The blocking
-  # behavioral gate is the test-e2e job above.
+  # On-demand visual smoke. This does NOT run on push/PR: screenshot baselines
+  # are font-render-sensitive, so baselines committed off-CI flake run-to-run on
+  # GitHub's runner (audit W-6/W-7) and the job was perpetually red while never
+  # blocking merge. The blocking gate is the behavioral test-e2e job above
+  # (which runs with --ignore-snapshots). Trigger this via the Actions
+  # "Run workflow" button (workflow_dispatch):
+  #   - update_baselines=false → compare against committed baselines (uniform 2%
+  #     tolerance) and upload diffs for review.
+  #   - update_baselines=true  → regenerate the *-linux.png baselines ON THE CI
+  #     RUNNER and commit them back to the triggering branch, so they match
+  #     GitHub's font render. See web/e2e/README.md "CI-matching baselines".
   test-e2e-visual:
-    name: E2E visual smoke (non-blocking)
+    name: E2E visual smoke (on-demand)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    continue-on-error: true
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
 
@@ -152,11 +169,33 @@ jobs:
         working-directory: web
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run screenshot tests (visual smoke)
+      - name: Compare screenshots (visual smoke)
+        if: ${{ !inputs.update_baselines }}
         working-directory: web
         env:
           CC_E2E_PYTHONPATH: ${{ github.workspace }}/src
         run: pnpm exec playwright test --grep "screenshot:"
+
+      - name: Regenerate baselines on the CI runner
+        if: ${{ inputs.update_baselines }}
+        working-directory: web
+        env:
+          CC_E2E_PYTHONPATH: ${{ github.workspace }}/src
+        run: pnpm exec playwright test --grep "screenshot:" --update-snapshots
+
+      - name: Commit regenerated baselines
+        if: ${{ inputs.update_baselines }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/e2e/__screenshots__
+          if git diff --cached --quiet; then
+            echo "No baseline changes to commit."
+          else
+            git commit -m "Regenerate E2E screenshot baselines on CI runner [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
 
       - name: Upload visual diffs
         if: always()

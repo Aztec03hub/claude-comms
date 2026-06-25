@@ -15,7 +15,19 @@ import { Page, Locator, expect } from '@playwright/test';
 export interface SnapshotOptions {
   /** Additional selectors to mask (added to the time-dependent defaults). */
   extraMask?: string[];
-  /** Allowed pixel diff. Defaults to 500 to match playwright.config.js. */
+  /**
+   * Allowed RATIO of differing pixels (0..1). Defaults to 0.02 (2%) — a
+   * size-independent tolerance that absorbs sub-2% run-to-run anti-aliasing
+   * noise once baselines are CI-matched. Prefer this over a fixed pixel count
+   * so a large full-page capture and a small element capture get the same
+   * proportional slack. See playwright.config.js note on Math.min.
+   */
+  maxDiffPixelRatio?: number;
+  /**
+   * Allowed absolute pixel diff. Optional override for a specific capture. When
+   * set ALONGSIDE the ratio, Playwright uses the STRICTER of the two
+   * (Math.min), so only pass this to TIGHTEN a particular snapshot.
+   */
   maxDiffPixels?: number;
   /** Snapshot file name (without extension). */
   name?: string;
@@ -56,11 +68,16 @@ export async function expectScreenshot(
 
   const screenshotOptions = {
     mask,
-    // Default 500: small element captures (e.g. the chat header) diff by a
-    // couple hundred px of icon/font anti-aliasing run-to-run on CI (audit
-    // W-6/W-7). Behavioral testids gate element presence; this is a visual
-    // smoke. Real layout/content regressions far exceed 500px.
-    maxDiffPixels: options.maxDiffPixels ?? 500,
+    // Size-independent 2% tolerance by default: element + full-page captures
+    // diff by icon/font anti-aliasing run-to-run on CI (audit W-6/W-7). A
+    // ratio (not a fixed px count) keeps the slack proportional so a large
+    // capture isn't held to the same absolute budget as a small one. Behavioral
+    // testids gate element presence; this is a visual smoke. Real layout/content
+    // regressions far exceed 2%. NOTE: Playwright takes Math.min when BOTH a
+    // ratio and an absolute count are set, so we only forward maxDiffPixels
+    // when a caller explicitly passes one (to TIGHTEN a specific snapshot).
+    maxDiffPixelRatio: options.maxDiffPixelRatio ?? 0.02,
+    ...(options.maxDiffPixels !== undefined ? { maxDiffPixels: options.maxDiffPixels } : {}),
     fullPage: options.fullPage ?? true,
     animations: 'disabled' as const,
     caret: 'hide' as const,
