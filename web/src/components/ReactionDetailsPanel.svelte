@@ -9,11 +9,11 @@
     of reactors (resolved names; "You" for self, in natural server insertion
     order). Clicking a different emoji re-filters the user list.
 
-    Rendered TOP-LAYER via the ``portal()`` attachment so it escapes ancestor
-    ``backdrop-filter`` stacking contexts (side panels), positioned ``fixed``
-    from the anchor pill's ``getBoundingClientRect()`` with ``z-index >= 250``
-    (ContextMenu uses 200). Closes on Esc, outside-click, or when its last
-    emoji is removed; if the selected emoji vanishes it falls back to the next.
+    Rendered in the browser native TOP LAYER via ``use:topLayer`` (Popover
+    API) so it escapes ancestor ``backdrop-filter`` stacking contexts (side
+    panels) with NO portal and NO z-index; anchored to the pill's
+    ``getBoundingClientRect()``. Closes on Esc, outside-click, or when its
+    last emoji is removed; if the selected emoji vanishes it falls to the next.
 
   @prop {Array} reactions - Live reaction objects { emoji, count, active,
     users[] } for the message. Reactive — live add/remove updates the open view.
@@ -26,7 +26,7 @@
 -->
 <script>
   import { tick, onMount } from 'svelte';
-  import { portal } from '../lib/portal.js';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     reactions = [],
@@ -92,23 +92,13 @@
     return isSelf ? 'You' : name;
   }
 
-  // ── Positioning (fixed, from the anchor rect; clamped to the viewport) ──
-  const PANEL_W = 280;
-  const GAP = 8;
-  const pos = $derived.by(() => {
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
-    const rect = anchorRect ?? { left: 0, bottom: 0, top: 0 };
-    let left = rect.left ?? 0;
-    if (left + PANEL_W > vw) left = Math.max(8, vw - PANEL_W - 8);
-    // Prefer below the pill; flip above if it would overflow the viewport.
-    let top = (rect.bottom ?? 0) + GAP;
-    const estH = 260;
-    if (top + estH > vh && (rect.top ?? 0) - GAP - estH >= 0) {
-      top = (rect.top ?? 0) - GAP - estH;
-    }
-    return { left, top };
-  });
+  // ── Positioning (Overlay overhaul Phase 2) ──
+  // Delegated to `use:topLayer`, which promotes the panel into the browser
+  // native top layer (Popover API) anchored to the pill's rect and clamps
+  // to the viewport - escaping the side panels' backdrop-filter stacking
+  // contexts with no portal and no z-index. `anchorRect` is a viewport-coords
+  // rect ({left, top, right, bottom}) supplied by the opener.
+  const anchorGetter = () => anchorRect ?? null;
 
   // ── Focus management + outside-click / Esc ──
   $effect(() => {
@@ -177,10 +167,16 @@
   aria-modal="true"
   aria-label="Who reacted"
   tabindex="-1"
-  style:left="{pos.left}px"
-  style:top="{pos.top}px"
   onkeydown={handleKeydown}
-  {@attach portal()}
+  use:topLayer={{
+    anchor: anchorGetter,
+    placement: 'bottom-start',
+    offset: 8,
+    dismiss: 'auto',
+    trapInitialFocus: false,
+    restoreFocus: false,
+    onClose,
+  }}
 >
   <div class="emoji-list" role="tablist" aria-label="Reactions">
     {#each reactions as reaction, i (reaction.emoji)}
@@ -228,8 +224,8 @@
 
 <style>
   .reaction-details {
-    position: fixed;
-    z-index: 250;
+    /* Position + top-layer promotion are owned by `use:topLayer`; no
+       manual position:fixed or z-index - the native top layer wins. */
     width: 280px;
     max-height: 320px;
     display: flex;

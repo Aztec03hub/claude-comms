@@ -4,7 +4,9 @@
 //   - emoji rows render with counts; selecting a different emoji re-filters
 //     the user list
 //   - reactor names resolve ("You" for self) in natural insertion order
-//   - portaled to <body> with position:fixed + z-index >= 250
+//   - promoted into the browser native top layer via use:topLayer
+//     (position:fixed set by the action, anchored from the rect; no portal,
+//     no z-index)
 //   - Escape closes; outside-click closes
 //   - when the selected emoji vanishes (live removal) it falls to the next;
 //     when all emoji vanish the panel closes
@@ -32,7 +34,7 @@ function anchorRect() {
 afterEach(() => cleanup());
 
 describe('ReactionDetailsPanel', () => {
-  it('portals to <body> and positions from the anchor rect', async () => {
+  it('promotes to the top layer and positions from the anchor rect', async () => {
     render(ReactionDetailsPanel, {
       props: {
         reactions: [reaction('👍', ['bbbbbbbb'])],
@@ -44,13 +46,13 @@ describe('ReactionDetailsPanel', () => {
     await tick();
     const panel = document.body.querySelector('.reaction-details');
     expect(panel).toBeTruthy();
-    // The portal is the actual stacking-context fix: the panel is lifted out
-    // of the component tree to <body> so its (source) z-index:250 / fixed
-    // positioning applies against the page, above the side panels.
-    expect(panel.parentElement).toBe(document.body);
     expect(panel.getAttribute('role')).toBe('dialog');
-    // Positioned from the anchor rect via inline left/top (fixed coords):
-    // anchor.left=100 → left:100px; anchor.bottom=120 + 8px gap → top:128px.
+    // The stacking-context fix is now the browser native top layer
+    // (use:topLayer / Popover API), not a portal + hardcoded z-index. The
+    // action positions the panel with `position: fixed` and anchored coords
+    // (it runs the rect math even under jsdom, where showPopover is a no-op).
+    expect(panel.style.position).toBe('fixed');
+    // anchor.left=100 → left:100px; anchor.bottom=120 + 8px offset → top:128px.
     expect(panel.style.left).toBe('100px');
     expect(panel.style.top).toBe('128px');
   });

@@ -1,42 +1,32 @@
-// v0.4.4 hotfix - context menu top-layer regression coverage.
+// Context menu top-layer coverage (Overlay overhaul, Phase 2).
 //
-// Phil's Layer B real-browser pass against v0.4.3 caught that right-click
-// menus (MemberContextMenu + ChannelContextMenu) rendered BEHIND other
-// elements on screen. Root cause: the right-side panels (ArtifactPanel,
-// ThreadPanel, SearchPanel, SettingsPanel) all set ``backdrop-filter``
-// which establishes a new stacking context per CSS Containment Module
-// Level 1. A ``position: fixed; z-index: 250`` declared INSIDE the
-// sidebar component (whose ancestor chain ends at ``.app-layout``) can
-// NOT escape that stacking context - it's painted in document order
-// against its siblings. The right-side panels then render OVER it
-// because they appear later in the DOM tree under ``.app-layout``.
+// HISTORY: Phil's Layer B real-browser pass against v0.4.3 caught that
+// right-click menus (MemberContextMenu + ChannelContextMenu) rendered
+// BEHIND other elements because the right-side panels (ArtifactPanel,
+// ThreadPanel, SearchPanel, SettingsPanel) set ``backdrop-filter`` which
+// establishes a new stacking context that a ``position: fixed; z-index``
+// element declared inside ``.app-layout`` cannot escape. The v0.4.4 fix
+// was a portal into ``document.body`` + ``z-index: 9999``.
 //
-// Why automated Playwright E2E missed this (W-8 anti-pattern per the
-// v0.4.4 iteration log): ``expect(locator).toBeVisible()`` only checks
-// ``display``/``opacity``/``visibility``/in-viewport. Does NOT check
-// z-stacking. A menu rendered BEHIND another element passes
-// ``.toBeVisible()`` cleanly.
+// PHASE 2 SUPERSEDES THAT FIX: both menus now use ``use:topLayer`` (the
+// Popover API), which promotes them into the browser native TOP LAYER -
+// a layer that paints above EVERY stacking context with no portal and no
+// z-index at all. The old portal + ``z-index: 9999`` constants are gone,
+// so this suite no longer pins them (it would otherwise go red).
 //
-// The v0.4.4 fix is two-pronged:
-//   (a) Portal the menu element into ``document.body`` via the new
-//       ``{@attach portal()}`` attachment so it escapes any ancestor
-//       stacking context entirely.
-//   (b) Bump the z-index to ``9999`` so it paints above every other
-//       layer in the app. Either fix in isolation is fragile; both
-//       together guarantee top-layer paint.
-//
-// This suite pins:
-//   1. After mount, both MemberContextMenu and ChannelContextMenu have
-//      their root element as a DIRECT child of ``document.body`` (i.e.
-//      the portal moved them).
-//   2. The element's computed ``z-index`` is the new high-value
-//      (9999) - source-level regex pin so a future refactor that drops
-//      the bump fails the suite.
-//   3. The portal attachment removes the element on unmount (no leftover
-//      DOM under <body>).
+// What this suite now pins (jsdom-safe; the real "painted on top" check
+// lives in Playwright e2e/scenarios/14-overlay-top-layer.spec.ts):
+//   1. Both menus still MOUNT when invoked and render their items.
+//   2. Outside-click (window mousedown) still closes them - the component
+//      keeps that handler so behaviour holds even where the browser's
+//      native popover light-dismiss is unavailable (jsdom).
+//   3. Unmounting removes the element (no leftover DOM).
+//   4. SOURCE invariants: each menu references ``use:topLayer``, no longer
+//      references ``{@attach portal()}``, and carries NO bare z-index
+//      (ChannelContextMenu wires TWO ``use:topLayer`` - menu + submenu).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -93,7 +83,7 @@ function channelProps(overrides = {}) {
   };
 }
 
-describe('Context menus - v0.4.4 hotfix top-layer paint', () => {
+describe('Context menus - top-layer via use:topLayer (Phase 2)', () => {
   beforeEach(() => {
     apiGetMock.mockReset();
     mcpCallMock.mockReset();
@@ -101,7 +91,7 @@ describe('Context menus - v0.4.4 hotfix top-layer paint', () => {
 
   afterEach(() => {
     cleanup();
-    // Defensive: clear any leftover portal nodes between tests.
+    // Defensive: clear any leftover menu nodes between tests.
     document
       .querySelectorAll('[data-testid="member-ctx-menu"]')
       .forEach((el) => el.remove());
@@ -110,24 +100,38 @@ describe('Context menus - v0.4.4 hotfix top-layer paint', () => {
       .forEach((el) => el.remove());
   });
 
-  it('MemberContextMenu portals its root into document.body (escapes stacking context)', () => {
+  it('MemberContextMenu mounts and renders its action items', () => {
     render(MemberContextMenu, memberProps());
     const menu = document.querySelector('[data-testid="member-ctx-menu"]');
     expect(menu).not.toBeNull();
-    // The portal attachment moves the element so its parent IS the body.
-    // Without the portal, the parent would be the test container element
-    // that @testing-library/svelte mounts under (typically a div under body).
-    expect(menu.parentNode).toBe(document.body);
+    expect(menu.getAttribute('role')).toBe('menu');
+    // At least one menuitem rendered (mute is always available).
+    expect(menu.querySelectorAll('[role="menuitem"]').length).toBeGreaterThan(0);
   });
 
-  it('ChannelContextMenu portals its root into document.body', () => {
+  it('ChannelContextMenu mounts and renders its action items', () => {
     render(ChannelContextMenu, channelProps());
     const menu = document.querySelector('[data-testid="channel-ctx-menu"]');
     expect(menu).not.toBeNull();
-    expect(menu.parentNode).toBe(document.body);
+    expect(menu.getAttribute('role')).toBe('menu');
+    expect(menu.querySelectorAll('[role="menuitem"]').length).toBeGreaterThan(0);
   });
 
-  it('MemberContextMenu portal cleanup removes the element on unmount', () => {
+  it('MemberContextMenu closes on outside-click (window mousedown) - retained handler', async () => {
+    const onClose = vi.fn();
+    render(MemberContextMenu, memberProps({ onClose }));
+    await fireEvent.mouseDown(document.body);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('ChannelContextMenu closes on outside-click (window mousedown) - retained handler', async () => {
+    const onClose = vi.fn();
+    render(ChannelContextMenu, channelProps({ onClose }));
+    await fireEvent.mouseDown(document.body);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('MemberContextMenu removes its element on unmount (no leftover DOM)', () => {
     const { unmount } = render(MemberContextMenu, memberProps());
     expect(
       document.querySelector('[data-testid="member-ctx-menu"]'),
@@ -138,7 +142,7 @@ describe('Context menus - v0.4.4 hotfix top-layer paint', () => {
     ).toBeNull();
   });
 
-  it('ChannelContextMenu portal cleanup removes the element on unmount', () => {
+  it('ChannelContextMenu removes its element on unmount (no leftover DOM)', () => {
     const { unmount } = render(ChannelContextMenu, channelProps());
     expect(
       document.querySelector('[data-testid="channel-ctx-menu"]'),
@@ -149,51 +153,26 @@ describe('Context menus - v0.4.4 hotfix top-layer paint', () => {
     ).toBeNull();
   });
 
-  it('source-level pin: MemberContextMenu CSS sets z-index 9999 (top-layer)', () => {
-    // P-1 source regex pin (W-8 mitigation per v0.4.4 iteration log).
-    // Bites at edit time so a future refactor cannot drop the z-index
-    // back to 250 and silently re-introduce the stacking-context bug.
+  it('source invariant: MemberContextMenu uses use:topLayer, no portal, no bare z-index', () => {
+    // Supersedes the old z-index:9999 + {@attach portal()} pins (W-8). Bites
+    // at edit time so a regression back to portal/hardcoded-index fails here.
     const HERE = dirname(fileURLToPath(import.meta.url));
-    const SRC = resolve(
-      HERE,
-      '..',
-      'src',
-      'components',
-      'MemberContextMenu.svelte',
-    );
+    const SRC = resolve(HERE, '..', 'src', 'components', 'MemberContextMenu.svelte');
     const src = readFileSync(SRC, 'utf8');
-    // The .member-ctx-menu CSS rule must set z-index: 9999.
-    expect(src).toMatch(/\.member-ctx-menu\s*\{[\s\S]*?z-index:\s*9999/);
-    // And the template must apply the portal attachment.
-    expect(src).toMatch(/\{@attach portal\(\)\}/);
+    expect(src).toMatch(/use:topLayer/);
+    expect(src).not.toMatch(/@attach portal\(\)/);
+    // No bare numeric z-index anywhere (the top layer needs none).
+    expect(src).not.toMatch(/z-index:\s*\d/);
   });
 
-  it('source-level pin: ChannelContextMenu CSS sets z-index 9999 + applies portal attachment', () => {
+  it('source invariant: ChannelContextMenu wires TWO use:topLayer (menu + submenu), no portal, no bare z-index', () => {
     const HERE = dirname(fileURLToPath(import.meta.url));
-    const SRC = resolve(
-      HERE,
-      '..',
-      'src',
-      'components',
-      'ChannelContextMenu.svelte',
-    );
+    const SRC = resolve(HERE, '..', 'src', 'components', 'ChannelContextMenu.svelte');
     const src = readFileSync(SRC, 'utf8');
-    expect(src).toMatch(/\.channel-ctx-menu\s*\{[\s\S]*?z-index:\s*9999/);
-    // Template must apply portal - the submenu uses the same
-    // attachment so we expect at least 2 occurrences.
-    const matches = src.match(/\{@attach portal\(\)\}/g) ?? [];
+    // Menu + nested submenu each get their own top-layer promotion (design §F.8).
+    const matches = src.match(/use:topLayer/g) ?? [];
     expect(matches.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('portal helper exists at the shared lib path', () => {
-    // Compile-time sanity: importing the module yields a function with
-    // the documented shape (no SSR throw; returns an attachment that
-    // accepts a node).
-    const portalLibPath = '../src/lib/portal.js';
-    return import(portalLibPath).then((mod) => {
-      expect(typeof mod.portal).toBe('function');
-      const attachment = mod.portal();
-      expect(typeof attachment).toBe('function');
-    });
+    expect(src).not.toMatch(/@attach portal\(\)/);
+    expect(src).not.toMatch(/z-index:\s*\d/);
   });
 });

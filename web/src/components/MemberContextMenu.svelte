@@ -52,9 +52,8 @@
     Escape, or after any action fires.
 -->
 <script>
-  import { tick } from 'svelte';
   import { UserX, BellOff, Bell, MessageSquare } from 'lucide-svelte';
-  import { portal } from '../lib/portal.js';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     member,
@@ -124,41 +123,29 @@
   });
 
   // -----------------------------------------------------------------
-  // Position state. Default to the supplied cursor coords; once the
-  // menu element mounts, the $effect below measures its rect and
-  // flips up / left if it would overflow the viewport. Mount /
-  // unmount per right-click in the parent so a stale anchor cannot
-  // persist between menu instances.
+  // Positioning is delegated to `use:topLayer` (Overlay overhaul, Phase
+  // 2): the menu is promoted into the browser native top layer (Popover
+  // API) anchored to the cursor coords, so it escapes EVERY ancestor
+  // stacking context (the backdrop-filter panels that used to trap it) -
+  // no portal, no manual z-index, no manual flip math (the action clamps
+  // to the viewport). Mount / unmount per right-click in the parent.
   // -----------------------------------------------------------------
-  let menuX = $state(0);
-  let menuY = $state(0);
   let menuEl = $state(/** @type {HTMLElement | null} */ (null));
   let activeIndex = $state(0);
 
-  let positioned = false;
+  // Cursor rect for the anchor: a zero-size rect at (x, y).
+  const anchorRect = () =>
+    typeof DOMRect !== 'undefined' ? new DOMRect(x, y, 0, 0) : null;
+
+  // Focus the first menuitem on mount so ArrowUp/ArrowDown nav works
+  // immediately (the topLayer action's own initial-focus is disabled via
+  // trapInitialFocus:false so it does not fight this).
+  let focused = false;
   $effect(() => {
-    if (!menuEl || positioned) return;
-    positioned = true;
-
-    const rect = menuEl.getBoundingClientRect();
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
-
-    let nextY = y;
-    if (y + rect.height > vh && y - rect.height >= 0) {
-      nextY = Math.max(0, y - rect.height);
-    }
-    let nextX = x;
-    if (x + rect.width > vw && x - rect.width >= 0) {
-      nextX = Math.max(0, x - rect.width);
-    }
-    menuX = nextX;
-    menuY = nextY;
-
-    tick().then(() => {
-      const first = menuEl?.querySelector('[role="menuitem"]');
-      if (first instanceof HTMLElement) first.focus();
-    });
+    if (!menuEl || focused) return;
+    focused = true;
+    const first = menuEl.querySelector('[role="menuitem"]');
+    if (first instanceof HTMLElement) first.focus();
   });
 
   function handleWindowMouseDown(event) {
@@ -229,15 +216,12 @@
 />
 
 <!--
-  v0.4.4 hotfix (Bug 1 + Bug 4): the menu ALWAYS mounts when invoked so
-  users get visible feedback (Bug 4); it is portaled into ``document.body``
-  via the ``portal`` attachment so it escapes any ancestor stacking context
-  (the right-side ArtifactPanel / ThreadPanel / SearchPanel / SettingsPanel
-  all use ``backdrop-filter`` which creates a new stacking context that a
-  ``position: fixed`` element declared INSIDE the sidebar cannot escape via
-  z-index alone). The portal lifts the menu out of ``.app-layout``
-  entirely; combined with ``z-index: 9999`` the menu paints above every
-  other UI surface (Bug 1).
+  Overlay overhaul Phase 2 (supersedes the v0.4.4 portal+z9999 fix): the
+  menu ALWAYS mounts when invoked so users get visible feedback (Bug 4),
+  and `use:topLayer` promotes it into the browser native top layer
+  (Popover API, light-dismiss) anchored to the cursor. The top layer
+  escapes EVERY ancestor stacking context (the backdrop-filter panels that
+  trapped it), so no portal and no z-index are needed (Bug 1).
 -->
 <div
   bind:this={menuEl}
@@ -245,10 +229,15 @@
   role="menu"
   tabindex="-1"
   data-testid="member-ctx-menu"
-  style:left="{menuX}px"
-  style:top="{menuY}px"
   onkeydown={handleMenuKeydown}
-  {@attach portal()}
+  use:topLayer={{
+    anchor: anchorRect,
+    placement: 'bottom-start',
+    offset: 0,
+    dismiss: 'auto',
+    trapInitialFocus: false,
+    onClose,
+  }}
 >
   {#each items as item, idx (item.id)}
     <button
@@ -293,13 +282,9 @@
 
 <style>
   .member-ctx-menu {
-    position: fixed;
-    /* v0.4.4 hotfix (Bug 1): max-out z-index above every other layer
-       in the app. Used alongside the {@attach portal()} relocation
-       which lifts the element to <body>, escaping any ancestor
-       stacking context. Either fix in isolation is fragile; both
-       together guarantee top-layer paint. */
-    z-index: 9999;
+    /* Position + top-layer promotion are owned by `use:topLayer` (it sets
+       position:fixed + left/top inline and calls showPopover()); no manual
+       z-index - the native top layer always paints above the app. */
     min-width: 200px;
     background: rgba(37, 37, 40, 0.96);
     backdrop-filter: blur(20px) saturate(1.2);
