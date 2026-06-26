@@ -8,16 +8,30 @@
 -->
 <script>
   import { X, Forward } from 'lucide-svelte';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let { channels = [], currentChannel = '', onSelect, onClose } = $props();
 
   let filteredChannels = $derived(
     channels.filter(c => c.id !== currentChannel)
   );
+
+  function handleBackdropMousedown(e) {
+    // Native <dialog> backdrop mousedown (target === currentTarget).
+    if (e.target === e.currentTarget) onClose?.();
+  }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="forward-overlay" onmousedown={onClose}>
+<!--
+  Overlay overhaul, Phase 2: native <dialog> via use:topLayer (showModal,
+  ::backdrop, inert) - no position:fixed, no z-index. Escape -> action
+  onClose; backdrop mousedown also dismisses.
+-->
+<dialog
+  class="forward-overlay"
+  use:topLayer={{ modal: true, trapInitialFocus: false, restoreFocus: false, onClose }}
+  onmousedown={handleBackdropMousedown}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="forward-picker" onmousedown={(e) => e.stopPropagation()}>
     <div class="forward-header">
@@ -45,17 +59,21 @@
       {/if}
     </div>
   </div>
-</div>
+</dialog>
 
 <style>
   .forward-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
+    margin: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: 100vw;
+    max-height: 100vh;
+    overflow: visible;
+  }
+
+  .forward-overlay::backdrop {
     background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     animation: fadeIn 0.15s ease;
   }
 

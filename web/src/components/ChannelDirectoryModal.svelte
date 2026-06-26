@@ -33,6 +33,7 @@
   import { X, Search } from 'lucide-svelte';
   import ConversationBrowser from './ConversationBrowser.svelte';
   import ChannelAdminPanel from './ChannelAdminPanel.svelte';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     store,
@@ -160,8 +161,10 @@
     close();
   }
 
-  function handleOverlayClick() {
-    close();
+  function handleOverlayClick(e) {
+    // Native <dialog> backdrop click (target === currentTarget). Content
+    // clicks are stopped by handleContentClick.
+    if (e.target === e.currentTarget) close();
   }
 
   function handleContentClick(e) {
@@ -174,12 +177,8 @@
    * @param {KeyboardEvent} e
    */
   function handleDialogKeydown(e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-      return;
-    }
+    // Escape is owned by the `topLayer` action (onClose); only the Tab trap
+    // lives here.
     if (e.key === 'Tab') {
       if (!dialogEl) return;
       const focusables = /** @type {HTMLElement[]} */ (
@@ -246,12 +245,18 @@
 </script>
 
 {#if open}
-  <div
+  <!--
+    Overlay overhaul, Phase 2: native <dialog> via use:topLayer (showModal,
+    ::backdrop, focus-trap, inert) - no portal, no position:fixed, no
+    z-index. The action capability-guards for jsdom; the component keeps its
+    own focus + Tab trap + overlay-click. Escape -> action onClose.
+  -->
+  <dialog
     class="directory-overlay"
     data-testid="channel-directory-overlay"
+    use:topLayer={{ modal: true, trapInitialFocus: false, restoreFocus: false, onClose: close }}
     onclick={handleOverlayClick}
     onkeydown={handleDialogKeydown}
-    role="presentation"
   >
     <div
       bind:this={dialogEl}
@@ -392,19 +397,23 @@
         </div>
       {/if}
     </div>
-  </div>
+  </dialog>
 {/if}
 
 <style>
   .directory-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
+    margin: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: 100vw;
+    max-height: 100vh;
+    overflow: visible;
+  }
+
+  .directory-overlay::backdrop {
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     animation: overlayIn 0.2s ease both;
   }
 

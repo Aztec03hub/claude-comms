@@ -46,6 +46,7 @@
 <script>
   import { tick } from 'svelte';
   import { X, Search, UserPlus } from 'lucide-svelte';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     channel,
@@ -136,12 +137,8 @@
   });
 
   function handleDialogKeydown(e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      onCancel?.();
-      return;
-    }
+    // Escape is owned by the `topLayer` action (onClose); only the Tab trap
+    // lives here.
     if (e.key !== 'Tab') return;
     if (!dialogEl) return;
     const focusables = /** @type {HTMLElement[]} */ (
@@ -210,16 +207,17 @@
 </script>
 
 <!--
-  Overlay + dialog content. Sibling structure (no portal) so tests
-  mount + observe with @testing-library/svelte queries without portal
-  escape hatches.
+  Overlay overhaul, Phase 2: native <dialog> via use:topLayer (showModal,
+  ::backdrop, focus-trap, inert) - no portal, no position:fixed, no
+  z-index. The action capability-guards for jsdom; the component keeps its
+  own focus management + Tab trap + overlay-click. Escape -> action onClose.
 -->
-<div
+<dialog
   class="invite-overlay"
   data-testid="invite-dialog-overlay"
+  use:topLayer={{ modal: true, trapInitialFocus: false, restoreFocus: false, onClose: onCancel }}
   onclick={handleOverlayClick}
   onkeydown={handleDialogKeydown}
-  role="presentation"
 >
   <div
     bind:this={dialogEl}
@@ -351,18 +349,22 @@
       </button>
     </div>
   </div>
-</div>
+</dialog>
 
 <style>
   .invite-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 210;
+    margin: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: 100vw;
+    max-height: 100vh;
+    overflow: visible;
+  }
+
+  .invite-overlay::backdrop {
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     animation: overlayIn 0.18s ease both;
   }
 
