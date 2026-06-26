@@ -26,6 +26,7 @@
   import { Lock, AlertCircle } from 'lucide-svelte';
   import { formatTime, parseMentions, getParticipantColor } from '../lib/utils.js';
   import { parseRich as parseRichText } from '../lib/rich-text-parser.js';
+  import { isBroadcastMention } from '../lib/mentions.js';
 
   // URL regex for detecting links in message text
   const LINK_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
@@ -139,6 +140,22 @@
           const candidateName = mseg.value.startsWith('@')
             ? mseg.value.slice(1).toLowerCase()
             : mseg.value.toLowerCase();
+          // Broadcast `@all` / `@everyone`. There is no participant named
+          // `all`/`everyone` (reserved server-side) so it can't resolve via
+          // nameToKey — classify it directly. Only highlight when the message
+          // actually carries an active mentions list (the sender used the
+          // mention feature); otherwise a literal "@all" in plain prose stays
+          // text, matching the false-positive defense for "@example".
+          if (mentionsActive && isBroadcastMention(candidateName)) {
+            const broadcastName = mseg.value.startsWith('@') ? mseg.value.slice(1) : mseg.value;
+            const viewerTargeted = viewerKey !== null && mentionsSet.has(viewerKey);
+            if (viewerTargeted && !viewerIsSender) {
+              result.push({ type: 'mention-self', name: broadcastName, key: '__broadcast__' });
+            } else {
+              result.push({ type: 'mention-other', name: broadcastName, key: '__broadcast__' });
+            }
+            continue;
+          }
           const resolvedKey = nameToKey.get(candidateName);
           if (resolvedKey === undefined) {
             // Unknown participant — render as plain text (existing

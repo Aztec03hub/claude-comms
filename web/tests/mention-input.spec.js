@@ -139,11 +139,13 @@ describe('MessageInput @mention — dropdown trigger', () => {
     const ta = getByTestId('message-input');
     await typeText(ta, '@');
     const items = container.querySelectorAll('[role="option"]');
-    // alice + claude-test (online) come before bob (offline). Phil is self
-    // and excluded.
-    expect(items.length).toBe(3);
     const keys = Array.from(items).map((el) => el.id.split('mention-listbox-opt-')[1]);
-    expect(keys).toEqual(['alice-key', 'claude-test-key', 'bob-key']);
+    // The two synthetic broadcast rows lead the list on an empty query.
+    expect(keys.slice(0, 2)).toEqual(['__broadcast_all__', '__broadcast_everyone__']);
+    // Real participants follow: alice + claude-test (online) before bob
+    // (offline). Phil is self and excluded.
+    const realKeys = keys.filter((k) => !k.startsWith('__broadcast_'));
+    expect(realKeys).toEqual(['alice-key', 'claude-test-key', 'bob-key']);
   });
 });
 

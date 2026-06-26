@@ -31,6 +31,43 @@
 const MENTION_NAME_CHARS = /[\w.-]/;
 
 /**
+ * Broadcast mention tokens that expand to "everyone currently present" in the
+ * active channel. Mirrors the server-side set in
+ * `src/claude_comms/mention.py` (`BROADCAST_MENTION_TOKENS`). Matched
+ * case-insensitively, with or without a leading `@`. These names are reserved
+ * server-side (join/update_name reject them) so they can never collide with a
+ * real participant — the client therefore treats them as broadcast regardless.
+ */
+export const BROADCAST_MENTION_TOKENS = new Set(['all', 'everyone']);
+
+/**
+ * True if *token* is an `@all` / `@everyone` broadcast mention. Case-
+ * insensitive, tolerant of a leading `@` and surrounding whitespace.
+ *
+ * @param {string} token
+ * @returns {boolean}
+ */
+export function isBroadcastMention(token) {
+  if (typeof token !== 'string') return false;
+  return BROADCAST_MENTION_TOKENS.has(token.trim().replace(/^@+/, '').trim().toLowerCase());
+}
+
+/**
+ * Synthetic autocomplete candidates for the broadcast tokens. They are NOT
+ * real participants (no participant key) — `key` carries a sentinel only so
+ * the dropdown can build stable DOM ids and the commit pipeline has something
+ * to store on the token. The `broadcast` flag is the load-bearing marker:
+ * `commitMention` copies it onto the committed token and `expandMentions`
+ * uses it to fan the single `@all` token out to every present member at send
+ * time. Always surfaced at the TOP of the candidate list (see
+ * `filterCandidates`).
+ */
+const BROADCAST_CANDIDATES = [
+  { name: 'all', key: '__broadcast_all__', broadcast: true, online: false, hint: 'Everyone in this channel' },
+  { name: 'everyone', key: '__broadcast_everyone__', broadcast: true, online: false, hint: 'Everyone in this channel' },
+];
+
+/**
  * Regex matching an `@`-prefix at the END of a string. Captures the partial
  * name. Used during edit reconciliation to detect a live suggestion at the
  * cursor.
@@ -206,17 +243,26 @@ export function parseMentions(text, prevTokens, oldText, oldCursor, newCursor) {
  *   - Sort: online first (any non-empty `connections`), then alpha by name.
  *   - Cap at 7 candidates (plan §2).
  *
+ * The synthetic `@all` / `@everyone` broadcast candidates are ALWAYS offered
+ * at the TOP of the list (ahead of real participants) whenever the typed
+ * query is empty or is a case-insensitive prefix of `all` / `everyone`. They
+ * are not subject to the 7-candidate cap that applies to real participants.
+ *
  * @param {Record<string, object>|object[]} participants
  *        Either a `key → participant` map (the store shape) or an array.
  * @param {string} query
  * @param {string} currentUserKey
- * @returns {Array<{name:string,key:string,online:boolean}>}
+ * @returns {Array<{name:string,key:string,online:boolean,broadcast?:boolean,hint?:string}>}
  */
 export function filterCandidates(participants, query, currentUserKey) {
   const list = Array.isArray(participants)
     ? participants
     : Object.values(participants ?? {});
   const q = (query ?? '').toLowerCase();
+
+  const broadcast = BROADCAST_CANDIDATES
+    .filter((c) => q === '' || c.name.startsWith(q))
+    .map((c) => ({ ...c }));
 
   const filtered = list
     .filter((p) => p && p.key && p.key !== currentUserKey)
@@ -235,7 +281,7 @@ export function filterCandidates(participants, query, currentUserKey) {
     return a.name.localeCompare(b.name);
   });
 
-  return filtered.slice(0, 7);
+  return [...broadcast, ...filtered.slice(0, 7)];
 }
 
 /**
@@ -292,12 +338,18 @@ export function commitMention(text, tokens, atIndex, queryEnd, candidate) {
     .map((t) =>
       t.start >= queryEnd ? { ...t, start: t.start + delta, end: t.end + delta } : { ...t },
     );
-  updatedTokens.push({
+  const newTok = {
     start: atIndex,
     end: newEnd,
     name: candidate.name,
     key: candidate.key,
-  });
+  };
+  // Only stamp the broadcast flag when the candidate is a broadcast token, so
+  // ordinary mention tokens keep their exact `{start,end,name,key}` shape.
+  if (candidate.broadcast || isBroadcastMention(candidate.name)) {
+    newTok.broadcast = true;
+  }
+  updatedTokens.push(newTok);
   updatedTokens.sort((a, b) => a.start - b.start);
 
   return {
@@ -453,6 +505,46 @@ export function tokensToMentions(tokens) {
     if (!t.key || seen.has(t.key)) continue;
     seen.add(t.key);
     out.push(t.key);
+  }
+  return out;
+}
+
+/**
+ * Expand committed mention tokens into the flat list of participant keys
+ * carried by the wire `mentions` field. Mirrors `tool_comms_send`'s
+ * server-side broadcast resolution (`mcp_tools.py`), but runs client-side
+ * because the web composer publishes straight to the broker and bypasses the
+ * MCP resolver:
+ *
+ *   - A broadcast token (`@all` / `@everyone`) expands to every key in
+ *     `memberKeys` (the active channel's CURRENT present members), excluding
+ *     `selfKey` — you don't cue yourself on your own broadcast. With zero
+ *     other present members this contributes nothing (a still-valid send).
+ *   - An ordinary token contributes its own `key`.
+ *   - The result is unioned + dedup'd in first-seen order, so `@all` mixed
+ *     with explicit `@name` mentions yields each key exactly once.
+ *
+ * @param {Array<{key?:string,name?:string,broadcast?:boolean}>} tokens
+ * @param {string[]} memberKeys - keys of the active channel's present members
+ * @param {string} selfKey - the sender's own key (always excluded)
+ * @returns {string[]}
+ */
+export function expandMentions(tokens, memberKeys, selfKey) {
+  const members = Array.isArray(memberKeys) ? memberKeys : [];
+  const seen = new Set();
+  /** @type {string[]} */
+  const out = [];
+  const add = (k) => {
+    if (!k || k === selfKey || seen.has(k)) return;
+    seen.add(k);
+    out.push(k);
+  };
+  for (const t of tokens) {
+    if (t.broadcast || isBroadcastMention(t.name ?? '')) {
+      for (const k of members) add(k);
+    } else {
+      add(t.key);
+    }
   }
   return out;
 }
