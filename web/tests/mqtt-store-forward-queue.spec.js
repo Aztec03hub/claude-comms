@@ -191,6 +191,9 @@ describe('MqttChatStore — Polish P6 forwardMessage pending sends', () => {
     expect(wire.conv).toBe('target-channel');
     expect(wire.body).toBe('direct');
     expect(wire.forwarded_from).toBe('src-direct');
+    // The internal local-echo `status` field must NOT leak onto the wire —
+    // otherwise remote viewers render a permanent "Sending…" spinner.
+    expect(wire.status).toBeUndefined();
   });
 
   it('publish-callback error during drain marks the forward as failed (retryable)', () => {
@@ -246,5 +249,22 @@ describe('MqttChatStore — Polish P6 forwardMessage pending sends', () => {
     expect(firstPayload.forwarded_from).toBeUndefined();
     expect(secondPayload.body).toBe('forward while offline');
     expect(secondPayload.forwarded_from).toBe('src-mix');
+    // Neither path may leak the internal `status` local-echo field.
+    expect(firstPayload.status).toBeUndefined();
+    expect(secondPayload.status).toBeUndefined();
+  });
+
+  it('forwarding to a non-active channel does NOT inflate the sender\'s own unread', () => {
+    // The forwarded local-echo is self-authored and lands in a non-active
+    // channel; the sender must never bump their OWN unread badge.
+    store.activeChannel = 'home-channel';
+    store.channelsById = {
+      'target-channel': { id: 'target-channel', unread: 0, unreadHasMention: false },
+    };
+
+    store.forwardMessage(srcMessage({ id: 'src-self', body: 'fwd to elsewhere' }), 'target-channel');
+
+    expect(store.channelsById['target-channel'].unread).toBe(0);
+    expect(store.channelsById['target-channel'].unreadHasMention).toBe(false);
   });
 });

@@ -2297,7 +2297,13 @@ export class MqttChatStore {
     };
 
     const topic = TOPIC_PREFIX + '/conv/' + this.activeChannel + '/messages';
-    const payload = JSON.stringify(msg);
+    // Re-serialize without our internal `status` field — it's local-echo
+    // metadata only, not part of the wire format. Leaking `status:'sending'`
+    // makes other web clients render a permanent "Sending…" spinner (mirrors
+    // retryMessage's strip).
+    const wire = { ...msg };
+    delete wire.status;
+    const payload = JSON.stringify(wire);
 
     // Local echo: add message immediately so it appears even without broker
     this.#handleChatMessage(this.activeChannel, msg);
@@ -2818,7 +2824,12 @@ export class MqttChatStore {
     };
 
     const topic = TOPIC_PREFIX + '/conv/' + targetChannelId + '/messages';
-    const payload = JSON.stringify(msg);
+    // Strip the internal `status` local-echo field before publishing — see
+    // sendMessage / retryMessage. Otherwise remote viewers see a stuck
+    // "Sending…" spinner on the forwarded bubble.
+    const wire = { ...msg };
+    delete wire.status;
+    const payload = JSON.stringify(wire);
 
     // Local echo: add the forwarded message immediately so it appears
     // in the target channel without waiting for the broker round-trip.
@@ -4541,6 +4552,12 @@ export class MqttChatStore {
         const result = mcpCall('comms_check', {
           key: this.userProfile.key,
           conversation: channelId,
+          // Advance the SERVER read cursor — without ``mark_seen`` the call
+          // is a pure read and the next ``comms_check`` (reconnect /
+          // visibility-regain) would resurrect the unread + mention dot the
+          // user just cleared. See ``tool_comms_check`` (mark_seen default
+          // False) in mcp_tools.py.
+          mark_seen: true,
         });
         if (result && typeof result.catch === 'function') {
           result.catch(() => { /* best-effort; local state already correct */ });
@@ -5154,8 +5171,13 @@ export class MqttChatStore {
       this.messages = this.messages.slice(-MAX_MESSAGES);
     }
 
-    // Update unread count if not active channel
-    if (channel !== this.activeChannel) {
+    // Update unread count if not active channel. Guard against self-authored
+    // messages (e.g. forwardMessage local-echoes into a non-active target
+    // channel): the sender must never inflate their OWN unread badge.
+    if (
+      channel !== this.activeChannel &&
+      msg.sender?.key !== this.userProfile?.key
+    ) {
       const ch = this.channelsById[channel];
       if (ch) {
         ch.unread++;
@@ -5513,20 +5535,15 @@ export class MqttChatStore {
 
     // Apply to all known connections of this participant. The server already
     // applied to all of them in mcp_tools.tool_comms_status_set; the wire
-    // event just announces the change. If we have no connections (rare race
-    // before the participant's presence has arrived), stash on a pending
-    // field that the next presence event can roll into a real connection.
+    // event just announces the change. When we have no connections yet (rare
+    // race before the participant's presence has arrived) there is nothing to
+    // update — the activity is re-announced by the next status event.
     const conns = target.connections || {};
-    const connKeys = Object.keys(conns);
-    if (connKeys.length === 0) {
-      target._pendingActivity = newActivity;
-    } else {
-      for (const ck of connKeys) {
-        if (newActivity) {
-          conns[ck].activity = newActivity;
-        } else {
-          delete conns[ck].activity;
-        }
+    for (const ck of Object.keys(conns)) {
+      if (newActivity) {
+        conns[ck].activity = newActivity;
+      } else {
+        delete conns[ck].activity;
       }
     }
 

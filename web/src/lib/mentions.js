@@ -22,13 +22,15 @@
 // of an `@\w+` prefix that is NOT covered by a confirmed token.
 
 /**
- * Characters allowed inside a mention name. Hyphens and dots are common in
- * participant names (e.g. `claude-test`, `phil.exe`). Everything else
- * terminates the active suggestion query.
+ * Characters allowed inside a mention name. Mirrors the server-authoritative
+ * grammar (`NAME_PATTERN = ^[\w-]{1,64}$` in `src/claude_comms/mention.py`):
+ * word characters and hyphens only (e.g. `claude-test`). A dot is NOT a valid
+ * name character server-side, so it terminates the active suggestion query.
  *
- * Kept synchronized with the parsing regex below.
+ * Kept synchronized with the parsing regex below and with the render-side
+ * `parseMentions` in `utils.js`.
  */
-const MENTION_NAME_CHARS = /[\w.-]/;
+const MENTION_NAME_CHARS = /[\w-]/;
 
 /**
  * Broadcast mention tokens that expand to "everyone currently present" in the
@@ -72,7 +74,7 @@ const BROADCAST_CANDIDATES = [
  * name. Used during edit reconciliation to detect a live suggestion at the
  * cursor.
  */
-const TRAILING_AT_PREFIX = /@([\w.-]*)$/;
+const TRAILING_AT_PREFIX = /@([\w-]*)$/;
 
 /**
  * Compute the edit range introduced by a text change. Given the old and

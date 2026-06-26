@@ -158,9 +158,13 @@ describe('MqttChatStore — Polish P1 markAllRead(channelId)', () => {
     store.markAllRead('general');
 
     expect(mcpCallMock).toHaveBeenCalledTimes(1);
+    // Must pass `mark_seen: true` so the SERVER read cursor advances —
+    // otherwise the next comms_check (reconnect / visibility-regain)
+    // resurrects the unread + mention dot the user just cleared.
     expect(mcpCallMock).toHaveBeenCalledWith('comms_check', {
       key: '0123abcd',
       conversation: 'general',
+      mark_seen: true,
     });
   });
 

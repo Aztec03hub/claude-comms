@@ -114,6 +114,28 @@ describe('Wave G follow-up - shouldNotifyForPolicy decision tree', () => {
     expect(result).toBe(true);
   });
 
+  it('policy=Mentions: an UPPERCASE highlight word matches a lowercase body', () => {
+    // Regression: the body was lowercased but the word was not, so any
+    // highlight word with an uppercase char never matched (asymmetric).
+    const policy = { policy: 'Mentions', highlightWords: ['BUG', 'Release'] };
+    expect(
+      shouldNotifyForPolicy(policy, {
+        mentions: null,
+        userKey: SELF_KEY,
+        muted: false,
+        body: 'found a bug in the auth flow',
+      }),
+    ).toBe(true);
+    expect(
+      shouldNotifyForPolicy(policy, {
+        mentions: null,
+        userKey: SELF_KEY,
+        muted: false,
+        body: 'cutting the release now',
+      }),
+    ).toBe(true);
+  });
+
   it('policy=All: notifies on every ordinary message when not muted', () => {
     const policy = { policy: 'All', highlightWords: [] };
     const result = shouldNotifyForPolicy(policy, {

@@ -180,7 +180,7 @@ export function shouldNotifyForPolicy(policy, ctx) {
     Array.isArray(p.highlightWords) &&
     p.highlightWords.length > 0 &&
     body.length > 0 &&
-    p.highlightWords.some((w) => typeof w === 'string' && w.length > 0 && body.includes(w));
+    p.highlightWords.some((w) => typeof w === 'string' && w.length > 0 && body.includes(w.toLowerCase()));
   const msgIsMention = isFormalMention || isHighlightHit;
 
   let shouldNotify;

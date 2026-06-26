@@ -473,6 +473,55 @@ describe('MessageInput backtick block-entry (v2)', () => {
     expect(getBlockTextarea(container)).toBeNull();
   });
 
+  it('Send button is ENABLED for a code-block-only message (blockMode.body counts)', async () => {
+    const { store, container, ta } = setup();
+    // Enter block mode via Trigger B; the fence is stripped so inputValue
+    // becomes empty and the message body lives ONLY in blockMode.body.
+    await setValue(ta, '```');
+    await fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true });
+    await tick();
+    await Promise.resolve();
+    await tick();
+
+    expect(ta.value).toBe('');
+
+    const block = getBlockTextarea(container);
+    block.value = 'block only body';
+    await fireEvent.input(block, { target: block });
+    await tick();
+
+    const sendBtn = container.querySelector('[data-testid="send-button"]');
+    // A real browser refuses to dispatch a click on a disabled button, so
+    // the disabled STATE (not the synthetic click) is the load-bearing
+    // assertion: the button must be enabled when only blockMode.body has
+    // content, otherwise code-block-only messages are unsendable via mouse.
+    expect(sendBtn.disabled).toBe(false);
+    expect(sendBtn.getAttribute('aria-disabled')).toBe('false');
+
+    // And the (now-reachable) click path still sends the synthesized block.
+    await fireEvent.click(sendBtn);
+    await tick();
+    await Promise.resolve();
+    await tick();
+    expect(store.sendMessage).toHaveBeenCalled();
+    const sent = store.sendMessage.mock.calls[0][0];
+    expect(sent).toContain('```');
+    expect(sent).toContain('block only body');
+  });
+
+  it('Send button stays DISABLED when both inline value and block body are empty', async () => {
+    const { container, ta } = setup();
+    await setValue(ta, '```');
+    await fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true });
+    await tick();
+    await Promise.resolve();
+    await tick();
+
+    // Block open but body empty, inline empty → nothing sendable.
+    const sendBtn = container.querySelector('[data-testid="send-button"]');
+    expect(sendBtn.disabled).toBe(true);
+  });
+
   it('ArrowRight at end of body exits block (commits synthesized) and returns to inline', async () => {
     const { container, ta } = setup();
     await setValue(ta, '```');

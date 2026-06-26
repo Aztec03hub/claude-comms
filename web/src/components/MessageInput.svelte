@@ -1335,8 +1335,8 @@
         class="btn-send"
         title={overLimit ? 'Message too long — split or convert to artifact' : 'Send message'}
         onclick={sendMessage}
-        disabled={overLimit || !inputValue.trim()}
-        aria-disabled={overLimit || !inputValue.trim()}
+        disabled={overLimit || (!inputValue.trim() && !blockMode?.body?.trim())}
+        aria-disabled={overLimit || (!inputValue.trim() && !blockMode?.body?.trim())}
         data-testid="send-button"
       >
         <SendHorizontal size={16} />

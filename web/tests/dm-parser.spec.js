@@ -74,6 +74,16 @@ describe('parseDM — §10 matrix', () => {
     expect(result.body).toBe('@ember hi @sage');
   });
 
+  test('name grammar is [\\w-] (no dot) — `/dm @ember. hi` resolves `ember`, dot starts body', () => {
+    // Server authority: NAME_PATTERN = ^[\w-]{1,64}$. The dot is NOT a valid
+    // name char, so `@ember.` peels recipient `ember` and the `.` falls into
+    // the body. (Under the old `[\w.-]` grammar this errored as an unknown
+    // recipient `@ember.`.)
+    const result = parseDM('/dm @ember. hi', participants, PHIL_KEY);
+    expect(result.error).toBeNull();
+    expect(result.recipients).toEqual([EMBER_KEY]);
+  });
+
   test('test_reject_unknown_recipient — case 5: `/dm @notanyone hi`', () => {
     const result = parseDM('/dm @notanyone hi', participants, PHIL_KEY);
     expect(result.error).toBeTruthy();
