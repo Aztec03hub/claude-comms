@@ -21,6 +21,20 @@ from claude_comms.config import (
 runner = CliRunner()
 
 
+def _fake_asyncio_run(return_value):
+    """Stand in for ``asyncio.run`` in CLI tests.
+
+    Closes the coroutine the command built instead of awaiting it, so Python
+    does not emit ``RuntimeWarning: coroutine ... was never awaited``.
+    """
+
+    def _run(coro):
+        coro.close()
+        return return_value
+
+    return _run
+
+
 # ===================================================================
 # CLI init command
 # ===================================================================
@@ -185,7 +199,7 @@ class TestStatusCommand:
 
         # Mock the broker connectivity probe to avoid actual connection.
         # The probe now returns (connected, participant_count).
-        monkeypatch.setattr("asyncio.run", lambda coro: (False, 0))
+        monkeypatch.setattr("asyncio.run", _fake_asyncio_run((False, 0)))
 
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
@@ -266,7 +280,7 @@ class TestStatusParticipantCount:
         monkeypatch.setattr("claude_comms.cli._read_pid", lambda: 12345)
 
         # Simulate probe returning connected with 3 participants
-        monkeypatch.setattr("asyncio.run", lambda coro: (True, 3))
+        monkeypatch.setattr("asyncio.run", _fake_asyncio_run((True, 3)))
 
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0

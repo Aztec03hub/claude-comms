@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -154,7 +155,7 @@ class TestDeepMerge:
         assert result["l1"]["l2"]["l3"]["new"] is True
 
     def test_does_not_mutate_base(self):
-        base = {"a": 1, "b": {"c": 2}}
+        base: dict[str, Any] = {"a": 1, "b": {"c": 2}}
         overlay = {"b": {"c": 99}}
         _deep_merge(base, overlay)
         assert base["b"]["c"] == 2  # unchanged

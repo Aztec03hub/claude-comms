@@ -8,6 +8,8 @@ call forever if a PUBACK stalled or the connection silently dropped.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from typing import cast
 
 import aiomqtt
 import pytest
@@ -44,12 +46,19 @@ class FakeClient:
         self.published.append((topic, payload, qos, retain))
 
 
-def _factory(clients: list[FakeClient]):
-    """Return a factory that hands out the given clients in order."""
+def _factory(clients: list[FakeClient]) -> Callable[[], aiomqtt.Client]:
+    """Return a factory that hands out the given clients in order.
+
+    ``FakeClient`` duck-types the slice of ``aiomqtt.Client`` the publisher
+    uses (async context manager + ``publish``); the cast documents that the
+    stand-in satisfies the real factory contract.
+    """
     it = iter(clients)
 
-    def make() -> FakeClient:
-        return next(it)
+    def make() -> aiomqtt.Client:
+        # The two nominal types do not overlap, so cast through object — the
+        # documented escape hatch for a structural stand-in.
+        return cast(aiomqtt.Client, cast(object, next(it)))
 
     return make
 

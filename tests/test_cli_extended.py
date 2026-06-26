@@ -20,6 +20,20 @@ from claude_comms.config import get_default_config, save_config
 runner = CliRunner()
 
 
+def _fake_asyncio_run(return_value):
+    """Stand in for ``asyncio.run`` in CLI tests.
+
+    Closes the coroutine the command built instead of awaiting it, so Python
+    does not emit ``RuntimeWarning: coroutine ... was never awaited``.
+    """
+
+    def _run(coro):
+        coro.close()
+        return return_value
+
+    return _run
+
+
 # ===================================================================
 # Helper to set up a temp config + monkeypatch
 # ===================================================================
@@ -151,7 +165,7 @@ class TestSendCommand:
         _setup_config(tmp_path, monkeypatch)
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
         # Mock asyncio.run to skip actual MQTT publish
-        monkeypatch.setattr("asyncio.run", lambda coro: None)
+        monkeypatch.setattr("asyncio.run", _fake_asyncio_run(None))
 
         result = runner.invoke(app, ["send", "hello world"])
         assert result.exit_code == 0
@@ -160,7 +174,7 @@ class TestSendCommand:
     def test_send_with_conversation(self, tmp_path: Path, monkeypatch) -> None:
         _setup_config(tmp_path, monkeypatch)
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
-        monkeypatch.setattr("asyncio.run", lambda coro: None)
+        monkeypatch.setattr("asyncio.run", _fake_asyncio_run(None))
 
         result = runner.invoke(app, ["send", "hi", "-c", "dev-chat"])
         assert result.exit_code == 0
@@ -169,7 +183,7 @@ class TestSendCommand:
     def test_send_with_recipient(self, tmp_path: Path, monkeypatch) -> None:
         _setup_config(tmp_path, monkeypatch)
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
-        monkeypatch.setattr("asyncio.run", lambda coro: None)
+        monkeypatch.setattr("asyncio.run", _fake_asyncio_run(None))
 
         result = runner.invoke(app, ["send", "hi", "--to", "@aabb1122"])
         assert result.exit_code == 0
@@ -180,6 +194,7 @@ class TestSendCommand:
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
 
         def raise_conn_error(_coro):
+            _coro.close()
             raise ConnectionError("broker down")
 
         monkeypatch.setattr("asyncio.run", raise_conn_error)

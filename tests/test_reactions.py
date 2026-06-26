@@ -329,6 +329,7 @@ class TestCommsReactSemantics:
     ) -> None:
         reg, key = registry_and_alice
         published, publish = published_capture
+        result = None
         for _ in range(2):
             result = asyncio.run(
                 tool_comms_react(
@@ -342,6 +343,7 @@ class TestCommsReactSemantics:
                     op="add",
                 )
             )
+        assert result is not None
         assert result["status"] == "no_op"
         assert len(published) == 1  # only the first add was published
 
