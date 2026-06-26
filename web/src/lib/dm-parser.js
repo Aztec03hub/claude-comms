@@ -88,11 +88,13 @@ export function parseDM(input, participants, senderKey) {
   while (pos < afterTrigger.length) {
     // Token must start with `@`.
     if (afterTrigger.charCodeAt(pos) !== 0x40 /* @ */) break;
-    // Read `@name` greedily. Name char class: [A-Za-z0-9_.-].
+    // Read `@name` greedily. Name char class: [A-Za-z0-9_-] — matches the
+    // server-authoritative grammar (NAME_PATTERN `^[\w-]{1,64}$` in
+    // src/claude_comms/mention.py). A dot is not a valid name char.
     let nameEnd = pos + 1;
     while (
       nameEnd < afterTrigger.length
-      && /[\w.-]/.test(afterTrigger[nameEnd])
+      && /[\w-]/.test(afterTrigger[nameEnd])
     ) {
       nameEnd++;
     }
@@ -169,7 +171,7 @@ export function parseDM(input, participants, senderKey) {
     while (p2 < afterTrigger.length) {
       if (afterTrigger.charCodeAt(p2) !== 0x40) break;
       let ne = p2 + 1;
-      while (ne < afterTrigger.length && /[\w.-]/.test(afterTrigger[ne])) ne++;
+      while (ne < afterTrigger.length && /[\w-]/.test(afterTrigger[ne])) ne++;
       if (ne === p2 + 1) break;
       const nm = afterTrigger.slice(p2 + 1, ne);
       const k = nameToKey.get(nm);

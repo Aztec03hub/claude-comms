@@ -103,33 +103,6 @@ export function parseMentions(body) {
 }
 
 /**
- * Parse inline code from message body text.
- * Returns segments of {type: 'text'|'code', value: string}.
- * @param {string} text
- * @returns {Array<{type: string, value: string}>}
- */
-export function parseInlineCode(text) {
-  const codeRegex = /`([^`]+)`/g;
-  const segments = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = codeRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
-    }
-    segments.push({ type: 'code', value: match[1] });
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    segments.push({ type: 'text', value: text.slice(lastIndex) });
-  }
-
-  return segments;
-}
-
-/**
  * Color palette for participant avatars.
  * Each entry: [gradientStart, gradientEnd, textColor]
  */

@@ -16,8 +16,11 @@
 // classes / inline styles come back for a given source + lang) live in
 // `lib/markdown.js` regardless of the view layer.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { render, cleanup } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { highlightCode, escapeHtml } from '../src/lib/markdown.js';
+import CodeBlock from '../src/components/CodeBlock.svelte';
 
 // Shiki's CSS-variable theme emits inline `style="color:var(--shiki-token-…)"`
 // spans. Presence of a `--shiki-` CSS variable reference in the output is the
@@ -207,6 +210,44 @@ describe('CodeBlock render-token race guard (Pattern A simulation)', () => {
     const latestText = visibleText(g.latest);
     expect(latestText).toMatch(/marker_eee/);
     expect(latestText).not.toMatch(/marker_aaa/);
+  });
+});
+
+describe('CodeBlock — pre-highlight fallback is escaped (XSS regression)', () => {
+  afterEach(cleanup);
+
+  // Before the async Shiki highlight resolves, `highlightedLines` is still
+  // `[]`, so the component renders the raw `code` lines. That fallback MUST
+  // be rendered as escaped text (a Svelte text node), never via `{@html}` —
+  // otherwise a chat code block containing `<img onerror=...>` would inject
+  // a live element during the (always-present) pre-highlight window.
+  it('renders raw code as literal text — never injects an element — before Shiki resolves', async () => {
+    const malicious = '<img src=x onerror="globalThis.__codeblock_xss = 1">';
+    delete globalThis.__codeblock_xss;
+
+    const { container } = render(CodeBlock, {
+      props: { code: malicious, language: 'text' },
+    });
+
+    const pre = container.querySelector('[data-testid="code-block-pre"]');
+    expect(pre).toBeTruthy();
+
+    // Synchronous (pre-highlight) window: the fallback branch is active.
+    // No <img> element was injected; the markup is present as literal text.
+    expect(pre.querySelector('img')).toBeNull();
+    expect(pre.textContent).toContain(malicious);
+    expect(globalThis.__codeblock_xss).toBeUndefined();
+
+    // Let the async Shiki path settle so it doesn't update after teardown.
+    // The resolved Shiki output is itself escaped (defence in depth), so
+    // still no live element and the onerror never fires.
+    await tick();
+    await Promise.resolve();
+    await tick();
+
+    expect(container.querySelector('[data-testid="code-block-pre"] img')).toBeNull();
+    expect(globalThis.__codeblock_xss).toBeUndefined();
+    delete globalThis.__codeblock_xss;
   });
 });
 

@@ -109,6 +109,19 @@ describe('parseMentions — active suggestion detection', () => {
     const r = parseMentions('@cl ', [], '@cl', 3, 4);
     expect(r.activeSuggestion).toBeNull();
   });
+
+  it('a dot terminates the query — name grammar is [\\w-], matching the server', () => {
+    // Server authority: NAME_PATTERN = ^[\w-]{1,64}$ (no dot). `@bob.` must
+    // stop at `bob`, with the trailing `.` ending the active suggestion.
+    const r = parseMentions('@bob.', [], '@bob', 4, 5);
+    expect(r.activeSuggestion).toBeNull();
+  });
+
+  it('a dot mid-name terminates the suggestion at the pre-dot prefix', () => {
+    // Typing the dot in `@bob.` ends the query; `bob.x` is not one name.
+    const r = parseMentions('@bob.x', [], '@bob.', 5, 6);
+    expect(r.activeSuggestion).toBeNull();
+  });
 });
 
 describe('parseMentions — token offset shifting', () => {

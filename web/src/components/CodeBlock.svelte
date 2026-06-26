@@ -64,8 +64,9 @@
       {/if}
     </button>
   </div>
-  <pre class="code-block" data-testid="code-block-pre">{#each (highlightedLines.length ? highlightedLines : codeLines) as html, i (i)}<span class="line"><span class="line-num">{i + 1}</span><!-- eslint-disable-next-line svelte/no-at-html-tags --><span class="line-code">{@html html}</span>
-</span>{/each}</pre>
+  <pre class="code-block" data-testid="code-block-pre">{#if highlightedLines.length}{#each highlightedLines as html, i (i)}<span class="line"><span class="line-num">{i + 1}</span><!-- eslint-disable-next-line svelte/no-at-html-tags Shiki output is already escaped/sanitized; raw code never reaches {@html} --><span class="line-code">{@html html}</span>
+</span>{/each}{:else}{#each codeLines as line, i (i)}<span class="line"><span class="line-num">{i + 1}</span><span class="line-code">{line}</span>
+</span>{/each}{/if}</pre>
 </div>
 
 <style>
