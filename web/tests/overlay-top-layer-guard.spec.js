@@ -20,21 +20,26 @@
 //      with the file - this is the rule that would have caught a "9999
 //      left behind" or a new ad-hoc "73".
 //
-// ── PHASE 1 SEEDING (read this before editing ALLOWED) ───────────────────
-// The rules are ACTIVE, but ALLOWED is seeded to TODAY's reality so the
-// pre-migration tree stays green: it lists every currently-unmigrated
-// overlay, the passive toasts/banners, the docked panels, the bits-ui
-// components, and app.css (whose legacy z-index values are tokenised in
-// Phase 2). Files in ALLOWED are skipped by BOTH rules.
+// ── STRICT MODE (Phase 2 complete) ───────────────────────────────────────
+// Every floating overlay has been migrated to the primitive and every
+// residual surface tokenised onto the --z-* scale, so ALLOWED is now shrunk
+// to its irreducible core. Files in ALLOWED are skipped by BOTH rules; the
+// ONLY remaining entries are:
 //
-// StatusEditor.svelte is INTENTIONALLY NOT in ALLOWED: it was migrated to
-// <Popover>/use:topLayer in this PR, so it must pass the rules by actually
-// using the primitive and carrying no bare z-index. The explicit
-// assertions at the bottom pin that.
+//   * The PASSIVE notification surfaces (toasts + banners). These MUST stay
+//     out of the native top layer - a top-layer toast would steal focus /
+//     inert the page, wrong for a passive notification - so they keep a
+//     `position: fixed` + `var(--z-toast)`/`var(--z-banner)` token. Because
+//     Rule 1 flags `position:fixed` paired with any z-index, they are
+//     exempted here by design (design §F.5).
+//   * The three bits-ui components (ContextMenu / ChannelModal /
+//     ConfirmDialog). bits-ui portals them to <body> with its own tested
+//     focus-trap; design §F.1 keeps them as-is and exempts them.
 //
-// PHASE 2 shrinks ALLOWED toward EMPTY: as each overlay migrates to the
-// primitive (and each residual surface moves onto the --z-* tokens),
-// delete its entry here. When ALLOWED is empty the guard is fully strict.
+// EVERYTHING else - all migrated overlays, all docked panels, every in-flow
+// component, App.svelte and app.css - now passes BOTH rules ON MERIT (uses
+// the primitive and carries only `var(--z-*)` tokens). Adding anything new
+// here should be a deliberate, documented exception, not a convenience.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -47,59 +52,20 @@ const COMPONENTS_DIR = resolve(SRC, 'components');
 const APP_SVELTE = resolve(SRC, 'App.svelte');
 const APP_CSS = resolve(SRC, 'app.css');
 
-// ── Phase 1 ALLOWED seed (see header). Basenames. ───────────────────────
-// Every entry is a pre-existing violator kept green until Phase 2 migrates
-// it. The bits-ui components (ContextMenu / ChannelModal / ConfirmDialog /
-// LeaveChannelDialog) are also here: design §F.1 keeps them on bits-ui;
-// they portal to <body> so the bug class does not apply.
+// ── STRICT ALLOWED set (basenames). See header for the rationale. ───────
+// Only the passive toasts/banners and the three bits-ui components remain.
 const ALLOWED = new Set([
-  // residual passive surfaces (stay non-top-layer; move to --z-* in Phase 2)
+  // Passive notification surfaces - intentionally NOT top layer (design §F.5).
   'NotificationToast.svelte',
   'UndoToast.svelte',
   'RemoteUpdateBanner.svelte',
   'ConnectionStatus.svelte',
-  // docked panels (stacking-context creators; tokenised in Phase 2)
-  'Sidebar.svelte',
-  'SettingsPanel.svelte',
-  'SearchPanel.svelte',
-  'ArtifactPanel.svelte',
-  'ThreadPanel.svelte',
-  'PinnedPanel.svelte',
-  'ConversationBrowser.svelte',
-  'UserProfileView.svelte',
-  'ArtifactList.svelte',
-  'MemberList.svelte',
-  'MessageBubble.svelte',
-  'MessageActions.svelte',
-  'MessageInput.svelte',
-  'ChatView.svelte',
-  'ScrollToBottom.svelte',
-  // bits-ui components (design §F.1: KEEP, exempt)
+  // bits-ui components - portal to <body> with their own focus-trap (design §F.1).
   'ContextMenu.svelte',
   'ChannelModal.svelte',
   'ConfirmDialog.svelte',
-  'LeaveChannelDialog.svelte',
-  // unmigrated floating overlays (Phase 2 targets)
-  'InviteParticipantDialog.svelte',
-  'ProfileCard.svelte',
-  'NotificationPolicyMenu.svelte',
-  'ForwardPicker.svelte',
-  'KeyboardShortcutsHelp.svelte',
-  'ReactionBar.svelte',
-  'ChannelContextMenu.svelte',
-  'ArtifactDetailHeader.svelte',
-  'ReadReceipt.svelte',
-  'EmojiPicker.svelte',
-  'ChannelDirectoryModal.svelte',
-  'TypeNameConfirmDialog.svelte',
-  'MentionDropdown.svelte',
-  'MemberContextMenu.svelte',
-  'ReactionDetailsPanel.svelte',
-  // root + global stylesheet (App quick-join / mobile-sidebar block; legacy
-  // app.css z-index values) - tokenised in Phase 2.
-  'App.svelte',
-  'app.css',
-  // NOTE: StatusEditor.svelte is deliberately ABSENT - it must pass on merit.
+  // NOTE: every other overlay/panel/in-flow file (and App.svelte / app.css) is
+  // deliberately ABSENT - each must pass BOTH rules on merit.
 ]);
 
 // Approved primitive / escape references that satisfy Rule 1.
@@ -236,11 +202,21 @@ describe('overlay top-layer guard - Tier 1 source scan (design §E)', () => {
     }
   });
 
-  // ── Guard self-documentation: Phase 2 shrinks ALLOWED toward empty ──────
-  it('ALLOWED is a finite seed that Phase 2 will shrink (documented)', () => {
-    // Sanity: the seed is non-empty today (Phase 1) and StatusEditor proves
-    // the rules are live. This assertion exists so a future reader sees the
-    // intent; Phase 2 deletes entries until the set is empty.
-    expect(ALLOWED.size).toBeGreaterThan(0);
+  // ── Guard self-documentation: STRICT mode irreducible core ──────────────
+  it('ALLOWED is shrunk to its strict-mode core (toasts/banners + bits-ui)', () => {
+    // Phase 2 reduced ALLOWED to exactly the passive notification surfaces
+    // (design §F.5) plus the three bits-ui components (design §F.1). If this
+    // grows, a real overlay is probably dodging the primitive - scrutinise it.
+    expect([...ALLOWED].sort()).toEqual(
+      [
+        'ChannelModal.svelte',
+        'ConfirmDialog.svelte',
+        'ConnectionStatus.svelte',
+        'ContextMenu.svelte',
+        'NotificationToast.svelte',
+        'RemoteUpdateBanner.svelte',
+        'UndoToast.svelte',
+      ].sort(),
+    );
   });
 });
