@@ -373,7 +373,7 @@
     flex-direction: column;
     gap: 4px;
     position: relative;
-    z-index: 1;
+    z-index: var(--z-raised);
     scroll-behavior: smooth;
     mask-image: linear-gradient(transparent, black 20px, black calc(100% - 20px), transparent);
     -webkit-mask-image: linear-gradient(transparent, black 20px, black calc(100% - 20px), transparent);

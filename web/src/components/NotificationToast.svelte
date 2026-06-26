@@ -117,7 +117,7 @@
     position: fixed;
     top: 16px;
     right: 16px;
-    z-index: 100;
+    z-index: var(--z-toast);
     display: flex;
     align-items: flex-start;
     gap: 12px;

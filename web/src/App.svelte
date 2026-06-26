@@ -28,6 +28,7 @@
   import MemberContextMenu from './components/MemberContextMenu.svelte';
   import InviteParticipantDialog from './components/InviteParticipantDialog.svelte';
   import NotificationPolicyMenu from './components/NotificationPolicyMenu.svelte';
+  import { topLayer } from './lib/top-layer.svelte.js';
   import { getKeyboardRegistry } from './lib/keyboard.svelte.js';
   import * as api from './lib/api.js';
   import { applyToast } from './lib/toast-coalesce.js';
@@ -1240,23 +1241,22 @@
 {/if}
 
 {#if showQuickJoin}
-  <!-- v0.4.0 Step 2.17 — Ctrl+J quick-join prompt. Minimal inline dialog
-       (single text input + submit). Escape closes via the global priority
-       cascade; submit calls store.joinChannel(value). -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- v0.4.0 Step 2.17 — Ctrl+J quick-join prompt. Overlay overhaul Phase 2:
+       now a native <dialog> driven by use:topLayer (showModal), so it lives in
+       the browser top layer with a free native ::backdrop, focus-trap, and an
+       inert background - no manual backdrop element, no portal, no z-index.
+       Backdrop click (e.target === the dialog box) closes; Esc fires the
+       native `cancel` event which the action forwards to cancelQuickJoin. -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="quick-join-backdrop"
-    data-testid="quick-join-backdrop"
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <dialog
+    class="quick-join-dialog"
+    aria-label="Quick join channel"
+    data-testid="quick-join-dialog"
+    use:topLayer={{ modal: true, onClose: cancelQuickJoin }}
     onclick={(e) => { if (e.target === e.currentTarget) cancelQuickJoin(); }}
   >
-    <div
-      class="quick-join-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Quick join channel"
-      data-testid="quick-join-dialog"
-    >
+    <div class="quick-join-inner">
       <label class="quick-join-label" for="quick-join-input">Channel name or ID:</label>
       <!-- svelte-ignore a11y_autofocus -->
       <input
@@ -1294,7 +1294,7 @@
         >Join</button>
       </div>
     </div>
-  </div>
+  </dialog>
 {/if}
 
 <KeyboardShortcutsHelp
@@ -1481,7 +1481,7 @@
     flex-direction: column;
     min-width: 0;
     position: relative;
-    z-index: 1;
+    z-index: var(--z-raised);
     overflow: hidden;
   }
 
@@ -1515,7 +1515,7 @@
       left: 0;
       width: 0;
       height: 100%;
-      z-index: 200;
+      z-index: var(--z-sidebar);
       pointer-events: none;
     }
 
@@ -1532,7 +1532,7 @@
       height: 100%;
       width: 268px;
       min-width: 268px;
-      z-index: 202;
+      z-index: var(--z-content);
       transform: translateX(-100%);
       transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       box-shadow: none;
@@ -1548,31 +1548,30 @@
       position: absolute;
       inset: 0;
       background: rgba(0, 0, 0, 0.5);
-      z-index: 201;
+      z-index: var(--z-raised);
       animation: overlayIn 0.2s ease;
     }
   }
 
-  /* v0.4.0 Step 2.17 — Ctrl+J quick-join prompt. Matches the heavier
-   * ChannelDirectoryModal visual treatment but compressed for a single
-   * text input + two action buttons. */
-  .quick-join-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9000;
-    padding: 24px;
-    backdrop-filter: blur(2px);
-  }
+  /* v0.4.0 Step 2.17 — Ctrl+J quick-join prompt. Overlay overhaul Phase 2:
+   * a native <dialog> in the browser top layer (showModal via use:topLayer).
+   * The scrim is the native ::backdrop - no manual backdrop element and no
+   * z-index. Centering is the <dialog> default (margin:auto). */
   .quick-join-dialog {
+    margin: auto;
+    padding: 0;
     background: var(--bg-elevated, var(--surface-elevated, #1f1c19));
     border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
-    width: min(420px, 100%);
+    width: min(420px, 92vw);
+    max-width: 92vw;
+  }
+  .quick-join-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .quick-join-inner {
     padding: 20px;
     display: flex;
     flex-direction: column;

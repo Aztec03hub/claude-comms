@@ -311,7 +311,7 @@
 
   .artifact-item-top {
     position: relative;
-    z-index: 1;
+    z-index: var(--z-raised);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -341,7 +341,7 @@
 
   .artifact-item-bottom {
     position: relative;
-    z-index: 1;
+    z-index: var(--z-raised);
     display: flex;
     align-items: center;
     gap: 10px;

@@ -160,7 +160,7 @@
     position: fixed;
     bottom: 16px;
     right: 16px;
-    z-index: 100;
+    z-index: var(--z-toast);
     display: flex;
     align-items: center;
     gap: 12px;
