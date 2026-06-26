@@ -234,7 +234,7 @@ def _concise(result: dict[str, Any], summary: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)])
 
 
-def get_channel_messages(channel: str, count: int = 50) -> list[dict]:
+def get_channel_messages(channel: str, count: int = 50) -> list[dict[str, Any]]:
     """Return recent messages for *channel* from the shared store.
 
     This is the backing function for the ``/api/messages/{channel}`` REST
@@ -276,7 +276,7 @@ def get_conversation_reactions(conversation: str) -> dict[str, dict[str, list[st
     return _get_reactions_store(conversation).get_all()
 
 
-def get_channel_participants(channel: str) -> list[dict]:
+def get_channel_participants(channel: str) -> list[dict[str, Any]]:
     """Return participants for *channel* from the shared registry.
 
     This is the backing function for the ``/api/participants/{channel}``
@@ -307,7 +307,7 @@ def get_channel_participants(channel: str) -> list[dict]:
     ]
 
 
-def get_conversation_artifacts(conversation: str) -> list[dict]:
+def get_conversation_artifacts(conversation: str) -> list[dict[str, Any]]:
     """Return artifact summaries for a conversation (backing REST endpoint)."""
     if _data_dir is None:
         return []
@@ -494,7 +494,7 @@ async def publish_mcp_presence_on_join(
 
 def get_artifact(
     conversation: str, name: str, version: int | None = None
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Return artifact data for REST endpoint. Latest version content + version metadata."""
     if _data_dir is None:
         return None
@@ -540,12 +540,12 @@ def get_artifact(
     }
 
 
-def get_all_conversations(key: str | None = None) -> list[dict]:
+def get_all_conversations(key: str | None = None) -> list[dict[str, Any]]:
     """Return all conversations with metadata for REST API."""
     if _conv_data_dir is None:
         return []
     metas = list_all_conversations(_conv_data_dir)
-    result = []
+    result: list[dict[str, Any]] = []
     for meta in metas:
         entry: dict[str, Any] = {
             "name": meta.name,
@@ -589,7 +589,7 @@ def _serialize_conversation_full(
     registry: Any = None,
     store: Any = None,
     activity_tracker: Any = None,
-) -> dict:
+) -> dict[str, Any]:
     """Serialize a :class:`ConversationMeta` into the v0.4.0 ChannelRow shape.
 
     *caller_key* is the calling identity's 8-hex key. When empty, ``member``
@@ -668,7 +668,7 @@ def _serialize_conversation_full(
     }
 
 
-def get_all_conversations_full(caller_key: str = "") -> list[dict]:
+def get_all_conversations_full(caller_key: str = "") -> list[dict[str, Any]]:
     """Return the daemon's full known conversation set, ChannelRow-shaped.
 
     v0.4.0 S-FIX backend: the web sidebar's "Available" section bootstraps
@@ -694,7 +694,7 @@ def get_all_conversations_full(caller_key: str = "") -> list[dict]:
     if _registry is not None and caller_key:
         caller_memberships = set(_registry.conversations_for(caller_key))
 
-    result: list[dict] = []
+    result: list[dict[str, Any]] = []
     for meta in metas:
         # v0.4.2 Step 3.6b: ConversationMeta now carries an explicit
         # visibility field defaulting to 'public'. Pre-3.6b meta files
@@ -801,14 +801,17 @@ async def _mqtt_subscriber(
                                         )
                                         if true_root is not None:
                                             root = true_root
-                                    sender_block = data.get("sender") or {}
+                                    sender_block: dict[str, Any] = (
+                                        data.get("sender") or {}
+                                    )
                                     add_keys: list[str] = []
                                     sender_key = sender_block.get("key")
                                     if sender_key:
                                         add_keys.append(sender_key)
                                     # In-thread @mentions auto-add to
                                     # thread_participants per §4.4.
-                                    for mk in data.get("mentions") or []:
+                                    mentions: list[str] = data.get("mentions") or []
+                                    for mk in mentions:
                                         if mk and mk not in add_keys:
                                             add_keys.append(mk)
                                     new_count = (
@@ -852,7 +855,7 @@ async def _mqtt_subscriber(
                             # Refresh presence for message sender (keeps
                             # CLI/raw-MQTT publishers alive without HTTP).
                             try:
-                                sender = data.get("sender") or {}
+                                sender: dict[str, Any] = data.get("sender") or {}
                                 _touch(sender.get("key"))
                             except Exception:
                                 logger.exception("Presence touch for sender failed")
