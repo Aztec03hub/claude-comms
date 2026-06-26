@@ -1114,7 +1114,7 @@
 {#if showChannelModal}
   <ChannelModal
     onClose={() => showChannelModal = false}
-    onCreate={(id, topic) => { store.createChannel(id, topic); showChannelModal = false; }}
+    onCreate={(id, topic, isPrivate) => { store.createChannel(id, topic, isPrivate); showChannelModal = false; }}
   />
 {/if}
 

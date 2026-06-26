@@ -1,6 +1,7 @@
 import mqtt from 'mqtt';
 import { generateUUID, generateKey } from './utils.js';
 import { API_BASE, apiGet, apiPost, mcpCall, getReactions } from './api.js';
+import { safeStorage } from './safe-storage.js';
 
 // Default broker port + path used when the daemon doesn't advertise its own.
 const DEFAULT_BROKER_WS_PORT = 9001;
@@ -210,26 +211,10 @@ const CONNECTION_TTL_MS = 120_000;
 /** How long an offline user entry is kept for display before removal (ms). */
 const OFFLINE_DISPLAY_MS = 5 * 60 * 1000;
 
-/**
- * Safe localStorage wrapper that falls back gracefully
- * when storage is unavailable (private browsing, quota exceeded, etc.).
- */
-const safeStorage = {
-  getItem(key) {
-    try {
-      return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
-    } catch {
-      return null;
-    }
-  },
-  setItem(key, value) {
-    try {
-      if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
-    } catch {
-      // localStorage unavailable (private browsing, quota exceeded) -- silently ignore
-    }
-  }
-};
+// `safeStorage` (localStorage wrapper tolerant of private browsing / quota /
+// no-DOM) now lives in the shared `./safe-storage.js` module — imported above.
+// Previously this file carried its own byte-identical copy (#55 follow-up:
+// folded the third copy alongside resizable-panel into one shared util).
 
 /**
  * MqttChatStore — Svelte 5 runes-based reactive MQTT chat store.
@@ -2513,15 +2498,27 @@ export class MqttChatStore {
    * No-op if a channel with the given ID already exists.
    * @param {string} id - Unique channel identifier (lowercase, dashes).
    * @param {string} topic - Short description shown in the channel header.
+   * @param {boolean} [isPrivate=false] - When true the channel is created
+   *   ``'private'`` (Unlisted): the local row, the retained meta broadcast,
+   *   and the backend visibility record all reflect private. The create API
+   *   (``comms_conversation_create``) takes no visibility argument, so —
+   *   mirroring how ChannelAdminPanel flips visibility — we set the local
+   *   visibility immediately AND persist it through the admin path
+   *   (``setVisibility`` → ``comms_conversation_update``) right after create.
    */
-  createChannel(id, topic = '') {
+  createChannel(id, topic = '', isPrivate = false) {
     if (this.channelsById[id]) return;
+
+    // The ChannelModal "Private Channel" toggle maps to the backend
+    // visibility taxonomy: private → ``'private'`` (Unlisted), otherwise
+    // the ``'public'`` default (surfaces in the directory's Browse tab).
+    const visibility = isPrivate ? 'private' : 'public';
 
     // v0.4.0 Step 2.6 — populate the full ChannelRow shape on local
     // create. ``member`` defaults true because the creator implicitly
-    // joins. ``visibility`` defaults ``'public'`` so the new channel
-    // surfaces in the directory's Browse tab for other users (v0.4.2
-    // Step 3.6b pinned ``'public'`` over the legacy ``'listed'``).
+    // joins. ``visibility`` reflects the Private toggle so the new channel
+    // renders with the correct visibility immediately (v0.4.2 Step 3.6b
+    // pinned ``'public'``/``'private'`` as the canonical pair).
     this.channelsById[id] = this.#channelRowFromPayload({
       id,
       name: id,
@@ -2530,7 +2527,7 @@ export class MqttChatStore {
       memberCount: 1,
       lastActivity: new Date().toISOString(),
       mode: 'public',
-      visibility: 'public',
+      visibility,
       createdAt: new Date().toISOString(),
       createdBy: this.userProfile.key,
       myUnread: 0,
@@ -2538,14 +2535,17 @@ export class MqttChatStore {
       myMuted: false,
     });
 
-    // Publish meta
+    // Publish meta. Include ``visibility`` so other clients render the new
+    // channel with the creator's chosen visibility instead of defaulting to
+    // public (``#handleMeta`` reads it back).
     if (this.#client) {
       const metaTopic = TOPIC_PREFIX + '/conv/' + id + '/meta';
       this.#client.publish(metaTopic, JSON.stringify({
         conv_id: id,
         created_by: this.userProfile.key,
         created_at: new Date().toISOString(),
-        topic
+        topic,
+        visibility
       }), { qos: 1, retain: true });
     }
 
@@ -2562,6 +2562,16 @@ export class MqttChatStore {
     // ``getChannelNotificationPolicy`` $derived would trip
     // ``state_unsafe_mutation`` on the first render after create.
     this.#prewarmNotificationPolicyForChannel(id);
+
+    // Persist the chosen visibility through the backend admin path. The
+    // create API has no visibility argument, so we mirror ChannelAdminPanel
+    // and flip it immediately after create. Only needed for ``private`` —
+    // ``public`` is already the server-side default. ``setVisibility`` is
+    // optimistic + queues while offline, so this is fire-and-forget; the
+    // local row above already reflects the choice for instant feedback.
+    if (isPrivate) {
+      void this.setVisibility(id, 'private');
+    }
 
     this.switchChannel(id);
   }
@@ -5389,7 +5399,10 @@ export class MqttChatStore {
         member: false,
         memberCount: 0,
         mode: 'public',
-        visibility: 'public',
+        // Honor the creator's chosen visibility from the meta broadcast
+        // (createChannel publishes it); fall back to public for legacy
+        // meta payloads that predate the visibility field.
+        visibility: typeof msg.visibility === 'string' ? msg.visibility : 'public',
         createdAt: msg.created_at || null,
         createdBy: msg.created_by || null,
         myUnread: 0,
@@ -5402,8 +5415,12 @@ export class MqttChatStore {
       this.channelRoles[channelId] = this.#inferChannelRole(channelId);
       // v0.4.4 hotfix (Bug 3): pre-warm notification-policy cache.
       this.#prewarmNotificationPolicyForChannel(channelId);
-    } else if (msg.topic) {
-      existing.topic = msg.topic;
+    } else {
+      if (msg.topic) existing.topic = msg.topic;
+      // A later meta broadcast can carry an updated visibility (e.g. the
+      // creator flipped Private after the row was first seen). Keep the
+      // local row in sync rather than freezing the first-seen value.
+      if (typeof msg.visibility === 'string') existing.visibility = msg.visibility;
     }
   }
 

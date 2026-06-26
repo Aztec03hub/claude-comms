@@ -144,6 +144,25 @@
     showCompareDropdown = !showCompareDropdown;
   }
 
+  /**
+   * Close the Compare dropdown on an outside click. The Compare dropdown's
+   * open state (`showCompareDropdown`) is owned locally in this component
+   * (unlike the primary dropdown, whose state lives in ArtifactPanel and is
+   * closed by that file's window guard), so the outside-click listener
+   * belongs here too. Mirrors ArtifactPanel.handleVersionDropdownOutsideClick:
+   * the trigger + listbox both live inside
+   * `[data-testid="compare-version-selector"]`, so a mousedown anywhere
+   * outside that subtree closes the dropdown.
+   * @param {MouseEvent} e
+   */
+  function handleCompareDropdownOutsideClick(e) {
+    if (!showCompareDropdown) return;
+    const node = e.target;
+    const el = node instanceof Element ? node : (node?.parentElement ?? null);
+    if (el && el.closest('[data-testid="compare-version-selector"]')) return;
+    showCompareDropdown = false;
+  }
+
   // Diff mode is disabled when there is only a single version to compare.
   let diffDisabled = $derived(!hasMultipleVersions);
 
@@ -324,6 +343,8 @@
       : null,
   );
 </script>
+
+<svelte:window onmousedown={handleCompareDropdownOutsideClick} />
 
 <div class="artifact-header">
   <div class="artifact-header-top">
