@@ -9,9 +9,11 @@
   @prop {(index:number) => void} onHover - Called when the user hovers a candidate (parent updates highlight).
   @prop {(candidate:object) => void} onCommit - Called when the user clicks a candidate.
   @prop {string} listboxId - DOM id used for ARIA wiring (textarea aria-controls + aria-activedescendant).
+  @prop {HTMLElement|null} [anchor] - The composer textarea the dropdown anchors above (top layer).
 -->
 <script>
   import { getInitials, getParticipantColor } from '../lib/utils.js';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     candidates = [],
@@ -19,6 +21,7 @@
     onHover,
     onCommit,
     listboxId = 'mention-listbox',
+    anchor = null,
   } = $props();
 
   /**
@@ -33,12 +36,28 @@
   }
 </script>
 
+<!--
+  Overlay overhaul Phase 2: the dropdown opens in the browser native top
+  layer via use:topLayer (Popover API), anchored ABOVE the composer
+  textarea, so it escapes the composer's stacking/overflow context with no
+  position:absolute and no z-index. dismiss:'manual' + trapInitialFocus
+  false: MessageInput owns the lifecycle and keyboard focus stays in the
+  textarea (this dropdown is purely presentational, it never grabs focus).
+-->
 <div
   class="mention-dropdown"
   role="listbox"
   id={listboxId}
   aria-label="Mention suggestions"
   data-testid="mention-dropdown"
+  use:topLayer={{
+    anchor,
+    placement: 'top-start',
+    offset: 8,
+    dismiss: 'manual',
+    trapInitialFocus: false,
+    restoreFocus: false,
+  }}
 >
   {#if candidates.length === 0}
     <div class="mention-empty" data-testid="mention-empty">No matches</div>
@@ -82,17 +101,14 @@
 
 <style>
   .mention-dropdown {
-    position: absolute;
-    bottom: 100%;
-    left: 16px;
-    margin-bottom: 8px;
+    /* Position + top-layer promotion owned by use:topLayer (sets position:
+       fixed + left/top inline, anchored above the textarea); no z-index. */
     width: 260px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03);
     padding: 4px;
-    z-index: 20;
     animation: panelIn 0.2s ease both;
   }
 

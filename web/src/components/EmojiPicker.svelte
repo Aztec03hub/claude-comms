@@ -6,6 +6,7 @@
 -->
 <script>
   import { onMount } from 'svelte';
+  import Popover from './Popover.svelte';
 
   let { onSelect, onClose } = $props();
 
@@ -239,14 +240,33 @@
   }
 
   onMount(() => { searchInput?.focus(); });
+
+  // The picker root, used to detect outside clicks. Overlay overhaul,
+  // Phase 2: the picker now opens in the browser native top layer via
+  // <Popover>, so it escapes every ancestor stacking context with NO
+  // position:fixed and NO z-index. The old full-screen `.emoji-backdrop`
+  // element is gone; a window-level mousedown closes the picker when the
+  // click lands outside it (identical in jsdom and real Chromium).
+  let pickerEl = $state(/** @type {HTMLElement | null} */ (null));
+
+  function handleOutsideMousedown(e) {
+    const t = e.target;
+    const el = t instanceof Element ? t : (t?.parentElement ?? null);
+    if (el && pickerEl && pickerEl.contains(el)) return;
+    onClose();
+  }
 </script>
 
-<div class="emoji-backdrop" onclick={onClose} onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} role="presentation">
+<svelte:window
+  onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
+  onmousedown={handleOutsideMousedown}
+/>
+
+<Popover dismiss="manual" class="emoji-picker-popover">
   <div
+    bind:this={pickerEl}
     class="emoji-picker"
     data-testid="emoji-picker"
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
     role="dialog"
     aria-label="Emoji picker"
     aria-modal="true"
@@ -301,21 +321,23 @@
       </div>
     </div>
   </div>
-</div>
+</Popover>
 
 <style>
-  .emoji-backdrop {
+  /* Viewport-positioned popover wrapper (the native top-layer element).
+     Global because the class lands on <Popover>'s own <div>, outside this
+     component's scope. inset:auto cancels the popover UA centering so our
+     explicit bottom/left placement takes effect. */
+  :global(.emoji-picker-popover) {
     position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .emoji-picker {
-    position: fixed;
+    inset: auto;
     bottom: 120px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 100;
+    margin: 0;
+  }
+
+  .emoji-picker {
     width: 380px;
     background: rgba(37, 37, 40, 0.95);
     backdrop-filter: blur(20px) saturate(1.2);

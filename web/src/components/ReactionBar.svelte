@@ -25,8 +25,13 @@
     ReactionDetailsPanel anchored to the pill. Fired by "See all" and long-press.
 -->
 <script>
+  import { topLayer } from '../lib/top-layer.svelte.js';
+
   const MAX_TOOLTIP_NAMES = 3;
   const LONG_PRESS_MS = 500;
+  // Grace delay so the pointer can travel from the pill into the tooltip
+  // (to click "See all") without the tooltip closing in between.
+  const TOOLTIP_CLOSE_MS = 120;
 
   let {
     reactions = [],
@@ -35,6 +40,39 @@
     resolveReactor,
     onOpenDetails,
   } = $props();
+
+  // ── Hover/focus tooltip lifecycle (Overlay overhaul Phase 2) ──
+  // The tooltip is now a manual top-layer popover (Popover API via
+  // use:topLayer) instead of a CSS :hover child, so it escapes the message
+  // list's overflow/transform/stacking contexts. We drive show/hide in JS
+  // to preserve the exact hover lifecycle: open on pill hover/focus, keep
+  // open while the pointer is over the pill OR the tooltip, close on a short
+  // grace delay otherwise.
+  let openIndex = $state(/** @type {number | null} */ (null));
+  let anchorEl = $state(/** @type {HTMLElement | null} */ (null));
+  let closeTimer = null;
+
+  function cancelClose() {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+  }
+
+  function openTip(i, el) {
+    cancelClose();
+    openIndex = i;
+    anchorEl = el ?? null;
+  }
+
+  function scheduleClose() {
+    cancelClose();
+    closeTimer = setTimeout(() => {
+      openIndex = null;
+      anchorEl = null;
+      closeTimer = null;
+    }, TOOLTIP_CLOSE_MS);
+  }
 
   // Stable per-instance id base for aria linkage (pill ↔ its tooltip names).
   const uid = $props.id();
@@ -110,8 +148,11 @@
         onclick={() => handlePillClick(reaction)}
         onpointerdown={(e) => startPress(e, reaction)}
         onpointerup={cancelPress}
-        onpointerleave={cancelPress}
         onpointercancel={cancelPress}
+        onmouseenter={(e) => openTip(i, e.currentTarget)}
+        onmouseleave={() => { cancelPress(); scheduleClose(); }}
+        onfocus={(e) => openTip(i, e.currentTarget)}
+        onblur={scheduleClose}
         aria-label="{reaction.emoji} reaction, {reaction.count} {reaction.count === 1 ? 'person' : 'people'}"
         aria-pressed={reaction.active}
         aria-describedby={tooltipId(i)}
@@ -120,23 +161,42 @@
         <span class="count">{reaction.count}</span>
       </button>
       <!--
-        The hover/focus popover. ``role="tooltip"`` lives ONLY on the
-        non-interactive names span (a tooltip must not be an interactive
-        container); the "See all" control is a sibling button, not inside the
-        tooltip role. The pill links to the names via ``aria-describedby``.
+        The hover/focus tooltip - a manual top-layer popover (use:topLayer)
+        anchored to the pill, so it escapes the message list's stacking /
+        overflow contexts. It stays hoverable (pointer can move into it to
+        click "See all"): the tooltip cancels the close timer on enter/focus
+        and reschedules it on leave/blur. ``role="tooltip"`` lives ONLY on the
+        non-interactive names span; "See all" is a sibling button.
       -->
-      <span class="reaction-tooltip">
-        <span class="tooltip-names" role="tooltip" id={tooltipId(i)}>
-          {tooltipText(reaction)}
-        </span>
-        <button
-          type="button"
-          class="tooltip-see-all"
-          onclick={(e) => openDetailsFromTooltip(e, reaction)}
+      {#if openIndex === i}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span
+          class="reaction-tooltip"
+          onmouseenter={cancelClose}
+          onmouseleave={scheduleClose}
+          onfocusin={cancelClose}
+          onfocusout={scheduleClose}
+          use:topLayer={{
+            anchor: () => anchorEl?.getBoundingClientRect() ?? null,
+            placement: 'top-start',
+            offset: 6,
+            dismiss: 'manual',
+            trapInitialFocus: false,
+            restoreFocus: false,
+          }}
         >
-          See all
-        </button>
-      </span>
+          <span class="tooltip-names" role="tooltip" id={tooltipId(i)}>
+            {tooltipText(reaction)}
+          </span>
+          <button
+            type="button"
+            class="tooltip-see-all"
+            onclick={(e) => openDetailsFromTooltip(e, reaction)}
+          >
+            See all
+          </button>
+        </span>
+      {/if}
     </span>
   {/each}
   <button class="reaction-add" onclick={() => onAddReaction?.()} aria-label="Add reaction">+</button>
@@ -191,11 +251,11 @@
   .reaction.active .count { color: var(--ember-400); }
 
   /* ── Interactive hover/focus tooltip ── */
+  /* Now a manual top-layer popover: position + promotion are owned by
+     use:topLayer (it sets position:fixed + left/top inline); presence is
+     gated by the {#if openIndex === i} block, so no visibility/z-index
+     toggling is needed here - it is simply visible whenever rendered. */
   .reaction-tooltip {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 0;
-    z-index: 50;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -207,22 +267,7 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     font-size: 12px;
     color: var(--text-primary, #f1f1f3);
-    /* Hidden until the pill (or tooltip) is hovered / focused. visibility
-       (not display:none) keeps the "See all" button focusable once shown. */
-    visibility: hidden;
-    opacity: 0;
-    transition: opacity 100ms ease, visibility 100ms ease;
-    pointer-events: none;
-  }
-
-  /* The tooltip is a DOM descendant of .reaction-wrap, so :hover on the wrap
-     stays true while the pointer is over the tooltip — letting the user move
-     into it to click "See all". :focus-within covers the keyboard path. */
-  .reaction-wrap:hover .reaction-tooltip,
-  .reaction-wrap:focus-within .reaction-tooltip {
-    visibility: visible;
-    opacity: 1;
-    pointer-events: auto;
+    animation: panelIn 0.1s ease both;
   }
 
   .tooltip-names { color: var(--text-secondary, #c8c8cf); }

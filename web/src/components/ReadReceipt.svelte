@@ -5,12 +5,21 @@
   @prop {Array<string>} readers - Optional array of reader display names for the tooltip.
 -->
 <script>
+  import { topLayer } from '../lib/top-layer.svelte.js';
+
   let { count = 0, readers = [] } = $props();
 
   let showTooltip = $state(false);
+  // Anchor for the top-layer tooltip (Overlay overhaul, Phase 2): the tooltip
+  // now promotes into the browser native top layer via use:topLayer, escaping
+  // the MessageBubble overflow/transform stacking context that used to clip
+  // it. Positioned above this receipt; dismiss is component-controlled (hover)
+  // so the action neither light-dismisses nor steals focus.
+  let receiptEl = $state(/** @type {HTMLElement | null} */ (null));
 </script>
 
 <div
+  bind:this={receiptEl}
   class="read-receipt"
   class:has-readers={count > 0}
   role="status"
@@ -25,7 +34,18 @@
   <span class="read-count">Read by {count}</span>
 
   {#if showTooltip && count > 0}
-    <div class="tooltip" role="tooltip">
+    <div
+      class="tooltip"
+      role="tooltip"
+      use:topLayer={{
+        anchor: () => receiptEl?.getBoundingClientRect() ?? null,
+        placement: 'top',
+        offset: 8,
+        dismiss: 'manual',
+        trapInitialFocus: false,
+        restoreFocus: false,
+      }}
+    >
       <div class="tooltip-arrow"></div>
       <span class="tooltip-text">
         {#if readers.length > 0}
@@ -115,17 +135,15 @@
   }
 
   /* ── Tooltip ── */
+  /* Overlay overhaul, Phase 2: positioned by use:topLayer in the native top
+     layer (no position:absolute, no z-index). The action sets position:fixed
+     + coordinates anchored above the receipt. */
   .tooltip {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
     background: var(--bg-elevated, #252528);
     border: 1px solid var(--border, #222225);
     border-radius: 6px;
     padding: 6px 10px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-    z-index: 100;
     animation: tooltipIn 0.15s ease;
     pointer-events: none;
     white-space: nowrap;

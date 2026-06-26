@@ -36,6 +36,7 @@
     Check,
   } from 'lucide-svelte';
   import { formatTime, getParticipantColor } from '../lib/utils.js';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     artifact,
@@ -387,6 +388,14 @@
             aria-label="Compare-from version"
             aria-activedescendant={compareActiveId}
             onkeydown={handleCompareListboxKeydown}
+            use:topLayer={{
+              anchor: compareTriggerEl,
+              placement: 'bottom-start',
+              offset: 4,
+              dismiss: 'manual',
+              trapInitialFocus: false,
+              restoreFocus: false,
+            }}
           >
             {#each compareOptions as v, idx (v.version)}
               {@const pc = getParticipantColor(v.author?.key ?? '')}
@@ -441,6 +450,14 @@
           aria-label="Artifact version"
           aria-activedescendant={primaryActiveId}
           onkeydown={handlePrimaryListboxKeydown}
+          use:topLayer={{
+            anchor: primaryTriggerEl,
+            placement: 'bottom-start',
+            offset: 4,
+            dismiss: 'manual',
+            trapInitialFocus: false,
+            restoreFocus: false,
+          }}
         >
           {#each versions as v, idx (v.version)}
             {@const pc = getParticipantColor(v.author?.key ?? '')}
@@ -674,10 +691,8 @@
   }
 
   .artifact-version-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 4px;
+    /* Position + top-layer promotion owned by use:topLayer (sets position:
+       fixed + left/top inline, anchored to the trigger button); no z-index. */
     width: 320px;
     max-height: 240px;
     overflow-y: auto;
@@ -685,7 +700,6 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    z-index: 10;
     animation: panelIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 

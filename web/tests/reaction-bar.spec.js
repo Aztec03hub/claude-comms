@@ -26,7 +26,10 @@ function reaction(emoji, users, active = false) {
 afterEach(() => cleanup());
 
 describe('ReactionBar tooltip', () => {
-  it('lists up to 3 names then "+N others"', () => {
+  // The tooltip is now a manual top-layer popover rendered only while the
+  // pill is hovered/focused (Overlay overhaul Phase 2), so each test opens it
+  // by hovering the pill first (was a CSS :hover element, always in the DOM).
+  it('lists up to 3 names then "+N others"', async () => {
     const names = {
       bbbbbbbb: 'Alice',
       cccccccc: 'Bob',
@@ -34,7 +37,7 @@ describe('ReactionBar tooltip', () => {
       eeeeeeee: 'Dave',
       ffffffff: 'Eve',
     };
-    const { getByRole } = render(ReactionBar, {
+    const { getByRole, getByLabelText } = render(ReactionBar, {
       props: {
         reactions: [
           reaction('👍', ['bbbbbbbb', 'cccccccc', 'dddddddd', 'eeeeeeee', 'ffffffff']),
@@ -42,19 +45,21 @@ describe('ReactionBar tooltip', () => {
         resolveReactor: makeResolver(names),
       },
     });
+    await fireEvent.mouseEnter(getByLabelText(/👍 reaction/));
     const tooltip = getByRole('tooltip');
     expect(tooltip.textContent).toContain('Alice, Bob, Carol');
     expect(tooltip.textContent).toContain('+2 others');
     expect(tooltip.textContent).not.toContain('Dave');
   });
 
-  it('renders "You" for the self reactor and no overflow under 4 reactors', () => {
-    const { getByRole } = render(ReactionBar, {
+  it('renders "You" for the self reactor and no overflow under 4 reactors', async () => {
+    const { getByRole, getByLabelText } = render(ReactionBar, {
       props: {
         reactions: [reaction('🎉', [SELF, 'bbbbbbbb'], true)],
         resolveReactor: makeResolver({ bbbbbbbb: 'Alice' }),
       },
     });
+    await fireEvent.mouseEnter(getByLabelText(/🎉 reaction/));
     const tooltip = getByRole('tooltip');
     expect(tooltip.textContent).toContain('You, Alice');
     expect(tooltip.textContent).not.toContain('others');
@@ -62,13 +67,14 @@ describe('ReactionBar tooltip', () => {
 
   it('exposes a reachable "See all" control that opens the panel', async () => {
     const onOpenDetails = vi.fn();
-    const { getByText } = render(ReactionBar, {
+    const { getByText, getByLabelText } = render(ReactionBar, {
       props: {
         reactions: [reaction('👍', ['bbbbbbbb'])],
         resolveReactor: makeResolver({ bbbbbbbb: 'Alice' }),
         onOpenDetails,
       },
     });
+    await fireEvent.mouseEnter(getByLabelText(/👍 reaction/));
     const seeAll = getByText('See all');
     await fireEvent.click(seeAll);
     expect(onOpenDetails).toHaveBeenCalledTimes(1);

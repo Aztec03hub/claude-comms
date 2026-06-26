@@ -1374,6 +1374,7 @@
       onHover={handleDropdownHover}
       onCommit={handleDropdownCommit}
       listboxId="mention-listbox"
+      anchor={inputEl}
     />
   {/if}
 </div>
@@ -1384,7 +1385,7 @@
     border-top: 1px solid var(--border);
     background: linear-gradient(180deg, var(--bg-base) 0%, #0e0e10 100%);
     position: relative;
-    z-index: 2;
+    z-index: var(--z-content);
   }
 
   .typing-indicator {
@@ -1467,7 +1468,7 @@
     font-size: 11px;
     color: var(--text-secondary);
     white-space: nowrap;
-    z-index: 20;
+    z-index: var(--z-banner);
   }
 
   .format-help code {
@@ -1677,7 +1678,7 @@
     tab-size: 2;
     color: var(--text-primary);
     box-sizing: border-box;
-    z-index: 1;
+    z-index: var(--z-raised);
   }
 
   .input-overlay .mention-confirmed {
@@ -1803,7 +1804,7 @@
     min-height: 36px;
     max-height: 180px;
     position: relative;
-    z-index: 2;
+    z-index: var(--z-content);
     /* Hide the native scrollbar so the textarea NEVER reserves a scrollbar
        gutter. A gutter would shrink the textarea's text-layout width while the
        overlay (overflow: hidden, no gutter) keeps the full width — the wrap
