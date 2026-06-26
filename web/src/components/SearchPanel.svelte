@@ -95,7 +95,7 @@
       data-testid="search-panel-input"
     >
     <div class="search-panel-filters">
-      {#each filters as filter}
+      {#each filters as filter (filter)}
         <button
           class="search-filter"
           class:active={activeFilter === filter.toLowerCase()}

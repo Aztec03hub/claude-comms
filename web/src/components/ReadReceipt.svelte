@@ -8,13 +8,6 @@
   let { count = 0, readers = [] } = $props();
 
   let showTooltip = $state(false);
-
-  let tooltipText = $derived(() => {
-    if (readers.length > 0) {
-      return readers.join(', ');
-    }
-    return `${count} ${count === 1 ? 'person' : 'people'}`;
-  });
 </script>
 
 <div
@@ -36,7 +29,7 @@
       <div class="tooltip-arrow"></div>
       <span class="tooltip-text">
         {#if readers.length > 0}
-          {#each readers as reader, i}
+          {#each readers as reader, i (i)}
             <span class="reader-name">{reader}{i < readers.length - 1 ? ',' : ''}</span>
           {/each}
         {:else}
