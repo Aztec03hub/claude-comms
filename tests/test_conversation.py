@@ -19,7 +19,8 @@ from claude_comms.conversation import (
     load_meta,
     save_meta,
 )
-from claude_comms.message import ParticipantType, now_iso
+from claude_comms.message import now_iso
+from claude_comms.participant import ParticipantType
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
     tool_comms_conversation_archive,

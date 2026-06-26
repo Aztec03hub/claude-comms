@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from claude_comms.participant import KEY_PATTERN
+
 
 # Conversation ID validation — prevents path traversal in log paths
 CONV_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
@@ -16,7 +18,20 @@ CONV_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
 # Reserved conversation names that conflict with MQTT topic structure
 RESERVED_CONV_IDS = frozenset({"system", "meta"})
 
-ParticipantType = Literal["claude", "human"]
+# Reserved sentinel sender key stamped on every server-authored ``[system]``
+# message. Single source of truth — imported by the producers (mcp_tools,
+# mcp_server, cli) that stamp it and by ``notifier`` whose suppression rule
+# ("never cue a system message") depends on producers using exactly this
+# value. See the cross-file DRY audit.
+SYSTEM_SENDER_KEY = "00000000"
+
+# ``"system"`` covers the daemon-authored ``[system]`` messages whose sender
+# key is :data:`SYSTEM_SENDER_KEY`; ``Sender`` must accept them so the TUI /
+# web clients can render server notifications (conv created, artifact
+# changes, joins/leaves). It is NOT a joinable participant type — the
+# registry's ``Participant.type`` (participant.ParticipantType) stays
+# ``claude``/``human``.
+ParticipantType = Literal["claude", "human", "system"]
 
 
 def validate_conv_id(conv_id: str | None) -> bool:
@@ -148,9 +163,8 @@ class Message(BaseModel):
     @classmethod
     def _validate_recipients(cls, v: list[str] | None) -> list[str] | None:
         if v is not None:
-            hex8 = re.compile(r"^[0-9a-f]{8}$")
             for key in v:
-                if not hex8.match(key):
+                if not KEY_PATTERN.match(key):
                     raise ValueError(
                         f"recipient key must be 8 lowercase hex chars, got {key!r}"
                     )
@@ -163,9 +177,8 @@ class Message(BaseModel):
         # null-passes-through). `mentions` is presentation metadata, not a
         # visibility filter — see plans/mentions-vs-whisper-separation.md §5.
         if v is not None:
-            hex8 = re.compile(r"^[0-9a-f]{8}$")
             for key in v:
-                if not hex8.match(key):
+                if not KEY_PATTERN.match(key):
                     raise ValueError(
                         f"mention key must be 8 lowercase hex chars, got {key!r}"
                     )
