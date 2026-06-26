@@ -57,11 +57,14 @@
   let leaveDialogHasPinnedMessages = $state(false);
 
   // StatusEditor popover state (UX G-24, v0.4.2 Step 3.13).
-  // Anchored to the identity row's status line click. Open / close is
-  // local boolean; the editor itself is self-positioning (fixed
-  // bottom-left of viewport) so the sidebar's overflow:hidden doesn't
-  // clip it.
+  // Overlay overhaul Phase 1: the editor now opens in the browser native
+  // top layer (Popover API) ANCHORED to the identity row element below.
+  // `statusEditorAnchor` is bound to the profile-status row button and
+  // passed to <StatusEditor> so the popover positions above it and
+  // escapes the sidebar's backdrop-filter stacking context.
   let statusEditorOpen = $state(false);
+  /** @type {HTMLElement | null} */
+  let statusEditorAnchor = $state(null);
   function openStatusEditor() { statusEditorOpen = true; }
   function closeStatusEditor() { statusEditorOpen = false; }
   async function handleStatusSave(emoji, text, expiresAt) {
@@ -409,6 +412,7 @@
         type="button"
         class="profile-status-row"
         class:has-status={store.userProfile.profileStatus != null}
+        bind:this={statusEditorAnchor}
         onclick={(e) => { e.stopPropagation(); openStatusEditor(); }}
         data-testid="sidebar-profile-status"
         title="Set a status"
@@ -431,6 +435,7 @@
   {#if statusEditorOpen}
     <StatusEditor
       currentStatus={store.userProfile.profileStatus}
+      anchor={statusEditorAnchor}
       onSave={handleStatusSave}
       onClear={handleStatusClear}
       onCancel={closeStatusEditor}
