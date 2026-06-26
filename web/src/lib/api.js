@@ -229,7 +229,13 @@ export async function apiPost(path, body) {
             { status: 401, fatal: true }
           );
         }
-        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+        // Attach the parsed JSON error body so callers can surface
+        // server-supplied conflict details (e.g. the 409 save-conflict
+        // banner reads `err.body.latest_author` / `latest_version`).
+        // `.catch(() => null)` keeps a non-JSON / empty error body from
+        // masking the real status with a parse error.
+        const body = await res.json().catch(() => null);
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body });
       }
       return res.json();
     }

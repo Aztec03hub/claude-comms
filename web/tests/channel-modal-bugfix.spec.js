@@ -107,7 +107,7 @@ describe('ChannelModal: BUG-PHASE2A-1 Create button activation (v0.4.3)', () => 
     await tick();
 
     expect(onCreate).toHaveBeenCalledTimes(1);
-    expect(onCreate).toHaveBeenCalledWith('phoenix', '');
+    expect(onCreate).toHaveBeenCalledWith('phoenix', '', false);
   });
 
   it('click (keyboard activation path) fires onCreate exactly once when pointerdown did not fire', async () => {
@@ -127,7 +127,7 @@ describe('ChannelModal: BUG-PHASE2A-1 Create button activation (v0.4.3)', () => 
     await tick();
 
     expect(onCreate).toHaveBeenCalledTimes(1);
-    expect(onCreate).toHaveBeenCalledWith('phoenix', '');
+    expect(onCreate).toHaveBeenCalledWith('phoenix', '', false);
   });
 
   it('pointerdown + click in the same gesture fires onCreate EXACTLY ONCE (submitting latch dedupes)', async () => {
@@ -148,7 +148,7 @@ describe('ChannelModal: BUG-PHASE2A-1 Create button activation (v0.4.3)', () => 
     // The submitting latch must dedupe these two paths. If it doesn't,
     // store.createChannel runs twice and the user gets two channels.
     expect(onCreate).toHaveBeenCalledTimes(1);
-    expect(onCreate).toHaveBeenCalledWith('phoenix', '');
+    expect(onCreate).toHaveBeenCalledWith('phoenix', '', false);
   });
 
   it('pointerdown with a non-primary button (right-click) does NOT fire onCreate', async () => {
@@ -166,6 +166,31 @@ describe('ChannelModal: BUG-PHASE2A-1 Create button activation (v0.4.3)', () => 
     await tick();
 
     expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it('emits the Private Channel toggle as the third onCreate arg (WEB-E finding #4)', async () => {
+    const onCreate = vi.fn();
+    const props = makeProps({ onCreate });
+    render(ChannelModal, { props });
+    await tick();
+
+    await fillName('phoenix');
+
+    // Flip the Private Channel toggle ON before submitting.
+    const toggle = document.querySelector('[data-testid="channel-modal-private-toggle"]');
+    expect(toggle).not.toBeNull();
+    await fireEvent.click(toggle);
+    await tick();
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+
+    const btn = findCreateButton();
+    expect(btn.disabled).toBe(false);
+    await fireEvent.click(btn);
+    await tick();
+
+    // Previously the toggle was inert — isPrivate never reached onCreate.
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(onCreate).toHaveBeenCalledWith('phoenix', '', true);
   });
 
   it('pointerdown is ignored when name is invalid (button disabled gate must hold)', async () => {

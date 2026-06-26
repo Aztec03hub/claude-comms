@@ -282,7 +282,15 @@
   function handleWindowMouseDown(event) {
     if (!menuEl) return;
     const target = event.target;
-    if (target instanceof Node && menuEl.contains(target)) return;
+    if (target instanceof Node) {
+      if (menuEl.contains(target)) return;
+      // The Mute submenu is portaled to <body> (see {@attach portal()} on
+      // the submenu root), so it is NOT inside `menuEl`. Without this check a
+      // real mouse click on a submenu item fires mousedown first → we'd close
+      // the menu before the click/action fired (mouse Mute was unreachable).
+      const submenuEl = document.querySelector('[data-testid="channel-ctx-submenu"]');
+      if (submenuEl && submenuEl.contains(target)) return;
+    }
     onClose?.();
   }
 
