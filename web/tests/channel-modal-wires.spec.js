@@ -226,9 +226,10 @@ describe('App.svelte — ChannelModal create + cancel wires (v0.4.3 hotfix)', ()
     await flushChatViewScrollRAF();
 
     expect(store.createChannel).toHaveBeenCalledTimes(1);
-    // The wire calls createChannel(sanitizedName, description). Empty
-    // description default carries through as ''.
-    expect(store.createChannel).toHaveBeenCalledWith('phoenix', '');
+    // The wire calls createChannel(sanitizedName, description, isPrivate).
+    // Empty description default carries through as ''; the Private toggle
+    // defaults off so isPrivate is false.
+    expect(store.createChannel).toHaveBeenCalledWith('phoenix', '', false);
     // After create, the modal is unmounted (showChannelModal flipped false).
     expect(document.querySelector('[data-testid="channel-modal-content"]')).toBeNull();
   });

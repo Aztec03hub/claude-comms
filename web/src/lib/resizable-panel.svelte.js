@@ -1,3 +1,5 @@
+import { safeStorage } from './safe-storage.js';
+
 /**
  * lib/resizable-panel.svelte.js — shared drag-to-resize controller for the
  * slide-out side panels (ArtifactPanel + ThreadPanel).
@@ -13,9 +15,9 @@
  * only in the MIN / MAX / DEFAULT constants and the localStorage key. Any
  * resize bug had to be fixed in two places. This consolidates them.
  *
- * NOTE: mqtt-store.svelte.js keeps its OWN `safeStorage` copy; unifying that
- * third copy is a separate follow-up (different file owner) and is left as a
- * known remaining duplication.
+ * NOTE: `safeStorage` now lives in the shared `./safe-storage.js` module and
+ * is imported by both this file and mqtt-store.svelte.js — the three formerly
+ * duplicated copies are unified (#55 follow-up).
  *
  * Behaviour is byte-for-byte equivalent to the previous in-component logic:
  *   - Width persisted per-panel in localStorage, clamped to [min, max] with a
@@ -53,26 +55,8 @@ export function createResizablePanel({
   minChatReserve = 200,
   keyStep = 16,
 }) {
-  /**
-   * Safe localStorage wrapper. Tolerates private browsing / quota errors by
-   * silently no-oping.
-   */
-  const safeStorage = {
-    getItem(key) {
-      try {
-        return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
-      } catch {
-        return null;
-      }
-    },
-    setItem(key, value) {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
-      } catch {
-        // localStorage unavailable -- silently ignore
-      }
-    },
-  };
+  // `safeStorage` (localStorage wrapper) is imported from the shared
+  // `./safe-storage.js` module — see the file header NOTE.
 
   /**
    * Clamp a requested width to the allowed range, with the upper bound

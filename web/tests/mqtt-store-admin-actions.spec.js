@@ -412,3 +412,62 @@ describe('MqttChatStore Step 3.6 admin-action queue behavior', () => {
     expect(store.channelsById['ch-b'].mode).toBe('public');
   });
 });
+
+// ── createChannel — Private toggle end-to-end wiring (#55 follow-up) ──────
+//
+// ChannelModal's "Private Channel" toggle emits onCreate(name, desc,
+// isPrivate); App.svelte forwards it to store.createChannel(id, topic,
+// isPrivate). The create API (comms_conversation_create) takes no
+// visibility argument, so createChannel sets the local visibility
+// immediately AND persists it through the admin path (setVisibility →
+// comms_conversation_update), mirroring ChannelAdminPanel. These specs
+// pin that the toggle is no longer silently inert.
+describe('MqttChatStore createChannel — Private toggle wiring', () => {
+  it('isPrivate=true creates a private local row and persists via comms_conversation_update', () => {
+    const store = makeStore();
+    store.connected = true;
+
+    store.createChannel('secret-room', 'hush', true);
+
+    // Local row reflects private immediately (instant feedback).
+    expect(store.channelsById['secret-room']).toBeDefined();
+    expect(store.channelsById['secret-room'].visibility).toBe('private');
+
+    // Backend visibility path fired (mirrors ChannelAdminPanel.setVisibility).
+    expect(mcpCallMock).toHaveBeenCalledWith('comms_conversation_update', {
+      key: '0123abcd',
+      conversation: 'secret-room',
+      visibility: 'private',
+    });
+  });
+
+  it('isPrivate=false (default) creates a public row and never flips visibility', () => {
+    const store = makeStore();
+    store.connected = true;
+
+    store.createChannel('open-room', 'hi');
+
+    expect(store.channelsById['open-room'].visibility).toBe('public');
+    // No visibility admin-action fired for a public create.
+    const visibilityCalls = mcpCallMock.mock.calls.filter(
+      ([tool, args]) =>
+        tool === 'comms_conversation_update' &&
+        args &&
+        typeof args.visibility === 'string',
+    );
+    expect(visibilityCalls).toHaveLength(0);
+  });
+
+  it('private create while disconnected queues the visibility admin-action', () => {
+    const store = makeStore();
+    expect(store.connected).toBe(false);
+
+    store.createChannel('queued-private', '', true);
+
+    // Local row is private right away.
+    expect(store.channelsById['queued-private'].visibility).toBe('private');
+    // No MCP call yet — the visibility persist is queued for reconnect.
+    expect(mcpCallMock).not.toHaveBeenCalled();
+    expect(store._pendingAdminActionsLengthForTest()).toBe(1);
+  });
+});

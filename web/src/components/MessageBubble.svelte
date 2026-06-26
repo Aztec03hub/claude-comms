@@ -110,29 +110,36 @@
     // loud-notify yourself about your own message.
     const viewerIsSender = viewerKey !== null && senderKey !== null && viewerKey === senderKey;
 
-    const result = [];
-    for (const t of richTokens) {
-      if (t.type === 'inline-code') {
-        result.push({ type: 'inline-code', value: t.value });
-        continue;
+    // Coalesce adjacent text segments that result from invalid-mention
+    // rewriting (e.g. "literal @mention here" becomes 3 text segments;
+    // joining them keeps the rendered output identical to a single text
+    // node and avoids stray inline boundaries the user could see as a
+    // layout artifact). Same-type, same-attribute segments only.
+    function coalesceText(segs) {
+      const out = [];
+      for (const seg of segs) {
+        const prev = out[out.length - 1];
+        if (prev && prev.type === 'text' && seg.type === 'text') {
+          prev.value += seg.value;
+        } else {
+          out.push(seg);
+        }
       }
-      if (t.type === 'block-code' || t.type === 'unclosed-block') {
-        // Existing CodeBlock component handles fenced rendering with shiki;
-        // keep that pipeline for parity with the markdown-rendered surface.
-        result.push({ type: 'codeblock', language: t.lang || '', code: t.value });
-        continue;
-      }
-      if (t.type === 'bold' || t.type === 'italic' || t.type === 'strike') {
-        // Emphasis tokens come from `parseRich` (read-side only). The inner
-        // value is plain text (flat-only v1 — no nesting), so mentions/links
-        // INSIDE *foo* / **bar** won't render as pills/links. That's a fair
-        // tradeoff for v1; we can revisit with a recursive parse if Phil
-        // hits a real case.
-        result.push({ type: t.type, value: t.value });
-        continue;
-      }
-      // text token: run mention + URL splitting (preserves prior behavior).
-      const mentionSegments = parseMentions(t.value);
+      return out;
+    }
+
+    // Split a plain-text run into mention / mention-self / mention-other /
+    // link / text segments. Shared by top-level `text` tokens AND the inner
+    // value of emphasis tokens (bold / italic / strike), so an `@mention`
+    // inside `**bold**` / `*italic*` / `~~strike~~` still resolves to a
+    // mention chip (primary bugfix — emphasis no longer swallows mentions).
+    //
+    // Code spans (inline-code / block-code) never reach here — they're
+    // emitted as their own tokens and pushed literally — so an `@name`
+    // inside backtick `code` stays literal and is never linkified.
+    function splitTextToSegments(text) {
+      const segs = [];
+      const mentionSegments = parseMentions(text);
       for (const mseg of mentionSegments) {
         if (mseg.type === 'mention') {
           // Validate the @-prefixed value against the live participants set.
@@ -150,9 +157,9 @@
             const broadcastName = mseg.value.startsWith('@') ? mseg.value.slice(1) : mseg.value;
             const viewerTargeted = viewerKey !== null && mentionsSet.has(viewerKey);
             if (viewerTargeted && !viewerIsSender) {
-              result.push({ type: 'mention-self', name: broadcastName, key: '__broadcast__' });
+              segs.push({ type: 'mention-self', name: broadcastName, key: '__broadcast__' });
             } else {
-              result.push({ type: 'mention-other', name: broadcastName, key: '__broadcast__' });
+              segs.push({ type: 'mention-other', name: broadcastName, key: '__broadcast__' });
             }
             continue;
           }
@@ -160,7 +167,7 @@
           if (resolvedKey === undefined) {
             // Unknown participant — render as plain text (existing
             // behavior, prevents "@example" literal chips).
-            result.push({ type: 'text', value: mseg.value });
+            segs.push({ type: 'text', value: mseg.value });
             continue;
           }
           // Resolved to a real participant. Classify against the wire
@@ -176,30 +183,30 @@
                 // Sender-self special case (§6.3 step 4): viewer IS the
                 // sender. Downgrade to legacy `.mention` — not loud,
                 // and not "other" either. Don't loud-notify yourself.
-                result.push(mseg);
+                segs.push(mseg);
               } else {
                 // Self-mention. Loud styling. The bubble border accent
                 // is computed from `bodySegments` after parseBody
                 // returns.
-                result.push({ type: 'mention-self', name: displayName, key: resolvedKey });
+                segs.push({ type: 'mention-self', name: displayName, key: resolvedKey });
               }
             } else {
               // Other-mention. Quiet styling. Includes the case where
               // the sender is the viewer AND someone ELSE is also
               // mentioned — the loop only sees one segment per `@name`
               // token, and this branch handles the non-self ones.
-              result.push({ type: 'mention-other', name: displayName, key: resolvedKey });
+              segs.push({ type: 'mention-other', name: displayName, key: resolvedKey });
             }
           } else {
             // Legacy / unkeyed / whisper / mentions-inactive — keep the
             // existing chip styling. Backwards-compat slot, also covers
             // whisper-with-named-recipient per §6.3 R2-C1.
-            result.push(mseg);
+            segs.push(mseg);
           }
           continue;
         }
         if (mseg.type !== 'text') {
-          result.push(mseg);
+          segs.push(mseg);
           continue;
         }
         let lastIndex = 0;
@@ -207,32 +214,48 @@
         LINK_REGEX.lastIndex = 0;
         while ((match = LINK_REGEX.exec(mseg.value)) !== null) {
           if (match.index > lastIndex) {
-            result.push({ type: 'text', value: mseg.value.slice(lastIndex, match.index) });
+            segs.push({ type: 'text', value: mseg.value.slice(lastIndex, match.index) });
           }
-          result.push({ type: 'link', value: match[0] });
+          segs.push({ type: 'link', value: match[0] });
           lastIndex = match.index + match[0].length;
         }
         if (lastIndex < mseg.value.length) {
-          result.push({ type: 'text', value: mseg.value.slice(lastIndex) });
+          segs.push({ type: 'text', value: mseg.value.slice(lastIndex) });
         }
+      }
+      return coalesceText(segs);
+    }
+
+    const result = [];
+    for (const t of richTokens) {
+      if (t.type === 'inline-code') {
+        result.push({ type: 'inline-code', value: t.value });
+        continue;
+      }
+      if (t.type === 'block-code' || t.type === 'unclosed-block') {
+        // Existing CodeBlock component handles fenced rendering with shiki;
+        // keep that pipeline for parity with the markdown-rendered surface.
+        result.push({ type: 'codeblock', language: t.lang || '', code: t.value });
+        continue;
+      }
+      if (t.type === 'bold' || t.type === 'italic' || t.type === 'strike') {
+        // Emphasis tokens from `parseRich` (read-side only) carry a plain-
+        // text inner `value` (flat-only v1 — no nested code). Run the same
+        // mention + link splitting over that value and stash the result as
+        // `children`; the template renders them INSIDE the emphasis wrapper
+        // so a mention/link inside *foo* / **bar** / ~~baz~~ gets BOTH the
+        // emphasis styling (inherited from the wrapper) AND its own chip /
+        // link styling. Fixes the "@mention in bold loses its color" bug.
+        result.push({ type: t.type, value: t.value, children: splitTextToSegments(t.value) });
+        continue;
+      }
+      // text token: run mention + URL splitting (preserves prior behavior).
+      for (const seg of splitTextToSegments(t.value)) {
+        result.push(seg);
       }
     }
 
-    // Coalesce adjacent text segments that result from invalid-mention
-    // rewriting (e.g. "literal @mention here" becomes 3 text segments;
-    // joining them keeps the rendered output identical to a single
-    // text node and avoids stray inline boundaries the user could see
-    // as a layout artifact). Same-type, same-attribute segments only.
-    const coalesced = [];
-    for (const seg of result) {
-      const prev = coalesced[coalesced.length - 1];
-      if (prev && prev.type === 'text' && seg.type === 'text') {
-        prev.value += seg.value;
-      } else {
-        coalesced.push(seg);
-      }
-    }
-    return coalesced;
+    return coalesceText(result);
   }
 
   let { message, consecutive = false, currentUser, participants, onOpenThread, onContextMenu, onShowProfile, onReact, onMore, onRetry } = $props();
@@ -252,10 +275,17 @@
   let senderColor = $derived(getParticipantColor(message.sender.key));
   let bodySegments = $derived(parseBody(message.body, participants, message, currentUser));
   // True iff ANY rendered segment is `mention-self` — drives the bubble
-  // border accent (`.has-self-mention`). The sender-self downgrade is
-  // already applied in parseBody, so this naturally returns false for
-  // the sender's own bubble and won't paint the loud border on it.
-  let hasSelfMention = $derived(bodySegments.some(s => s.type === 'mention-self'));
+  // border accent (`.has-self-mention`). Recurses into emphasis `children`
+  // so a self-mention inside **bold** / *italic* still paints the accent.
+  // The sender-self downgrade is already applied in parseBody, so this
+  // naturally returns false for the sender's own bubble.
+  function segsHaveSelfMention(segs) {
+    return segs.some(s =>
+      s.type === 'mention-self' ||
+      (Array.isArray(s.children) && segsHaveSelfMention(s.children))
+    );
+  }
+  let hasSelfMention = $derived(segsHaveSelfMention(bodySegments));
   let hasCode = $derived(message.body.includes('```'));
 
   // Detect URLs in message body for link previews
@@ -324,6 +354,36 @@
   }
 </script>
 
+<!--
+  Recursive segment renderer. Top-level body segments and the `children`
+  of emphasis (bold/italic/strike) segments share one render path, so a
+  mention or link nested inside emphasis gets its own chip/link styling
+  while inheriting the emphasis styling from the wrapper element.
+-->
+{#snippet renderSeg(seg)}
+  {#if seg.type === 'mention'}
+    <span class="mention">{seg.value}</span>
+  {:else if seg.type === 'mention-self'}
+    <span class="mention-chip-self">@{seg.name}</span>
+  {:else if seg.type === 'mention-other'}
+    <span class="mention-chip-other">@{seg.name}</span>
+  {:else if seg.type === 'link'}
+    <a class="inline-link" href={seg.value} target="_blank" rel="noopener noreferrer">{seg.value}</a>
+  {:else if seg.type === 'codeblock'}
+    <CodeBlock language={seg.language} code={seg.code} />
+  {:else if seg.type === 'inline-code'}
+    <span class="code-chip">{seg.value}</span>
+  {:else if seg.type === 'bold'}
+    <strong class="md-bold">{#each seg.children as c, i (i)}{@render renderSeg(c)}{/each}</strong>
+  {:else if seg.type === 'italic'}
+    <em class="md-italic">{#each seg.children as c, i (i)}{@render renderSeg(c)}{/each}</em>
+  {:else if seg.type === 'strike'}
+    <span class="md-strike">{#each seg.children as c, i (i)}{@render renderSeg(c)}{/each}</span>
+  {:else}
+    {seg.value}
+  {/if}
+{/snippet}
+
 <div
   class="msg-row"
   class:claude={!isHuman}
@@ -371,29 +431,7 @@
     {/if}
 
     <div class="bubble" class:bubble-targeted={isTargeted} class:has-self-mention={hasSelfMention}>
-      {#each bodySegments as seg, i (i)}
-        {#if seg.type === 'mention'}
-          <span class="mention">{seg.value}</span>
-        {:else if seg.type === 'mention-self'}
-          <span class="mention-chip-self">@{seg.name}</span>
-        {:else if seg.type === 'mention-other'}
-          <span class="mention-chip-other">@{seg.name}</span>
-        {:else if seg.type === 'link'}
-          <a class="inline-link" href={seg.value} target="_blank" rel="noopener noreferrer">{seg.value}</a>
-        {:else if seg.type === 'codeblock'}
-          <CodeBlock language={seg.language} code={seg.code} />
-        {:else if seg.type === 'inline-code'}
-          <span class="code-chip">{seg.value}</span>
-        {:else if seg.type === 'bold'}
-          <strong class="md-bold">{seg.value}</strong>
-        {:else if seg.type === 'italic'}
-          <em class="md-italic">{seg.value}</em>
-        {:else if seg.type === 'strike'}
-          <span class="md-strike">{seg.value}</span>
-        {:else}
-          {seg.value}
-        {/if}
-      {/each}
+      {#each bodySegments as seg, i (i)}{@render renderSeg(seg)}{/each}
     </div>
 
     {#each detectedUrls as link (link.url)}
