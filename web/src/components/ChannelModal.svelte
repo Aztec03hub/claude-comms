@@ -2,7 +2,7 @@
   @component ChannelModal
   @description Modal dialog for creating a new conversation channel. Validates and sanitizes the channel name (lowercase, no spaces, max 63 chars), accepts an optional description, and provides a private channel toggle.
   @prop {Function} onClose - Callback invoked when the modal is dismissed.
-  @prop {Function} onCreate - Callback invoked with (sanitizedName, description) when the user confirms creation.
+  @prop {Function} onCreate - Callback invoked with (sanitizedName, description, isPrivate) when the user confirms creation. The third argument is the Private Channel toggle value; legacy 2-arg callers keep working since the extra positional arg is ignored by arity-2 handlers.
 -->
 <script>
   import { Dialog } from "bits-ui";
@@ -45,7 +45,11 @@
   function handleCreate() {
     if (!nameIsValid || submitting) return;
     submitting = true;
-    onCreate(sanitizedName, description);
+    // Emit the Private Channel toggle as a third positional arg. Arity-2
+    // callers (the current App.svelte wire) ignore it harmlessly; the wiring
+    // to actually create a private channel (App.svelte → store.createChannel)
+    // is a follow-up outside this component's file set.
+    onCreate(sanitizedName, description, isPrivate);
   }
 
   function handlePrimaryPointerDown(e) {

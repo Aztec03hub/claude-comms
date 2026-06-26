@@ -50,6 +50,7 @@
   import MessageInput from './MessageInput.svelte';
   import { MessageSquare, Send, X } from 'lucide-svelte';
   import { formatTime, getParticipantColor } from '../lib/utils.js';
+  import { createResizablePanel } from '../lib/resizable-panel.svelte.js';
 
   let {
     parentMessage,
@@ -69,11 +70,15 @@
   // ── Resizable panel width (drag-to-resize on the left edge) ───────────────
   //
   // v0.4.3 new feature (Phil mid-Layer-B request): mirror ArtifactPanel's
-  // drag-resize pattern verbatim. Width is persisted per-user in
-  // localStorage. Constraints keep the panel usable on small screens while
-  // avoiding the chat getting crushed. The handle uses the Pointer Events
-  // API (covers mouse + touch + pen) and is keyboard-accessible as an ARIA
+  // drag-resize pattern. The pointer/keyboard/persistence logic is shared
+  // with ArtifactPanel via `createResizablePanel` (lib/resizable-panel.svelte.js)
+  // so a resize fix lands once for both panels. The handle uses the Pointer
+  // Events API (mouse + touch + pen) and is keyboard-accessible as an ARIA
   // separator (W3C WAI-ARIA APG "Window Splitter" pattern).
+  //
+  // These constants stay declared here (rather than inlined into the factory
+  // call) because they are the user-facing contract for THIS panel and are
+  // pinned at the source level by thread-panel.spec.js.
 
   /** Minimum drag-resize width in px. */
   const MIN_PANEL_WIDTH = 280;
@@ -81,167 +86,14 @@
   const MAX_PANEL_WIDTH = 720;
   /** Default width when no persisted value exists (matches pre-v0.4.3 fixed 360). */
   const DEFAULT_PANEL_WIDTH = 360;
-  /** Reserved width for the main chat area — panel can't crowd past this. */
-  const MIN_CHAT_RESERVE = 200;
-  /** Keyboard nudge step when the handle has focus (ArrowLeft/Right). */
-  const KEY_STEP = 16;
   /** localStorage key for persistence (mirrors ArtifactPanel naming). */
   const STORAGE_KEY = 'claude-comms:thread-panel-width';
 
-  /**
-   * Safe localStorage wrapper mirroring the one in mqtt-store.svelte.js and
-   * ArtifactPanel.svelte. Tolerates private browsing / quota errors by
-   * silently no-oping.
-   */
-  const safeStorage = {
-    getItem(key) {
-      try {
-        return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
-      } catch {
-        return null;
-      }
-    },
-    setItem(key, value) {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
-      } catch {
-        // localStorage unavailable -- silently ignore
-      }
-    },
-  };
-
-  /**
-   * Clamp a requested width to the allowed range, with the upper bound
-   * further constrained by the viewport so the panel never covers the
-   * whole screen on a laptop.
-   */
-  function clampWidth(w) {
-    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const upper = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, viewport - MIN_CHAT_RESERVE));
-    if (!Number.isFinite(w)) return DEFAULT_PANEL_WIDTH;
-    return Math.max(MIN_PANEL_WIDTH, Math.min(upper, w));
-  }
-
-  /** Read the persisted width (if any), clamped to the current viewport. */
-  function initialPanelWidth() {
-    const raw = safeStorage.getItem(STORAGE_KEY);
-    const parsed = raw != null ? Number.parseInt(raw, 10) : NaN;
-    return clampWidth(Number.isFinite(parsed) ? parsed : DEFAULT_PANEL_WIDTH);
-  }
-
-  let panelWidth = $state(initialPanelWidth());
-  let isResizing = $state(false);
-
-  /** @type {HTMLDivElement | null} */
-  let resizeHandleEl = $state(null);
-  /**
-   * Offset between the cursor's clientX and the panel's left edge at the
-   * moment drag started. Without this, the first pointermove would snap the
-   * left edge onto the cursor, causing a visible jump equal to the handle
-   * width (or further if the user clicked near the edge of the handle).
-   */
-  let dragOffsetX = 0;
-
-  /**
-   * pointerdown on the handle: capture the pointer so move/up fire on the
-   * handle even if the cursor leaves the element. Flip into resizing mode
-   * to suppress transitions and apply the body-level cursor override.
-   * Record the cursor-to-left-edge offset so subsequent pointermove events
-   * can preserve the grip position under the cursor (no jump).
-   */
-  function handleResizePointerDown(e) {
-    // Ignore non-primary buttons to avoid right-click dragging.
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    if (!resizeHandleEl) return;
-    e.preventDefault();
-    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const panelLeftEdge = viewport - panelWidth;
-    dragOffsetX = e.clientX - panelLeftEdge;
-    isResizing = true;
-    try {
-      resizeHandleEl.setPointerCapture(e.pointerId);
-    } catch {
-      // setPointerCapture can throw on detached elements; non-fatal.
-    }
-  }
-
-  /**
-   * pointermove while dragging: maintain the original cursor-to-left-edge
-   * offset captured on pointerdown so the handle tracks smoothly under the
-   * cursor instead of snapping to it. Clamped to [MIN, MAX].
-   */
-  function handleResizePointerMove(e) {
-    if (!isResizing) return;
-    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const desiredLeftEdge = e.clientX - dragOffsetX;
-    const next = clampWidth(viewport - desiredLeftEdge);
-    panelWidth = next;
-  }
-
-  /**
-   * pointerup / pointercancel: release capture, exit resizing mode, and
-   * persist the final width.
-   */
-  function handleResizePointerUp(e) {
-    if (!isResizing) return;
-    isResizing = false;
-    if (resizeHandleEl) {
-      try {
-        resizeHandleEl.releasePointerCapture(e.pointerId);
-      } catch {
-        // Non-fatal if already released.
-      }
-    }
-    safeStorage.setItem(STORAGE_KEY, String(Math.round(panelWidth)));
-  }
-
-  /**
-   * Keyboard nudges for the ARIA separator. ArrowLeft grows the panel
-   * (increases width), ArrowRight shrinks it, matching the visual metaphor
-   * of dragging the handle horizontally. Home/End jump to the extremes.
-   * Each committed change is persisted.
-   */
-  function handleResizeKeydown(e) {
-    let next = panelWidth;
-    switch (e.key) {
-      case 'ArrowLeft':
-        next = clampWidth(panelWidth + KEY_STEP);
-        break;
-      case 'ArrowRight':
-        next = clampWidth(panelWidth - KEY_STEP);
-        break;
-      case 'Home':
-        next = clampWidth(MAX_PANEL_WIDTH);
-        break;
-      case 'End':
-        next = clampWidth(MIN_PANEL_WIDTH);
-        break;
-      default:
-        return;
-    }
-    e.preventDefault();
-    if (next !== panelWidth) {
-      panelWidth = next;
-      safeStorage.setItem(STORAGE_KEY, String(Math.round(panelWidth)));
-    }
-  }
-
-  /**
-   * Re-clamp the stored width whenever the viewport shrinks enough that
-   * our current value would cover the chat area. Also cancels any in-flight
-   * drag on window resize so we don't end up with stale capture state.
-   */
-  $effect(() => {
-    if (typeof window === 'undefined') return;
-    const onResize = () => {
-      const clamped = clampWidth(panelWidth);
-      if (clamped !== panelWidth) {
-        panelWidth = clamped;
-        safeStorage.setItem(STORAGE_KEY, String(Math.round(panelWidth)));
-      }
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+  const resizer = createResizablePanel({
+    minWidth: MIN_PANEL_WIDTH,
+    maxWidth: MAX_PANEL_WIDTH,
+    defaultWidth: DEFAULT_PANEL_WIDTH,
+    storageKey: STORAGE_KEY,
   });
 
   // Whether to render the shared MessageInput composer (3.12) or the
@@ -315,11 +167,11 @@
 
 <div
   class="thread-panel"
-  class:is-resizing={isResizing}
+  class:is-resizing={resizer.isResizing}
   data-testid="thread-panel"
   role="complementary"
   aria-label="Thread replies"
-  style="width: {panelWidth}px"
+  style="width: {resizer.width}px"
 >
   <!--
     Drag-to-resize handle on the left edge. Uses the Pointer Events API so
@@ -336,21 +188,21 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    bind:this={resizeHandleEl}
+    {@attach resizer.attachHandle}
     class="resize-handle"
     data-testid="thread-panel-resize-handle"
     role="separator"
     tabindex="0"
     aria-orientation="vertical"
     aria-label="Resize thread panel"
-    aria-valuenow={Math.round(panelWidth)}
+    aria-valuenow={Math.round(resizer.width)}
     aria-valuemin={MIN_PANEL_WIDTH}
     aria-valuemax={MAX_PANEL_WIDTH}
-    onpointerdown={handleResizePointerDown}
-    onpointermove={handleResizePointerMove}
-    onpointerup={handleResizePointerUp}
-    onpointercancel={handleResizePointerUp}
-    onkeydown={handleResizeKeydown}
+    onpointerdown={resizer.onPointerDown}
+    onpointermove={resizer.onPointerMove}
+    onpointerup={resizer.onPointerUp}
+    onpointercancel={resizer.onPointerUp}
+    onkeydown={resizer.onKeydown}
   ></div>
   <div class="thread-header">
     <div class="thread-title">

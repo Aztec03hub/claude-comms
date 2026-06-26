@@ -102,8 +102,14 @@
   // test fixture that omits a field doesn't crash the render (matches the
   // permissive shape the existing Sidebar.svelte / sidebar-fixes.spec.js
   // pattern uses).
-  let mode = $derived(channel?.mode || 'public');
-  let isPrivate = $derived(mode === 'private');
+  let mode = $derived(channel?.mode || 'open');
+  let visibility = $derived(channel?.visibility || 'public');
+  // Lock affordance: drive it off the SAME fields ChannelAdminPanel uses, not
+  // the old `mode === 'private'` check (the `mode` field holds `'open'`/
+  // `'invite'`, never `'private'`, so that check never matched after an admin
+  // changed the channel). A channel reads as "locked" when it is invite-only
+  // (`mode === 'invite'`) or non-discoverable (`visibility === 'private'`).
+  let isPrivate = $derived(mode === 'invite' || visibility === 'private');
   let memberCount = $derived(typeof channel?.memberCount === 'number' ? channel.memberCount : 0);
   let unread = $derived(typeof channel?.unread === 'number' ? channel.unread : 0);
   let unreadHasMention = $derived(channel?.unreadHasMention === true);
@@ -203,7 +209,7 @@
   data-section={sectionVariant}
   data-transition-flavor={transitionFlavor}
 >
-  <span class="row-glyph" aria-hidden="true">
+  <span class="row-glyph" aria-hidden="true" data-glyph={isPrivate ? 'lock' : 'hash'} data-testid="row-glyph-{channel?.id ?? ''}">
     {#if isPrivate}
       <Lock size={16} strokeWidth={2} />
     {:else}

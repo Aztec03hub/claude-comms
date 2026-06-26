@@ -9,6 +9,7 @@
   import { X, Clock } from 'lucide-svelte';
   import { untrack } from 'svelte';
   import { API_BASE, apiGet, apiPost } from '../lib/api.js';
+  import { createResizablePanel } from '../lib/resizable-panel.svelte.js';
   import ArtifactList from './ArtifactList.svelte';
   import ArtifactDetailHeader from './ArtifactDetailHeader.svelte';
   import ArtifactDetailBody from './ArtifactDetailBody.svelte';
@@ -19,10 +20,11 @@
 
   // ── Resizable panel width (drag-to-resize on the left edge) ───────────────
   //
-  // Width is persisted per-user in localStorage. Constraints keep the panel
-  // usable on small screens while avoiding the chat getting crushed. The
-  // handle uses the Pointer Events API (covers mouse + touch + pen) and is
-  // keyboard-accessible as an ARIA separator.
+  // Width is persisted per-user in localStorage. The pointer/keyboard/
+  // persistence logic is shared with ThreadPanel via `createResizablePanel`
+  // (lib/resizable-panel.svelte.js) so a resize fix lands once for both
+  // panels. The handle uses the Pointer Events API (mouse + touch + pen) and
+  // is keyboard-accessible as an ARIA separator.
 
   /** Minimum drag-resize width in px. */
   const MIN_PANEL_WIDTH = 320;
@@ -30,166 +32,14 @@
   const MAX_PANEL_WIDTH = 900;
   /** Default width when no persisted value exists. */
   const DEFAULT_PANEL_WIDTH = 380;
-  /** Reserved width for the main chat area — panel can't crowd past this. */
-  const MIN_CHAT_RESERVE = 200;
-  /** Keyboard nudge step when the handle has focus (ArrowLeft/Right). */
-  const KEY_STEP = 16;
   /** localStorage key for persistence. */
   const STORAGE_KEY = 'claude-comms:artifact-panel-width';
 
-  /**
-   * Safe localStorage wrapper mirroring the one in mqtt-store.svelte.js.
-   * Tolerates private browsing / quota errors by silently no-oping.
-   */
-  const safeStorage = {
-    getItem(key) {
-      try {
-        return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
-      } catch {
-        return null;
-      }
-    },
-    setItem(key, value) {
-      try {
-        if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
-      } catch {
-        // localStorage unavailable -- silently ignore
-      }
-    },
-  };
-
-  /**
-   * Clamp a requested width to the allowed range, with the upper bound
-   * further constrained by the viewport so the panel never covers the
-   * whole screen on a laptop.
-   */
-  function clampWidth(w) {
-    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const upper = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, viewport - MIN_CHAT_RESERVE));
-    if (!Number.isFinite(w)) return DEFAULT_PANEL_WIDTH;
-    return Math.max(MIN_PANEL_WIDTH, Math.min(upper, w));
-  }
-
-  /** Read the persisted width (if any), clamped to the current viewport. */
-  function initialPanelWidth() {
-    const raw = safeStorage.getItem(STORAGE_KEY);
-    const parsed = raw != null ? Number.parseInt(raw, 10) : NaN;
-    return clampWidth(Number.isFinite(parsed) ? parsed : DEFAULT_PANEL_WIDTH);
-  }
-
-  let panelWidth = $state(initialPanelWidth());
-  let isResizing = $state(false);
-
-  /** @type {HTMLDivElement | null} */
-  let resizeHandleEl = $state(null);
-  /**
-   * Offset between the cursor's clientX and the panel's left edge at the
-   * moment drag started. Without this, the first pointermove would snap the
-   * left edge onto the cursor, causing a visible jump equal to the handle
-   * width (or further if the user clicked near the edge of the handle).
-   */
-  let dragOffsetX = 0;
-
-  /**
-   * pointerdown on the handle: capture the pointer so move/up fire on the
-   * handle even if the cursor leaves the element. Flip into resizing mode
-   * to suppress transitions and apply the body-level cursor override.
-   * Record the cursor-to-left-edge offset so subsequent pointermove events
-   * can preserve the grip position under the cursor (no jump).
-   */
-  function handleResizePointerDown(e) {
-    // Ignore non-primary buttons to avoid right-click dragging.
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    if (!resizeHandleEl) return;
-    e.preventDefault();
-    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const panelLeftEdge = viewport - panelWidth;
-    dragOffsetX = e.clientX - panelLeftEdge;
-    isResizing = true;
-    try {
-      resizeHandleEl.setPointerCapture(e.pointerId);
-    } catch {
-      // setPointerCapture can throw on detached elements; non-fatal.
-    }
-  }
-
-  /**
-   * pointermove while dragging: maintain the original cursor-to-left-edge
-   * offset captured on pointerdown so the handle tracks smoothly under the
-   * cursor instead of snapping to it. Clamped to [MIN, MAX].
-   */
-  function handleResizePointerMove(e) {
-    if (!isResizing) return;
-    const viewport = typeof window !== 'undefined' ? window.innerWidth : 1600;
-    const desiredLeftEdge = e.clientX - dragOffsetX;
-    const next = clampWidth(viewport - desiredLeftEdge);
-    panelWidth = next;
-  }
-
-  /**
-   * pointerup / pointercancel: release capture, exit resizing mode, and
-   * persist the final width.
-   */
-  function handleResizePointerUp(e) {
-    if (!isResizing) return;
-    isResizing = false;
-    if (resizeHandleEl) {
-      try {
-        resizeHandleEl.releasePointerCapture(e.pointerId);
-      } catch {
-        // Non-fatal if already released.
-      }
-    }
-    safeStorage.setItem(STORAGE_KEY, String(Math.round(panelWidth)));
-  }
-
-  /**
-   * Keyboard nudges for the ARIA separator. ArrowLeft grows the panel
-   * (increases width), ArrowRight shrinks it, matching the visual metaphor
-   * of dragging the handle horizontally. Home/End jump to the extremes.
-   * Each committed change is persisted.
-   */
-  function handleResizeKeydown(e) {
-    let next = panelWidth;
-    switch (e.key) {
-      case 'ArrowLeft':
-        next = clampWidth(panelWidth + KEY_STEP);
-        break;
-      case 'ArrowRight':
-        next = clampWidth(panelWidth - KEY_STEP);
-        break;
-      case 'Home':
-        next = clampWidth(MAX_PANEL_WIDTH);
-        break;
-      case 'End':
-        next = clampWidth(MIN_PANEL_WIDTH);
-        break;
-      default:
-        return;
-    }
-    e.preventDefault();
-    if (next !== panelWidth) {
-      panelWidth = next;
-      safeStorage.setItem(STORAGE_KEY, String(Math.round(panelWidth)));
-    }
-  }
-
-  /**
-   * Re-clamp the stored width whenever the viewport shrinks enough that
-   * our current value would cover the chat area. Also cancels any in-flight
-   * drag on window resize so we don't end up with stale capture state.
-   */
-  $effect(() => {
-    if (typeof window === 'undefined') return;
-    const onResize = () => {
-      const clamped = clampWidth(panelWidth);
-      if (clamped !== panelWidth) {
-        panelWidth = clamped;
-        safeStorage.setItem(STORAGE_KEY, String(Math.round(panelWidth)));
-      }
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+  const resizer = createResizablePanel({
+    minWidth: MIN_PANEL_WIDTH,
+    maxWidth: MAX_PANEL_WIDTH,
+    defaultWidth: DEFAULT_PANEL_WIDTH,
+    storageKey: STORAGE_KEY,
   });
 
   // Shared fetch state (list view)
@@ -296,6 +146,28 @@
     }
   }
 
+  /**
+   * Given the artifact's version list and the currently-selected ("to")
+   * version, return the greatest EXISTING version strictly less than it, or
+   * `null` when no older version exists (oldest selected, single version, or
+   * a malformed list). This is the valid "from" version for a diff and the
+   * clamp that prevents a v0 (or otherwise non-existent) diff request.
+   *
+   * @param {Array<{version:number}>} versions
+   * @param {number|null|undefined} selected
+   * @returns {number|null}
+   */
+  function nearestOlderVersion(versions, selected) {
+    if (selected == null || !Array.isArray(versions)) return null;
+    let best = null;
+    for (const entry of versions) {
+      const v = entry?.version;
+      if (typeof v !== 'number' || v >= selected) continue;
+      if (best === null || v > best) best = v;
+    }
+    return best;
+  }
+
   async function fetchArtifactDetail(name, version) {
     const channel = store.activeChannel;
     if (!channel || !name) return;
@@ -314,14 +186,15 @@
       if (!data.channel) data.channel = channel;
       selectedArtifact = data;
       selectedVersion = data.version;
-      // Initialise the compare slot to v(N-1) when multiple versions exist;
-      // otherwise leave null so the Diff toggle is disabled.
-      const versions = data.versions ?? [];
-      if (versions.length > 1 && data.version != null) {
-        compareVersion = data.version - 1;
-      } else {
-        compareVersion = null;
-      }
+      // Initialise the compare slot to the nearest EXISTING older version.
+      // Never blindly use `data.version - 1`: that requests a non-existent
+      // v0 when the selected version is the oldest (e.g. v1 → v0 → 404), and
+      // also breaks when version numbers aren't contiguous. We pick the
+      // greatest available version strictly less than the selected one; when
+      // none exists (oldest version selected, or only one version) we leave
+      // compareVersion null so the diff body short-circuits to empty instead
+      // of fetching a missing version.
+      compareVersion = nearestOlderVersion(data.versions ?? [], data.version);
     } catch (e) {
       detailError = e.message;
     } finally {
@@ -367,13 +240,40 @@
   }
 
   /**
+   * Close the primary version dropdown on an outside click. The dropdown's
+   * open state (`showVersionDropdown`) is owned here at the panel level (the
+   * header is a stateless child for this control), so the outside-click
+   * listener belongs here too — matching the pattern other menus use
+   * (ChannelContextMenu's window mousedown guard). The primary trigger +
+   * listbox both live inside `[data-testid="primary-version-selector"]`, so a
+   * mousedown anywhere outside that subtree closes the dropdown.
+   *
+   * NOTE: the "Compare:" dropdown's open state lives inside
+   * ArtifactDetailHeader (`showCompareDropdown`, local $state there) and so
+   * cannot be closed from this file — closing it on outside-click needs a
+   * one-line addition in ArtifactDetailHeader.svelte (out of this change's
+   * file set; flagged as a follow-up).
+   */
+  function handleVersionDropdownOutsideClick(e) {
+    if (!showVersionDropdown) return;
+    const node = e.target;
+    const el = node instanceof Element ? node : (node?.parentElement ?? null);
+    if (el && el.closest('[data-testid="primary-version-selector"]')) return;
+    showVersionDropdown = false;
+  }
+
+  /**
    * Handle the `[Content | Diff]` segmented toggle. Accepts 'content' or
    * 'diff'; guards against meaningless diff requests (only one version).
    */
   function handleSetViewMode(mode) {
     if (mode !== 'content' && mode !== 'diff') return;
     const versions = selectedArtifact?.versions ?? [];
-    if (mode === 'diff' && versions.length < 2) return;
+    // Diff is meaningful only when there are 2+ versions AND a valid older
+    // version exists to compare against (compareVersion non-null). The latter
+    // guards the oldest-version case so we never enter a diff that would
+    // request a non-existent version.
+    if (mode === 'diff' && (versions.length < 2 || compareVersion == null)) return;
     viewMode = mode;
   }
 
@@ -695,13 +595,15 @@
   }
 </script>
 
+<svelte:window onmousedown={handleVersionDropdownOutsideClick} />
+
 <div
   class="artifact-panel"
-  class:is-resizing={isResizing}
+  class:is-resizing={resizer.isResizing}
   data-testid="artifact-panel"
   role="complementary"
   aria-label="Artifacts"
-  style="width: {panelWidth}px"
+  style="width: {resizer.width}px"
 >
   <!--
     Drag-to-resize handle on the left edge. Uses the Pointer Events API so
@@ -717,21 +619,21 @@
   -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA window-splitter pattern) -->
   <div
-    bind:this={resizeHandleEl}
+    {@attach resizer.attachHandle}
     class="resize-handle"
     data-testid="artifact-panel-resize-handle"
     role="separator"
     tabindex="0"
     aria-orientation="vertical"
     aria-label="Resize artifact panel"
-    aria-valuenow={Math.round(panelWidth)}
+    aria-valuenow={Math.round(resizer.width)}
     aria-valuemin={MIN_PANEL_WIDTH}
     aria-valuemax={MAX_PANEL_WIDTH}
-    onpointerdown={handleResizePointerDown}
-    onpointermove={handleResizePointerMove}
-    onpointerup={handleResizePointerUp}
-    onpointercancel={handleResizePointerUp}
-    onkeydown={handleResizeKeydown}
+    onpointerdown={resizer.onPointerDown}
+    onpointermove={resizer.onPointerMove}
+    onpointerup={resizer.onPointerUp}
+    onpointercancel={resizer.onPointerUp}
+    onkeydown={resizer.onKeydown}
   ></div>
   {#if selectedArtifact && !detailLoading}
     <!-- Detail View -->

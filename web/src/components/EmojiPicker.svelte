@@ -44,6 +44,175 @@
     { emoji: '👌', name: 'OK Hand', code: ':ok_hand:' },
   ];
 
+  // Per-category datasets so the category tabs actually switch the grid.
+  // Codes are unique within each list (the `{#each}` key); the cross-category
+  // search dedups by code below.
+  const emojisByCategory = {
+    frequent: frequentEmojis,
+    smileys: [
+      { emoji: '😀', name: 'Grinning', code: ':grinning:' },
+      { emoji: '😃', name: 'Smiley', code: ':smiley:' },
+      { emoji: '😄', name: 'Smile', code: ':smile:' },
+      { emoji: '😁', name: 'Grin', code: ':grin:' },
+      { emoji: '😆', name: 'Laughing', code: ':laughing:' },
+      { emoji: '😅', name: 'Sweat Smile', code: ':sweat_smile:' },
+      { emoji: '🤣', name: 'Rolling On The Floor Laughing', code: ':rofl:' },
+      { emoji: '🙂', name: 'Slightly Smiling', code: ':slightly_smiling:' },
+      { emoji: '😉', name: 'Wink', code: ':wink:' },
+      { emoji: '😍', name: 'Heart Eyes', code: ':heart_eyes:' },
+      { emoji: '😘', name: 'Kissing Heart', code: ':kissing_heart:' },
+      { emoji: '😎', name: 'Sunglasses', code: ':sunglasses:' },
+      { emoji: '🤔', name: 'Thinking Face', code: ':thinking_face:' },
+      { emoji: '🤩', name: 'Star Struck', code: ':star_struck:' },
+      { emoji: '🥳', name: 'Partying Face', code: ':partying_face:' },
+      { emoji: '😴', name: 'Sleeping', code: ':sleeping:' },
+    ],
+    people: [
+      { emoji: '👋', name: 'Wave', code: ':wave:' },
+      { emoji: '🙌', name: 'Raised Hands', code: ':raised_hands2:' },
+      { emoji: '👏', name: 'Clap', code: ':clap:' },
+      { emoji: '🙏', name: 'Pray', code: ':pray2:' },
+      { emoji: '💪', name: 'Muscle', code: ':muscle:' },
+      { emoji: '🤝', name: 'Handshake', code: ':handshake:' },
+      { emoji: '👈', name: 'Point Left', code: ':point_left:' },
+      { emoji: '👉', name: 'Point Right', code: ':point_right:' },
+      { emoji: '👆', name: 'Point Up', code: ':point_up:' },
+      { emoji: '👇', name: 'Point Down', code: ':point_down:' },
+      { emoji: '✌️', name: 'Victory', code: ':v:' },
+      { emoji: '🤞', name: 'Crossed Fingers', code: ':crossed_fingers:' },
+      { emoji: '🤙', name: 'Call Me', code: ':call_me:' },
+      { emoji: '👌', name: 'OK Hand', code: ':ok_hand2:' },
+      { emoji: '🫶', name: 'Heart Hands', code: ':heart_hands:' },
+      { emoji: '🧑', name: 'Person', code: ':person:' },
+    ],
+    nature: [
+      { emoji: '🌱', name: 'Seedling', code: ':seedling:' },
+      { emoji: '🌳', name: 'Tree', code: ':tree:' },
+      { emoji: '🌲', name: 'Evergreen', code: ':evergreen:' },
+      { emoji: '🌸', name: 'Cherry Blossom', code: ':cherry_blossom:' },
+      { emoji: '🌻', name: 'Sunflower', code: ':sunflower:' },
+      { emoji: '🌹', name: 'Rose', code: ':rose:' },
+      { emoji: '🍀', name: 'Four Leaf Clover', code: ':four_leaf_clover:' },
+      { emoji: '🌿', name: 'Herb', code: ':herb:' },
+      { emoji: '🌍', name: 'Earth', code: ':earth:' },
+      { emoji: '🌙', name: 'Crescent Moon', code: ':crescent_moon:' },
+      { emoji: '⭐', name: 'Star', code: ':star2:' },
+      { emoji: '🌈', name: 'Rainbow', code: ':rainbow:' },
+      { emoji: '🔥', name: 'Fire', code: ':fire2:' },
+      { emoji: '💧', name: 'Droplet', code: ':droplet:' },
+      { emoji: '❄️', name: 'Snowflake', code: ':snowflake:' },
+      { emoji: '⚡', name: 'Zap', code: ':zap2:' },
+    ],
+    food: [
+      { emoji: '🍕', name: 'Pizza', code: ':pizza:' },
+      { emoji: '🍔', name: 'Hamburger', code: ':hamburger:' },
+      { emoji: '🍟', name: 'Fries', code: ':fries:' },
+      { emoji: '🌮', name: 'Taco', code: ':taco:' },
+      { emoji: '🍣', name: 'Sushi', code: ':sushi:' },
+      { emoji: '🍜', name: 'Ramen', code: ':ramen:' },
+      { emoji: '🍎', name: 'Apple', code: ':apple:' },
+      { emoji: '🍌', name: 'Banana', code: ':banana:' },
+      { emoji: '🍓', name: 'Strawberry', code: ':strawberry:' },
+      { emoji: '🍩', name: 'Doughnut', code: ':doughnut:' },
+      { emoji: '🍪', name: 'Cookie', code: ':cookie:' },
+      { emoji: '🍰', name: 'Cake', code: ':cake:' },
+      { emoji: '☕', name: 'Coffee', code: ':coffee:' },
+      { emoji: '🍺', name: 'Beer', code: ':beer:' },
+      { emoji: '🍷', name: 'Wine', code: ':wine:' },
+      { emoji: '🥑', name: 'Avocado', code: ':avocado:' },
+    ],
+    activities: [
+      { emoji: '⚽', name: 'Soccer', code: ':soccer:' },
+      { emoji: '🏀', name: 'Basketball', code: ':basketball:' },
+      { emoji: '🏈', name: 'Football', code: ':football:' },
+      { emoji: '⚾', name: 'Baseball', code: ':baseball:' },
+      { emoji: '🎾', name: 'Tennis', code: ':tennis:' },
+      { emoji: '🏐', name: 'Volleyball', code: ':volleyball:' },
+      { emoji: '🎱', name: '8 Ball', code: ':8ball:' },
+      { emoji: '🏓', name: 'Ping Pong', code: ':ping_pong:' },
+      { emoji: '🥇', name: 'First Place', code: ':first_place:' },
+      { emoji: '🏆', name: 'Trophy', code: ':trophy:' },
+      { emoji: '🎮', name: 'Video Game', code: ':video_game:' },
+      { emoji: '🎲', name: 'Game Die', code: ':game_die:' },
+      { emoji: '🎯', name: 'Dart', code: ':dart:' },
+      { emoji: '🎸', name: 'Guitar', code: ':guitar:' },
+      { emoji: '🎨', name: 'Art', code: ':art:' },
+      { emoji: '🚴', name: 'Cyclist', code: ':cyclist:' },
+    ],
+    objects: [
+      { emoji: '💡', name: 'Bulb', code: ':bulb:' },
+      { emoji: '💻', name: 'Computer', code: ':computer:' },
+      { emoji: '📱', name: 'Phone', code: ':phone:' },
+      { emoji: '⌨️', name: 'Keyboard', code: ':keyboard:' },
+      { emoji: '🖱️', name: 'Mouse', code: ':computer_mouse:' },
+      { emoji: '📷', name: 'Camera', code: ':camera:' },
+      { emoji: '🔋', name: 'Battery', code: ':battery:' },
+      { emoji: '🔌', name: 'Plug', code: ':plug:' },
+      { emoji: '💾', name: 'Floppy Disk', code: ':floppy:' },
+      { emoji: '📦', name: 'Package', code: ':package:' },
+      { emoji: '🔧', name: 'Wrench', code: ':wrench:' },
+      { emoji: '🔨', name: 'Hammer', code: ':hammer:' },
+      { emoji: '📌', name: 'Pushpin', code: ':pushpin:' },
+      { emoji: '📎', name: 'Paperclip', code: ':paperclip:' },
+      { emoji: '🔑', name: 'Key', code: ':key:' },
+      { emoji: '🔒', name: 'Lock', code: ':lock:' },
+    ],
+    symbols: [
+      { emoji: '❤️', name: 'Red Heart', code: ':heart2:' },
+      { emoji: '🧡', name: 'Orange Heart', code: ':orange_heart:' },
+      { emoji: '💛', name: 'Yellow Heart', code: ':yellow_heart:' },
+      { emoji: '💚', name: 'Green Heart', code: ':green_heart:' },
+      { emoji: '💙', name: 'Blue Heart', code: ':blue_heart:' },
+      { emoji: '💜', name: 'Purple Heart', code: ':purple_heart:' },
+      { emoji: '🖤', name: 'Black Heart', code: ':black_heart:' },
+      { emoji: '✅', name: 'Check', code: ':check2:' },
+      { emoji: '❌', name: 'Cross Mark', code: ':x:' },
+      { emoji: '⭕', name: 'Circle', code: ':o:' },
+      { emoji: '❗', name: 'Exclamation', code: ':exclamation:' },
+      { emoji: '❓', name: 'Question', code: ':question:' },
+      { emoji: '💯', name: 'Hundred', code: ':hundred2:' },
+      { emoji: '♻️', name: 'Recycle', code: ':recycle:' },
+      { emoji: '✨', name: 'Sparkles', code: ':sparkles:' },
+      { emoji: '⚠️', name: 'Warning', code: ':warning:' },
+    ],
+  };
+
+  // Flattened, code-deduped list for cross-category search.
+  const allEmojis = (() => {
+    const seen = new Set();
+    const out = [];
+    for (const list of Object.values(emojisByCategory)) {
+      for (const e of list) {
+        if (seen.has(e.code)) continue;
+        seen.add(e.code);
+        out.push(e);
+      }
+    }
+    return out;
+  })();
+
+  // The grid is driven by these derivations so BOTH the category tabs and the
+  // search box change what renders:
+  //   - non-empty query  → matches across ALL categories (name / code / glyph)
+  //   - empty query      → the active category's dataset
+  let filteredEmojis = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return emojisByCategory[activeCategory] ?? frequentEmojis;
+    const raw = searchQuery.trim();
+    return allEmojis.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.code.toLowerCase().includes(q) ||
+        e.emoji.includes(raw),
+    );
+  });
+
+  let gridLabel = $derived(
+    searchQuery.trim()
+      ? 'Search results'
+      : (categories.find((c) => c.id === activeCategory)?.label ?? 'Frequently used'),
+  );
+
   function selectEmoji(emojiData) {
     onSelect(emojiData);
   }
@@ -108,9 +277,9 @@
         >{cat.icon}</button>
       {/each}
     </div>
-    <div class="emoji-grid-label">Frequently Used</div>
+    <div class="emoji-grid-label" data-testid="emoji-grid-label">{gridLabel}</div>
     <div class="emoji-grid">
-      {#each frequentEmojis as emojiData (emojiData.code)}
+      {#each filteredEmojis as emojiData (emojiData.code)}
         <button
           class="emoji-item"
           onclick={() => selectEmoji(emojiData)}
@@ -118,6 +287,10 @@
           data-testid="emoji-item"
           aria-label={emojiData.name}
         >{emojiData.emoji}</button>
+      {:else}
+        <div class="emoji-empty" data-testid="emoji-empty">
+          No matches — press Enter to react with "{searchQuery.trim()}"
+        </div>
       {/each}
     </div>
     <div class="emoji-picker-footer">
@@ -234,6 +407,14 @@
   .emoji-item:hover {
     background: var(--bg-surface);
     transform: scale(1.2);
+  }
+
+  .emoji-empty {
+    grid-column: 1 / -1;
+    padding: 18px 8px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--text-faint);
   }
 
   .emoji-picker-footer {
