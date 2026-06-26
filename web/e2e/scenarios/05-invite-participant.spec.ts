@@ -538,8 +538,8 @@ test.describe('Scenario 05 v0.4.4 enhancements: W-8 top-layer coverage', () => {
     await row.click({ button: 'right' });
     const menu = appPage.locator('[data-testid="channel-ctx-menu"]');
     await expect(menu).toBeVisible();
-    // W-8: hit-test the menu center to confirm it is on top. v0.4.4 fix
-    // portals + bumps z-index to 9999.
+    // W-8: hit-test the menu center to confirm it is on top. Phase 2 puts it
+    // in the browser native top layer via use:topLayer (no portal/z-index).
     await expectLocatorOnTop(appPage, menu);
     await appPage.keyboard.press('Escape');
     assertNoConsoleErrors(consoleErrors);
@@ -554,10 +554,13 @@ test.describe('Scenario 05 v0.4.4 enhancements: W-8 top-layer coverage', () => {
     assertNoConsoleErrors(consoleErrors);
   });
 
-  test('source-level pin: ChannelContextMenu portals + z-index 9999 (W-8)', () => {
+  test('source-level pin: ChannelContextMenu uses the top-layer primitive (W-8)', () => {
     const src = readFileSync(CHANNEL_CTX_MENU_PATH, 'utf-8');
-    // The v0.4.4 fix applied portal to both the main menu AND the submenu.
-    expect(src).toMatch(/\{@attach\s+portal\(\)\}/);
-    expect(src).toMatch(/z-index:\s*9999/);
+    // Phase 2: the menu AND its submenu each promote into the native top
+    // layer via use:topLayer (design §F.8) - no portal, no hardcoded z-index.
+    const matches = src.match(/use:topLayer/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+    expect(src).not.toMatch(/\{@attach\s+portal\(\)\}/);
+    expect(src).not.toMatch(/z-index:\s*\d/);
   });
 });

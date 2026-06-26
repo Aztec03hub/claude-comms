@@ -130,3 +130,102 @@ test.describe('Scenario 14: StatusEditor in the native top layer', () => {
     assertNoConsoleErrors(consoleErrors);
   });
 });
+
+// ── Phase 2: the newly-migrated overlays over deliberately-occluding
+// surfaces (design §E Tier-2 / §F worst-case trap pairs). Each asserts the
+// real "painted on top" hit-test PLUS the native top-layer pseudo-class
+// (:popover-open for popovers, :modal for the dialog) that only Chromium can
+// evaluate.
+async function openGeneral(appPage: import('@playwright/test').Page) {
+  await appPage.waitForSelector('[data-testid="sidebar-sections"]');
+  await appPage.locator('[data-testid="sidebar-channel-row-general"]').click();
+  await appPage.waitForSelector('[data-testid="chat-view"]');
+}
+
+test.describe('Scenario 14: anchored popovers + native modal in the top layer', () => {
+  test('MentionDropdown paints ON TOP over the message list AND is :popover-open', async ({
+    appPage,
+    consoleErrors,
+  }) => {
+    await openGeneral(appPage);
+    const input = appPage.locator('[data-testid="message-input"]');
+    await input.click();
+    // Typing "@" at a word boundary opens the mention autocomplete over the
+    // message list (the composer's stacking/overflow context used to clip it).
+    await input.pressSequentially('@');
+
+    const dropdown = appPage.locator('[data-testid="mention-dropdown"]');
+    await expect(dropdown).toBeVisible();
+    await expectLocatorOnTop(appPage, dropdown);
+    const isPopoverOpen = await dropdown.evaluate((el) =>
+      el.matches(':popover-open'),
+    );
+    expect(isPopoverOpen, 'mention dropdown must match :popover-open').toBe(true);
+
+    // Keyboard focus is NOT captured by the dropdown - it stays in the
+    // textarea (the dropdown is presentational).
+    const focusTestId = await appPage.evaluate(
+      () => document.activeElement?.getAttribute('data-testid') ?? null,
+    );
+    expect(focusTestId).toBe('message-input');
+
+    // Removing the trigger char closes it.
+    await input.press('Backspace');
+    await expect(dropdown).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('ChannelContextMenu paints ON TOP over an open backdrop-filter panel AND is :popover-open', async ({
+    appPage,
+    consoleErrors,
+  }) => {
+    // Open the artifact panel (backdrop-filter -> its own stacking context),
+    // the exact trap that used to paint the menu behind the panel.
+    await openArtifactPanel(appPage);
+    await appPage
+      .locator('[data-testid="sidebar-channel-row-general"]')
+      .click({ button: 'right' });
+
+    const menu = appPage.locator('[data-testid="channel-ctx-menu"]');
+    await expect(menu).toBeVisible();
+    await expectLocatorOnTop(appPage, menu);
+    const isPopoverOpen = await menu.evaluate((el) =>
+      el.matches(':popover-open'),
+    );
+    expect(isPopoverOpen, 'channel context menu must match :popover-open').toBe(
+      true,
+    );
+
+    await appPage.keyboard.press('Escape');
+    await expect(menu).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+
+  test('quick-join is a native :modal dialog (inert background) and Esc-dismisses', async ({
+    appPage,
+    consoleErrors,
+  }) => {
+    await openGeneral(appPage);
+    await appPage.keyboard.press('Control+j');
+
+    const dialog = appPage.locator('[data-testid="quick-join-dialog"]');
+    await expect(dialog).toBeVisible();
+    await expectLocatorOnTop(appPage, dialog);
+    const isModal = await dialog.evaluate((el) => el.matches(':modal'));
+    expect(isModal, 'quick-join must be a native :modal <dialog>').toBe(true);
+
+    // Inert background: a sidebar channel row sits behind the modal scrim and
+    // is NOT the topmost element at its own centre (the ::backdrop is).
+    const bgRow = appPage.locator('[data-testid="sidebar-channel-row-dev-chat"]');
+    const bgInert = await bgRow.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return top === null || !el.contains(top);
+    });
+    expect(bgInert, 'background row must be inert behind the modal').toBe(true);
+
+    await appPage.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+    assertNoConsoleErrors(consoleErrors);
+  });
+});

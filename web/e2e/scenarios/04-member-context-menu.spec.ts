@@ -430,17 +430,16 @@ test.describe('Scenario 04 v0.4.4 enhancements: W-8 + W-12 coverage', () => {
     assertNoConsoleErrors(consoleErrors);
   });
 
-  test('source-level pin: MemberContextMenu portals to <body> (W-8)', () => {
-    // P-1 + W-8 source side: the v0.4.4 fix relocates the menu DOM under
-    // <body> via Svelte 5 `{@attach portal()}`. If the attachment is
-    // removed, the menu falls back to its native location (inside the
-    // backdrop-filter stacking context) and Phil's Bug 1 returns.
+  test('source-level pin: MemberContextMenu uses the top-layer primitive (W-8)', () => {
+    // Overlay overhaul Phase 2 supersedes the v0.4.4 portal+z9999 fix: the
+    // menu now promotes into the browser native top layer via use:topLayer
+    // (Popover API), which escapes the backdrop-filter stacking contexts with
+    // NO portal and NO z-index. If this regresses to a portal or a hardcoded
+    // index, Phil's Bug 1 risk returns - so pin the new primitive instead.
     const src = readFileSync(MEMBER_CTX_PATH, 'utf-8');
-    // Pin the attach directive + the portal import.
-    expect(src).toMatch(/\{@attach\s+portal\(\)\}/);
-    expect(src).toMatch(/from\s+['"][^'"]*portal/);
-    // Pin the z-index bump (post-v0.4.4 = 9999, pre-v0.4.4 = 250).
-    expect(src).toMatch(/z-index:\s*9999/);
+    expect(src).toMatch(/use:topLayer/);
+    expect(src).not.toMatch(/\{@attach\s+portal\(\)\}/);
+    expect(src).not.toMatch(/z-index:\s*\d/);
   });
 
   test('source-level pin: portal helper exists at lib/portal.js (W-8)', () => {

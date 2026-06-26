@@ -36,10 +36,12 @@ test.describe('Scenario 11: profile card', () => {
     assertNoConsoleErrors(consoleErrors);
   });
 
-  test('clicking the backdrop dismisses the card', async ({ appPage, consoleErrors }) => {
+  test('clicking outside dismisses the card', async ({ appPage, consoleErrors }) => {
     await openOwnProfile(appPage);
-    // Click the backdrop corner (away from the centered card) to fire onClose.
-    await appPage.locator('[data-testid="profile-card-close"]').click({ position: { x: 5, y: 5 } });
+    // Overlay overhaul Phase 2: the card is a top-layer popover with no
+    // backdrop element; a click well outside it fires the component's
+    // window-level outside-click handler -> onClose.
+    await appPage.mouse.click(5, 5);
     await expect(appPage.locator('[data-testid="profile-card"]')).not.toBeVisible();
     assertNoConsoleErrors(consoleErrors);
   });
