@@ -16,7 +16,7 @@
 // without needing a live broker. We mock `lib/api.js`'s `apiGet` so the
 // daemon does not need to be running.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -41,14 +41,27 @@ const STORE_SRC_PATH = resolve(HERE, '..', 'src', 'lib', 'mqtt-store.svelte.js')
 describe('MqttChatStore — v0.4.0 Step 2.5 bootstrap from /api/conversations', () => {
   /** @type {InstanceType<typeof MqttChatStore>} */
   let store;
+  /** @type {import('vitest').MockInstance} */
+  let warnSpy;
 
   beforeEach(() => {
+    // The error-path bootstrap tests below deliberately exercise
+    // ``#bootstrapChannels``'s 404/500/network branch, which logs a
+    // ``[claude-comms] /api/conversations bootstrap failed`` warning by
+    // design. Spy on (and silence) console.warn so the expected diagnostic
+    // does not pollute the suite's console; the error-path tests assert the
+    // warning fired so the suppression never hides a regression.
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     apiGetMock.mockReset();
     store = new MqttChatStore();
     // The store ships with an empty channels array now — assert the
     // pre-bootstrap state so we know the seed deletion landed.
     expect(store.channels).toEqual([]);
     expect(store.serverUnreachable).toBe(false);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
   });
 
   it('starts with an empty channels array (no hardcoded seed)', () => {
@@ -159,6 +172,11 @@ describe('MqttChatStore — v0.4.0 Step 2.5 bootstrap from /api/conversations', 
 
     expect(store.channels).toEqual([]);
     expect(store.serverUnreachable).toBe(true);
+    // The failure is surfaced via a single diagnostic warning.
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[claude-comms] /api/conversations bootstrap failed',
+      expect.objectContaining({ status: 404 }),
+    );
     // No fallback to hardcoded seeds.
     const ids = store.channels.map((c) => c.id);
     expect(ids).not.toContain('general');
@@ -172,6 +190,10 @@ describe('MqttChatStore — v0.4.0 Step 2.5 bootstrap from /api/conversations', 
 
     expect(store.channels).toEqual([]);
     expect(store.serverUnreachable).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[claude-comms] /api/conversations bootstrap failed',
+      expect.objectContaining({ status: 500 }),
+    );
   });
 
   it('network error → serverUnreachable=true, channels stays empty', async () => {
@@ -181,6 +203,10 @@ describe('MqttChatStore — v0.4.0 Step 2.5 bootstrap from /api/conversations', 
 
     expect(store.channels).toEqual([]);
     expect(store.serverUnreachable).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[claude-comms] /api/conversations bootstrap failed',
+      expect.objectContaining({ message: 'NetworkError: fetch failed' }),
+    );
   });
 
   it('successful bootstrap after a failure clears the serverUnreachable flag', async () => {

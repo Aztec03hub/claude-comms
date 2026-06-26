@@ -38,6 +38,21 @@ function mockHistory(messages) {
   }));
 }
 
+// Poll for the async ``#fetchHistory`` result instead of racing a single
+// fixed delay: ``switchChannel`` kicks off the history fetch fire-and-forget,
+// so under suite load a one-shot 10ms wait was occasionally too short and the
+// message had not landed yet (intermittent "expected undefined to be truthy").
+// This waits up to a generous deadline but returns as soon as the row appears.
+async function waitForMessage(store, id, timeout = 1000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const m = store.messages.find((x) => x.id === id);
+    if (m) return m;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  return store.messages.find((x) => x.id === id);
+}
+
 describe('#fetchHistory status normalization', () => {
   let origFetch;
   beforeEach(() => {
@@ -63,9 +78,8 @@ describe('#fetchHistory status normalization', () => {
     ]);
 
     store.switchChannel('testchan');
-    await new Promise((r) => setTimeout(r, 10));
+    const m = await waitForMessage(store, 'h1');
 
-    const m = store.messages.find((x) => x.id === 'h1');
     expect(m).toBeTruthy();
     expect(m.status).toBe('sent');
   });
@@ -84,9 +98,8 @@ describe('#fetchHistory status normalization', () => {
     ]);
 
     store.switchChannel('testchan');
-    await new Promise((r) => setTimeout(r, 10));
+    const m = await waitForMessage(store, 'h2');
 
-    const m = store.messages.find((x) => x.id === 'h2');
     expect(m).toBeTruthy();
     expect(m.status).toBeUndefined();
   });

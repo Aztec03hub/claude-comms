@@ -98,7 +98,7 @@
       >
     </div>
     <div class="emoji-categories">
-      {#each categories as cat}
+      {#each categories as cat (cat.id)}
         <button
           class="emoji-cat"
           class:active={activeCategory === cat.id}
@@ -110,7 +110,7 @@
     </div>
     <div class="emoji-grid-label">Frequently Used</div>
     <div class="emoji-grid">
-      {#each frequentEmojis as emojiData}
+      {#each frequentEmojis as emojiData (emojiData.code)}
         <button
           class="emoji-item"
           onclick={() => selectEmoji(emojiData)}
