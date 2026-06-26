@@ -86,6 +86,14 @@
   const MAX_PANEL_WIDTH = 720;
   /** Default width when no persisted value exists (matches pre-v0.4.3 fixed 360). */
   const DEFAULT_PANEL_WIDTH = 360;
+  /**
+   * Keyboard nudge step when the handle has focus (ArrowLeft/Right). The
+   * shared helper defaults to the same 16px, but we declare it here and pass
+   * it through explicitly: this is a user-facing constant for THIS panel and
+   * is pinned at the source level (e2e/scenarios/10-thread-panel.spec.ts),
+   * co-located with its MIN/MAX/DEFAULT/STORAGE_KEY siblings.
+   */
+  const KEY_STEP = 16;
   /** localStorage key for persistence (mirrors ArtifactPanel naming). */
   const STORAGE_KEY = 'claude-comms:thread-panel-width';
 
@@ -94,6 +102,7 @@
     maxWidth: MAX_PANEL_WIDTH,
     defaultWidth: DEFAULT_PANEL_WIDTH,
     storageKey: STORAGE_KEY,
+    keyStep: KEY_STEP,
   });
 
   // Whether to render the shared MessageInput composer (3.12) or the
