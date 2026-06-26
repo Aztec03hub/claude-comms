@@ -55,6 +55,12 @@ all = ["claude-comms[tui,web]"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    # Parallelizes the unit-test suite across CPU cores. The suite is
+    # parallel-safe: every test that binds a real socket uses an
+    # OS-assigned ephemeral port, and all filesystem state goes through
+    # per-test ``tmp_path`` / ``monkeypatch`` (each xdist worker is its own
+    # process with its own tmp base), so 8 workers never collide.
+    "pytest-xdist>=3.0",
 ]
 
 [project.scripts]
@@ -103,6 +109,13 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Run the suite in parallel across all CPU cores (pytest-xdist). The suite is
+# parallel-safe (ephemeral ports + per-test tmp_path/monkeypatch state), so
+# this is a pure wall-clock win with identical results. ``worksteal`` rebalances
+# the queue so a worker that finishes its share picks up pending tests from
+# busier workers — important because the textual TUI tests are much slower than
+# the rest. Override locally with ``-n0`` to force serial (e.g. for a debugger).
+addopts = "-n auto --dist=worksteal"
 # Targeted warning filters so `pytest -q` runs clean. Each entry silences a
 # SPECIFIC, understood category — not a blanket ignore — so a genuinely new
 # warning still surfaces.
