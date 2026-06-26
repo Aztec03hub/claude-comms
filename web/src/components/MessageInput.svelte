@@ -1267,6 +1267,7 @@
           {:else}{seg.text}{/if}{/each}{#if inputValue.endsWith('\n')}<span class="overlay-trailing-newline"> </span>{/if}</div>
       <textarea
         bind:this={inputEl}
+        class="inline-textarea"
         rows="1"
         placeholder="Message #{channelName}..."
         bind:value={inputValue}
@@ -1767,7 +1768,14 @@
     color: transparent;
   }
 
-  .input-wrap textarea {
+  /* Overlay-transparency rules are SCOPED to the inline textarea only
+     (.inline-textarea). The inline textarea is the "transparent-glyph +
+     .input-overlay" surface: its own glyphs MUST stay transparent so only
+     the overlay paints visible, syntax-highlighted text. Scoping by class
+     (instead of the broad `.input-wrap textarea`) keeps these rules from
+     bleeding onto the dedicated `.block-textarea`, which is a normal visible
+     textarea and was being forced transparent by the cascade. */
+  .input-wrap textarea.inline-textarea {
     width: 100%;
     background: none;
     border: none;
@@ -1807,17 +1815,17 @@
   }
 
   /* WebKit / Blink: remove the scrollbar entirely (see scrollbar-width above). */
-  .input-wrap textarea::-webkit-scrollbar {
+  .input-wrap textarea.inline-textarea::-webkit-scrollbar {
     width: 0;
     height: 0;
   }
 
-  .input-wrap textarea:focus-visible {
+  .input-wrap textarea.inline-textarea:focus-visible {
     outline: none !important;
     box-shadow: none !important;
   }
 
-  .input-wrap textarea::placeholder {
+  .input-wrap textarea.inline-textarea::placeholder {
     color: var(--text-faint);
   }
 
@@ -1830,7 +1838,7 @@
      reported when highlighting. Keeping it transparent means selecting only
      paints the semi-transparent ember background tint over the overlay's
      colored glyphs — no doubling, ever. */
-  .input-wrap textarea::selection {
+  .input-wrap textarea.inline-textarea::selection {
     background: rgba(245, 158, 11, 0.32);
     color: transparent;
   }
@@ -1907,6 +1915,15 @@
   .block-textarea:focus-visible {
     outline: none !important;
     box-shadow: none !important;
+  }
+
+  /* The block textarea is a NORMAL visible textarea (not the overlay surface),
+     so its selection paints VISIBLE glyphs over the ember tint, the opposite
+     of the inline `.inline-textarea::selection` rule, which keeps selected
+     glyphs transparent to avoid doubling against the overlay. */
+  .block-textarea::selection {
+    background: rgba(245, 158, 11, 0.32);
+    color: var(--code-block-fg, var(--text-primary));
   }
 
   .input-actions {
