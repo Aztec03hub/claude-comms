@@ -424,6 +424,98 @@ class TestRound3MessageSending:
 
 
 # ============================================================================
+# Daemon-authored [system] message routing (PY-E HIGH)
+# ============================================================================
+
+
+class TestSystemMessageRouting:
+    """A daemon-published ``sender.type == "system"`` message must reach the
+    chat view as a SystemMessage (not be silently dropped at parse time)."""
+
+    @pytest.mark.asyncio
+    async def test_system_message_from_mqtt_renders_as_system(self):
+        """End-to-end: a system-type MQTT payload routes to add_system_message.
+
+        Regression for the bug where ``Sender.type`` excluded ``"system"``,
+        so ``Message.from_mqtt_payload`` raised ValidationError and
+        ``_handle_message`` swallowed every server notification.
+        """
+        from claude_comms.message import Message, SYSTEM_SENDER_KEY
+
+        app = _make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            chat_view = app.query_one("#chat-view", ChatView)
+
+            msg = Message.create(
+                sender_key=SYSTEM_SENDER_KEY,
+                sender_name="system",
+                sender_type="system",
+                body="[system] alice created #general",
+                conv="general",
+            )
+            payload = msg.to_mqtt_payload().encode("utf-8")
+            await app._handle_message("claude-comms/conv/general/messages", payload)
+            await pilot.pause()
+
+            sys_msgs = chat_view.query(SystemMessage)
+            assert len(sys_msgs) >= 1
+            # It must NOT render as an ordinary message bubble.
+            bubbles = chat_view.query(MessageBubble)
+            assert len(bubbles) == 0
+
+    def test_sender_accepts_system_type(self):
+        """``Sender`` / ``Message`` must validate a system-type payload."""
+        from claude_comms.message import Message, Sender, SYSTEM_SENDER_KEY
+
+        s = Sender(key=SYSTEM_SENDER_KEY, name="system", type="system")
+        assert s.type == "system"
+        # Round-trips through the wire format (the path _handle_message uses).
+        msg = Message.create(
+            sender_key=SYSTEM_SENDER_KEY,
+            sender_name="system",
+            sender_type="system",
+            body="[system] hello",
+            conv="general",
+        )
+        restored = Message.from_mqtt_payload(msg.to_mqtt_payload())
+        assert restored.sender.type == "system"
+
+
+# ============================================================================
+# History fetch on channel switch (PY-E MED)
+# ============================================================================
+
+
+class TestHistoryOnSwitch:
+    """Switching to a channel for the first time this session fetches its
+    server history exactly once (and not again on subsequent visits)."""
+
+    @pytest.mark.asyncio
+    async def test_switch_fetches_history_once_per_conv(self):
+        fetched: list[str] = []
+
+        async def _fake_fetch(conv_id: str) -> None:
+            fetched.append(conv_id)
+
+        app = _make_app(["general", "random"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            # Replace the REST fetch with a recorder. The MQTT worker is
+            # stubbed by _make_app, so the only fetches come from switching.
+            app._fetch_history = _fake_fetch  # type: ignore[assignment, method-assign]
+
+            app._switch_to_conv("random")
+            await pilot.pause()
+            assert fetched == ["random"]
+
+            # Switch away and back — must NOT re-fetch "random".
+            app._switch_to_conv("general")
+            await pilot.pause()
+            app._switch_to_conv("random")
+            await pilot.pause()
+            assert fetched == ["random", "general"]
+
+
+# ============================================================================
 # Round 4: Keyboard shortcuts
 # ============================================================================
 

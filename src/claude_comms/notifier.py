@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from claude_comms.hook_installer import _notification_dir
+from claude_comms.message import SYSTEM_SENDER_KEY
 
 if TYPE_CHECKING:  # avoid an import cycle — mcp_tools is heavy
     from claude_comms.mcp_tools import ParticipantRegistry
@@ -44,7 +45,8 @@ if TYPE_CHECKING:  # avoid an import cycle — mcp_tools is heavy
 logger = logging.getLogger(__name__)
 
 # The reserved key used by every server-authored ``[system]`` message.
-_SYSTEM_KEY = "00000000"
+# Single-sourced from :data:`claude_comms.message.SYSTEM_SENDER_KEY`.
+_SYSTEM_KEY = SYSTEM_SENDER_KEY
 
 
 class NotificationWriter:

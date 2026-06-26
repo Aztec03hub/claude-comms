@@ -268,3 +268,48 @@ class TestStaticOrderingRegressionGuard:
         # rather than the 200 SPA HTML the static fallback would produce.
         assert r.status_code != 200
         assert "SPA-INDEX" not in r.text
+
+
+# ===================================================================
+# build_artifact_get_route — version query guard (PY-A LOW)
+# ===================================================================
+
+
+class TestArtifactGetRoute:
+    """GET /api/artifacts/{conv}/{name}?version=N. A non-numeric ?version
+    must return a clean 400, not crash to 500 (parity with /api/messages)."""
+
+    @staticmethod
+    def _client() -> TestClient:
+        from claude_comms.cli import build_artifact_get_route
+
+        def _get_artifact(conv: str, name: str, version=None):
+            if name == "missing":
+                return None
+            return {"conversation": conv, "name": name, "version": version}
+
+        app = Starlette(routes=[build_artifact_get_route(_get_artifact)])
+        return TestClient(app)
+
+    def test_non_numeric_version_returns_400(self) -> None:
+        r = self._client().get("/api/artifacts/general/plan?version=abc")
+        assert r.status_code == 400
+        assert "integer" in r.json()["error"]
+
+    def test_numeric_version_ok(self) -> None:
+        r = self._client().get("/api/artifacts/general/plan?version=2")
+        assert r.status_code == 200
+        assert r.json()["version"] == 2
+
+    def test_no_version_ok(self) -> None:
+        r = self._client().get("/api/artifacts/general/plan")
+        assert r.status_code == 200
+        assert r.json()["version"] is None
+
+    def test_missing_artifact_404(self) -> None:
+        r = self._client().get("/api/artifacts/general/missing")
+        assert r.status_code == 404
+
+    def test_invalid_conv_400(self) -> None:
+        r = self._client().get("/api/artifacts/INVALID!/plan")
+        assert r.status_code == 400

@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -53,10 +52,17 @@ from claude_comms.mention import (
     extract_mentions,
     is_broadcast_mention,
 )
-from claude_comms.message import Message, Sender, now_iso, validate_conv_id
+from claude_comms.message import (
+    Message,
+    Sender,
+    SYSTEM_SENDER_KEY,
+    now_iso,
+    validate_conv_id,
+)
 from claude_comms.participant import (
     Activity,
     ConnectionInfo,
+    KEY_PATTERN,
     Participant,
     ParticipantType,
     validate_key,
@@ -326,12 +332,11 @@ class ParticipantRegistry:
         Names are resolved via the name index.  Unresolvable entries
         are silently dropped.
         """
-        hex8 = re.compile(r"^[0-9a-f]{8}$")
         keys: list[str] = []
         seen: set[str] = set()
         with self._lock:
             for entry in recipients:
-                if hex8.match(entry):
+                if KEY_PATTERN.match(entry):
                     k = entry
                 else:
                     k = self._name_index.get(entry.lower())
@@ -356,12 +361,11 @@ class ParticipantRegistry:
         conversation but is still globally registered remains a valid mention
         target.
         """
-        hex8 = re.compile(r"^[0-9a-f]{8}$")
         keys: list[str] = []
         seen: set[str] = set()
         with self._lock:
             for entry in mentions:
-                if hex8.match(entry):
+                if KEY_PATTERN.match(entry):
                     # Hex8 entries must reference an actually-registered participant.
                     if entry not in self._participants:
                         continue
@@ -563,7 +567,7 @@ async def tool_comms_join(
                             "id": str(uuid4()),
                             "ts": now_iso(),
                             "sender": {
-                                "key": "00000000",
+                                "key": SYSTEM_SENDER_KEY,
                                 "name": "system",
                                 "type": "system",
                             },
@@ -615,7 +619,11 @@ async def tool_comms_join(
                 system_msg = {
                     "id": str(uuid4()),
                     "ts": now_iso(),
-                    "sender": {"key": "00000000", "name": "system", "type": "system"},
+                    "sender": {
+                        "key": SYSTEM_SENDER_KEY,
+                        "name": "system",
+                        "type": "system",
+                    },
                     "body": body,
                     "conv": "general",
                     "recipients": None,
@@ -742,7 +750,7 @@ async def tool_comms_send(
         # sender.key == "00000000" / sender.type == "system".
         parent_sender: dict[str, Any] = parent.get("sender") or {}
         if (
-            parent_sender.get("key") == "00000000"
+            parent_sender.get("key") == SYSTEM_SENDER_KEY
             or parent_sender.get("type") == "system"
         ):
             return _error("reply_to may not target a system message.")
@@ -1845,6 +1853,19 @@ def tool_comms_update_name(
             "display names. Please choose a different name."
         )
 
+    # Uniqueness: refuse a rename onto a name already held by a DIFFERENT
+    # participant. Without this, ``name_index[new_name]`` would be repointed
+    # to this key and the original holder becomes unresolvable by name —
+    # silently hijacking every name->key resolution (mentions, whispers,
+    # invites). Resolving to our own key (e.g. a case-only change of our
+    # current name) is allowed.
+    holder = registry.resolve_name(new_name)
+    if holder is not None and holder != key:
+        return _error(
+            f"Name {new_name!r} is already in use by another participant. "
+            "Please choose a different name."
+        )
+
     updated = registry.update_name(key, new_name)
     if updated is None:
         return _error("Failed to update name.")
@@ -1983,7 +2004,7 @@ async def tool_comms_artifact_create(
     system_msg = {
         "id": str(uuid4()),
         "ts": now_iso(),
-        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
         "body": f"[artifact] {participant.name} created '{title}' (v1)",
         "conv": conversation,
         "recipients": None,
@@ -2075,7 +2096,7 @@ async def tool_comms_artifact_update(
     system_msg = {
         "id": str(uuid4()),
         "ts": now_iso(),
-        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
         "body": body,
         "conv": conversation,
         "recipients": None,
@@ -2251,7 +2272,7 @@ async def tool_comms_artifact_delete(
     system_msg = {
         "id": str(uuid4()),
         "ts": now_iso(),
-        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
         "body": f"[artifact] {participant.name} deleted '{title}'",
         "conv": conversation,
         "recipients": None,
@@ -2320,7 +2341,7 @@ async def tool_comms_conversation_create(
 
     system_msg_base = {
         "ts": now_iso(),
-        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
         "body": body,
         "recipients": None,
         "reply_to": None,
@@ -2543,7 +2564,7 @@ async def tool_comms_conversation_update(  # noqa: PLR0912, PLR0913, PLR0915
         system_msg = {
             "id": str(uuid4()),
             "ts": now_iso(),
-            "sender": {"key": "00000000", "name": "system", "type": "system"},
+            "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
             "body": body,
             "conv": "general",
             "recipients": None,
@@ -2668,7 +2689,7 @@ async def tool_comms_invite(
     system_msg = {
         "id": str(uuid4()),
         "ts": now_iso(),
-        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
         "body": body,
         "conv": "general",
         "recipients": None,
@@ -2808,7 +2829,7 @@ async def tool_comms_kick(
     system_msg = {
         "id": str(uuid4()),
         "ts": now_iso(),
-        "sender": {"key": "00000000", "name": "system", "type": "system"},
+        "sender": {"key": SYSTEM_SENDER_KEY, "name": "system", "type": "system"},
         "body": body,
         "conv": conversation,
         "recipients": None,

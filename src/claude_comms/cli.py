@@ -44,6 +44,8 @@ from claude_comms.config import (
     load_config,
     save_config,
 )
+from claude_comms.message import SYSTEM_SENDER_KEY
+from claude_comms.participant import validate_key
 
 
 logger = logging.getLogger(__name__)
@@ -562,9 +564,6 @@ def build_capabilities_route(config: dict[str, Any]) -> Route:
     return Route("/api/capabilities", _handler, methods=["GET"])
 
 
-_NOTIF_KEY_RE = re.compile(r"^[0-9a-f]{8}$")
-
-
 def _empty_cors_headers(*args: object) -> dict[str, str]:
     """Default no-op CORS-header provider for route builders under test.
 
@@ -608,7 +607,7 @@ def build_notifications_route(
 
     async def _handler(request: Request) -> JSONResponse:
         key = request.path_params.get("key", "")
-        if not _NOTIF_KEY_RE.match(key):
+        if not validate_key(key):
             return JSONResponse(
                 {"error": "invalid key"},
                 status_code=400,
@@ -1028,6 +1027,51 @@ def build_mqtt_ws_route(
     return WebSocketRoute("/mqtt", endpoint=_endpoint)
 
 
+def build_artifact_get_route(
+    get_artifact: Callable[..., dict[str, Any] | None],
+    cors: Callable[..., dict[str, str]] | None = None,
+) -> Route:
+    """GET /api/artifacts/{conversation}/{name}?version=N — one artifact.
+
+    Wraps ``mcp_server.get_artifact`` (injected because it is imported lazily
+    inside ``_run``; ``cors`` defaults to a no-op for tests). A non-numeric
+    ``?version`` yields a clean 400 — mirroring ``/api/messages``'s ``count``
+    guard — instead of an uncaught ``ValueError`` surfacing as a 500. Same
+    token-free same-origin GET trust boundary as the other read routes.
+    """
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    from claude_comms.message import validate_conv_id
+
+    cors_fn = cors or _empty_cors_headers
+
+    async def _handler(request: Request) -> JSONResponse:
+        conversation = request.path_params["conversation"]
+        name = request.path_params["name"]
+        if not validate_conv_id(conversation):
+            return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
+        version_param = request.query_params.get("version")
+        version: int | None
+        if version_param:
+            try:
+                version = int(version_param)
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    {"error": "version must be an integer"},
+                    status_code=400,
+                    headers=cors_fn(request),
+                )
+        else:
+            version = None
+        artifact = get_artifact(conversation, name, version=version)
+        if artifact is None:
+            return JSONResponse({"error": "Artifact not found"}, status_code=404)
+        return JSONResponse(artifact, headers=cors_fn(request))
+
+    return Route("/api/artifacts/{conversation}/{name}", _handler, methods=["GET"])
+
+
 def build_artifact_post_route(
     config: dict[str, Any],
     *,
@@ -1264,7 +1308,6 @@ def build_invite_post_route(
 
     from claude_comms.mcp_tools import tool_comms_invite
     from claude_comms.message import validate_conv_id
-    from claude_comms.participant import validate_key
 
     web_cfg: dict[str, Any] = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
@@ -1992,26 +2035,6 @@ def start(
                     headers=_cors(request),
                 )
 
-            async def _api_artifacts_get(request: Request) -> JSONResponse:
-                """GET /api/artifacts/{conversation}/{name}?version=N — get artifact."""
-                conversation = request.path_params["conversation"]
-                name = request.path_params["name"]
-                if not validate_conv_id(conversation):
-                    return JSONResponse(
-                        {"error": "Invalid conversation ID"}, status_code=400
-                    )
-                version_param = request.query_params.get("version")
-                version = int(version_param) if version_param else None
-                artifact = get_artifact(conversation, name, version=version)
-                if artifact is None:
-                    return JSONResponse(
-                        {"error": "Artifact not found"}, status_code=404
-                    )
-                return JSONResponse(
-                    artifact,
-                    headers=_cors(request),
-                )
-
             async def _api_artifacts_options(request: Request) -> JSONResponse:
                 """OPTIONS preflight for /api/artifacts/{conversation}."""
                 return JSONResponse(
@@ -2084,11 +2107,7 @@ def start(
                     _api_artifacts_options,
                     methods=["OPTIONS"],
                 ),
-                Route(
-                    "/api/artifacts/{conversation}/{name}",
-                    _api_artifacts_get,
-                    methods=["GET"],
-                ),
+                build_artifact_get_route(get_artifact, cors=_cors),
                 Route(
                     "/api/artifacts/{conversation}/{name}",
                     _api_artifacts_name_options,
@@ -2243,7 +2262,7 @@ def start(
                 return aiomqtt.Client(
                     hostname=broker_host,
                     port=broker_port,
-                    identifier=generate_client_id("mcp-pub", "00000000"),
+                    identifier=generate_client_id("mcp-pub", SYSTEM_SENDER_KEY),
                 )
 
             _publisher = ResilientPublisher(_make_pub_client)
@@ -3554,9 +3573,11 @@ def web() -> None:
     """Open the web UI in the default browser."""
     config = _require_config()
 
-    web_host = config.get("web", {}).get("host", "127.0.0.1")
-    web_port = config.get("web", {}).get("port", 9921)
-    url = f"http://{web_host}:{web_port}"
+    # Use the navigable local URL — ``_web_ui_urls`` always emits
+    # ``localhost`` so a bind-all ``web.host`` (0.0.0.0 / ::) does not
+    # produce an unloadable ``http://0.0.0.0:PORT`` (matches doctor /
+    # daemon-banner behaviour).
+    url, _ = _web_ui_urls(config)
 
     if not _is_daemon_running():
         console.print(

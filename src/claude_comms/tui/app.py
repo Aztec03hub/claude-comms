@@ -124,6 +124,11 @@ class ClaudeCommsApp(App[None]):
         self._last_typing_publish: float = 0.0
         self._TYPING_DEBOUNCE_SECS: float = 2.0
 
+        # Conversations whose server history has already been fetched this
+        # session. Guards ``_fetch_history`` so it runs exactly once per
+        # channel (initial conv at startup + each channel on first switch).
+        self._fetched_history: set[str] = set()
+
     # -- Compose the UI -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -271,6 +276,7 @@ class ClaudeCommsApp(App[None]):
 
                 # Fetch message history from the REST API
                 await self._fetch_history(self._active_conv)
+                self._fetched_history.add(self._active_conv)
 
                 # Message receive loop
                 async for mqtt_msg in client.messages:
@@ -410,14 +416,18 @@ class ClaudeCommsApp(App[None]):
             logger.debug("Could not parse message on %s", topic)
             return
 
-        # Check if the message is for us (broadcast or targeted)
-        if not msg.is_for(self._key) and not msg.is_broadcast:
+        # Check if the message is for us (broadcast or targeted). ``is_for``
+        # already returns True for broadcasts, so it is the only gate needed.
+        if not msg.is_for(self._key):
             return
 
         chat_view = self.query_one("#chat-view", ChatView)
 
-        # Route system-type messages through the system message renderer
-        if msg.sender.type == "system":  # pyright: ignore[reportUnnecessaryComparison]
+        # Route daemon-authored system messages (sender.type == "system",
+        # key SYSTEM_SENDER_KEY) through the system-message renderer. Without
+        # this they would render as an ordinary message bubble with a
+        # "system" author.
+        if msg.sender.type == "system":
             chat_view.add_system_message(msg.body, conv=msg.conv)
         else:
             chat_view.add_message(msg)
@@ -786,15 +796,22 @@ class ClaudeCommsApp(App[None]):
 
     @work(thread=False)
     async def _resubscribe_conversation(self, old_conv: str, new_conv: str) -> None:
-        """Switch MQTT subscriptions when changing conversations."""
-        if not self._mqtt_client:
-            return
-        try:
-            await self._unsubscribe_conv_topics(self._mqtt_client, old_conv)
-            await self._subscribe_conv_topics(self._mqtt_client, new_conv)
-            await self._publish_presence(self._mqtt_client, "online")
-        except Exception as exc:
-            logger.debug("Error resubscribing: %s", exc)
+        """Switch MQTT subscriptions and load history when changing channels."""
+        if self._mqtt_client:
+            try:
+                await self._unsubscribe_conv_topics(self._mqtt_client, old_conv)
+                await self._subscribe_conv_topics(self._mqtt_client, new_conv)
+                await self._publish_presence(self._mqtt_client, "online")
+            except Exception as exc:
+                logger.debug("Error resubscribing: %s", exc)
+
+        # Fetch server history the first time we visit a channel this session.
+        # This is a REST call (independent of the MQTT connection); without it
+        # a channel with no live traffic this session shows the empty-channel
+        # placeholder even when the server has full history.
+        if new_conv not in self._fetched_history:
+            self._fetched_history.add(new_conv)
+            await self._fetch_history(new_conv)
 
     # -- Actions (keybindings) -------------------------------------------------
 

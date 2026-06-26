@@ -232,6 +232,23 @@ class TestWebCommand:
         assert len(opened_urls) == 1
         assert "9921" in opened_urls[0]
 
+    def test_web_translates_bind_all_host_to_localhost(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A bind-all web.host (0.0.0.0) must open a navigable localhost URL,
+        not the unloadable http://0.0.0.0:PORT (PY-A LOW)."""
+        _setup_config(tmp_path, monkeypatch, **{"web.host": "0.0.0.0"})
+        monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: True)
+
+        opened_urls = []
+        monkeypatch.setattr("webbrowser.open", lambda url: opened_urls.append(url))
+
+        result = runner.invoke(app, ["web"])
+        assert result.exit_code == 0
+        assert len(opened_urls) == 1
+        assert "0.0.0.0" not in opened_urls[0]
+        assert opened_urls[0] == "http://localhost:9921"
+
     def test_web_warns_daemon_not_running(self, tmp_path: Path, monkeypatch) -> None:
         _setup_config(tmp_path, monkeypatch)
         monkeypatch.setattr("claude_comms.cli._is_daemon_running", lambda: False)

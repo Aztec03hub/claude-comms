@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import threading
 from collections import defaultdict
 from pathlib import Path
@@ -35,6 +34,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field, field_validator
 
 from claude_comms.message import now_iso
+from claude_comms.participant import KEY_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +59,6 @@ SNAPSHOT_MSG_THRESHOLD: int = 10_000
 
 # Emoji free-text upper bound — generous, but caps abuse.
 MAX_EMOJI_LEN: int = 64
-
-# Validation patterns reused from the rest of the codebase.
-_HEX8 = re.compile(r"^[0-9a-f]{8}$")
 
 ReactionOp = Literal["add", "remove", "toggle"]
 TerminalOp = Literal["add", "remove"]
@@ -108,7 +105,7 @@ class Reaction(BaseModel):
     @field_validator("actor_key")
     @classmethod
     def _v_actor(cls, v: str) -> str:
-        if not _HEX8.match(v):
+        if not KEY_PATTERN.match(v):
             raise ValueError("actor_key must be 8 lowercase hex chars")
         return v
 
@@ -135,7 +132,7 @@ class ReactionEvent(BaseModel):
     @field_validator("actor_key")
     @classmethod
     def _v_actor(cls, v: str) -> str:
-        if not _HEX8.match(v):
+        if not KEY_PATTERN.match(v):
             raise ValueError("actor_key must be 8 lowercase hex chars")
         return v
 
@@ -278,7 +275,7 @@ class ReactionsStore:
         Callers are expected to publish the returned event over MQTT.
         """
         emoji = _validate_emoji(emoji)
-        if not _HEX8.match(actor_key):
+        if not KEY_PATTERN.match(actor_key):
             raise ValueError("actor_key must be 8 lowercase hex chars")
         ts = ts or now_iso()
 

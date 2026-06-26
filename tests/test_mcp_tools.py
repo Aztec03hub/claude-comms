@@ -480,6 +480,43 @@ class TestCommsUpdateName:
         result = tool_comms_update_name(registry, key="00000000", new_name="test")
         assert result.get("error") is True
 
+    @pytest.mark.asyncio
+    async def test_update_name_collision_rejected(self, registry: ParticipantRegistry):
+        """Renaming onto a name held by ANOTHER participant must be refused —
+        otherwise it hijacks name->key resolution (mentions/whispers/invites)."""
+        a = await tool_comms_join(registry, name="alice", conversation="general")
+        b = await tool_comms_join(registry, name="bob", conversation="general")
+
+        result = tool_comms_update_name(registry, key=b["key"], new_name="alice")
+        assert result.get("error") is True
+        assert "already in use" in result["message"]
+
+        # Alice's name must STILL resolve to Alice, and Bob keep his own name.
+        assert registry.resolve_name("alice") == a["key"]
+        bob = registry.get(b["key"])
+        assert bob is not None
+        assert bob.name == "bob"
+
+    @pytest.mark.asyncio
+    async def test_update_name_collision_case_insensitive(
+        self, registry: ParticipantRegistry
+    ):
+        """Collision check is case-insensitive (name_index is lowercased)."""
+        await tool_comms_join(registry, name="alice", conversation="general")
+        b = await tool_comms_join(registry, name="bob", conversation="general")
+        result = tool_comms_update_name(registry, key=b["key"], new_name="ALICE")
+        assert result.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_update_name_self_case_change_allowed(
+        self, registry: ParticipantRegistry
+    ):
+        """Re-resolving to your OWN key (e.g. a case-only change) is allowed."""
+        a = await tool_comms_join(registry, name="alice", conversation="general")
+        result = tool_comms_update_name(registry, key=a["key"], new_name="Alice")
+        assert result["status"] == "updated"
+        assert result["name"] == "Alice"
+
 
 # ===================================================================
 # comms_history

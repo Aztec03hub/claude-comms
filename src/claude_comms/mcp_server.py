@@ -32,6 +32,7 @@ from pydantic import Field
 from claude_comms.artifact import migrate_artifact_names_to_nfc
 from claude_comms.broker import MessageDeduplicator, MessageStore, replay_jsonl_logs
 from claude_comms.config import load_config
+from claude_comms.message import SYSTEM_SENDER_KEY
 from claude_comms.participant import CONNECTION_TYPES, ConnectionInfo
 from claude_comms.mcp_tools import (
     ParticipantRegistry,
@@ -737,7 +738,7 @@ async def _mqtt_subscriber(
 
     from claude_comms.broker import generate_client_id
 
-    client_id = generate_client_id("mcp", "00000000")
+    client_id = generate_client_id("mcp", SYSTEM_SENDER_KEY)
     msg_topic = "claude-comms/conv/+/messages"
     presence_topic = "claude-comms/conv/+/presence/+"
     system_topic = "claude-comms/system/participants/+"
@@ -2203,7 +2204,7 @@ def start_server(config: dict[str, Any] | None = None) -> None:
             import aiomqtt
             from claude_comms.broker import generate_client_id
 
-            pub_client_id = generate_client_id("mcp-pub", "00000000")
+            pub_client_id = generate_client_id("mcp-pub", SYSTEM_SENDER_KEY)
             async with aiomqtt.Client(
                 hostname=broker_host,
                 port=broker_port,

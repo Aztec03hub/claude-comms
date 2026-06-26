@@ -39,7 +39,8 @@ from claude_comms.mcp_tools import (
     tool_comms_conversation_create,
     tool_comms_conversation_update,
 )
-from claude_comms.message import ParticipantType, now_iso
+from claude_comms.message import now_iso
+from claude_comms.participant import ParticipantType
 from claude_comms.registry_store import RegistryStore
 
 from conftest import PublishSpy
