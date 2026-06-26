@@ -16,7 +16,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from claude_comms.broker import MessageDeduplicator
 from claude_comms.message import validate_conv_id
@@ -136,16 +136,19 @@ def format_log_entry(msg: dict[str, Any]) -> str:
             ts_full = ts_str
 
     sender = msg.get("sender", {})
-    sender_name = (
-        sender.get("name", "unknown") if isinstance(sender, dict) else "unknown"
-    )
-    sender_key = (
-        sender.get("key", "????????") if isinstance(sender, dict) else "????????"
-    )
+    if isinstance(sender, dict):
+        # cast: isinstance-narrowing of an Any value yields dict[Unknown, Unknown];
+        # the sender block is a dynamic message payload, so dict[str, Any] is correct.
+        sender_map = cast("dict[str, Any]", sender)
+        sender_name = sender_map.get("name", "unknown")
+        sender_key = sender_map.get("key", "????????")
+    else:
+        sender_name = "unknown"
+        sender_key = "????????"
 
     # Indent every line of the body with 4 spaces
     body = msg.get("body", "")
-    indented_lines = []
+    indented_lines: list[str] = []
     for line in body.split("\n"):
         indented_lines.append(f"    {line}")
     indented_body = "\n".join(indented_lines)
@@ -268,6 +271,7 @@ class LogExporter:
         max_files: int = 10,
         deduplicator: MessageDeduplicator | None = None,
     ) -> None:
+        self.log_dir: Path
         if log_dir is None:
             self.log_dir = Path.home() / ".claude-comms" / "logs"
         else:
@@ -276,7 +280,7 @@ class LogExporter:
         self.fmt: LogFormat = fmt
         self.max_size_bytes: int = int(max_size_mb * 1024 * 1024)
         self.max_files: int = max_files
-        self.deduplicator = deduplicator or MessageDeduplicator()
+        self.deduplicator: MessageDeduplicator = deduplicator or MessageDeduplicator()
 
         # Track which conversations have had their header written
         self._headers_written: set[str] = set()

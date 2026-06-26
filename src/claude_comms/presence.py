@@ -86,10 +86,10 @@ class PresenceManager:
         ttl_seconds: int = DEFAULT_CONNECTION_TTL_SECONDS,
         sweep_interval_seconds: int = DEFAULT_SWEEP_INTERVAL_SECONDS,
     ) -> None:
-        self._registry = registry
+        self._registry: ParticipantRegistry = registry
         self._publish_fn: PublishFn | None = publish_fn
-        self._ttl_seconds = ttl_seconds
-        self._sweep_interval = sweep_interval_seconds
+        self._ttl_seconds: int = ttl_seconds
+        self._sweep_interval: int = sweep_interval_seconds
         self._task: asyncio.Task[None] | None = None
 
     # -- Public API --------------------------------------------------------

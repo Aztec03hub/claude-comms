@@ -63,12 +63,14 @@ class NotificationWriter:
         cue_on_broadcast: bool,
         registry_provider: Callable[[], "ParticipantRegistry | None"] | None = None,
     ) -> None:
-        self._notif_dir = notif_dir
-        self._enabled = enabled
-        self._cue_on_broadcast = cue_on_broadcast
+        self._notif_dir: Path = notif_dir
+        self._enabled: bool = enabled
+        self._cue_on_broadcast: bool = cue_on_broadcast
         # Resolved lazily — the registry module global is reassigned during
         # daemon startup, so we must NOT capture the object at construction.
-        self._registry_provider = registry_provider
+        self._registry_provider: Callable[[], "ParticipantRegistry | None"] | None = (
+            registry_provider
+        )
 
     @classmethod
     def from_config(
@@ -96,15 +98,15 @@ class NotificationWriter:
         Returns an empty list for system messages, plain broadcasts (unless
         ``cue_on_broadcast``), or anything with no resolvable targets.
         """
-        sender = msg.get("sender") or {}
+        sender: dict[str, Any] = msg.get("sender") or {}
         sender_key = sender.get("key")
 
         # System messages never generate cues.
         if sender_key == _SYSTEM_KEY:
             return []
 
-        recipients = msg.get("recipients") or []
-        mentions = msg.get("mentions") or []
+        recipients: list[Any] = msg.get("recipients") or []
+        mentions: list[Any] = msg.get("mentions") or []
 
         cued: list[str] = []
         seen: set[str] = set()
@@ -157,7 +159,7 @@ class NotificationWriter:
         if not cued:
             return 0
 
-        sender = msg.get("sender") or {}
+        sender: dict[str, Any] = msg.get("sender") or {}
         # The hook parser only consumes these four keys; missing ones degrade
         # gracefully to "".  One json.dumps() per line so embedded newlines,
         # quotes, tabs and non-ASCII are escaped and never split a line.

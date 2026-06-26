@@ -67,9 +67,9 @@ class MessageDeduplicator:
     def __init__(self, max_size: int = 10_000) -> None:
         if max_size < 1:
             raise ValueError("max_size must be >= 1")
-        self._max_size = max_size
+        self._max_size: int = max_size
         self._seen: OrderedDict[str, None] = OrderedDict()
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     # -- public API --------------------------------------------------------
 
@@ -115,9 +115,9 @@ class MessageStore:
     """
 
     def __init__(self, max_per_conv: int = DEFAULT_MAX_REPLAY) -> None:
-        self._max = max_per_conv
+        self._max: int = max_per_conv
         self._store: dict[str, list[dict[str, Any]]] = {}
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     def add(self, conv_id: str, message: dict[str, Any]) -> None:
         """Append *message* to *conv_id*'s history, evicting oldest if full."""
@@ -183,8 +183,8 @@ class MessageStore:
                 if last_author is not None:
                     msg["thread_last_author"] = last_author
                 if add_participants:
-                    existing = msg.get("thread_participants") or []
-                    seen = set(existing)
+                    existing: list[str] = msg.get("thread_participants") or []
+                    seen: set[str] = set(existing)
                     for k in add_participants:
                         if k not in seen:
                             existing.append(k)
@@ -351,12 +351,13 @@ def _rebuild_thread_metadata(store: "MessageStore") -> None:
                 true_root = store.find_by_id(conv_id, root["reply_to"])
                 if true_root is not None:
                     root = true_root
-            sender_block = m.get("sender") or {}
+            sender_block: dict[str, Any] = m.get("sender") or {}
             add_keys: list[str] = []
             sender_key = sender_block.get("key")
             if sender_key:
                 add_keys.append(sender_key)
-            for mk in m.get("mentions") or []:
+            mentions_list: list[Any] = m.get("mentions") or []
+            for mk in mentions_list:
                 if mk and mk not in add_keys:
                     add_keys.append(mk)
             new_count = (root.get("thread_reply_count") or 0) + 1
@@ -453,24 +454,24 @@ class EmbeddedBroker:
         log_dir: Path | str | None = None,
         max_replay: int = DEFAULT_MAX_REPLAY,
     ) -> None:
-        self.host = host
-        self.port = port
-        self.ws_host = ws_host
-        self.ws_port = ws_port
-        self.auth_enabled = auth_enabled
-        self.auth_username = auth_username
-        self.auth_password = auth_password
+        self.host: str = host
+        self.port: int = port
+        self.ws_host: str = ws_host
+        self.ws_port: int = ws_port
+        self.auth_enabled: bool = auth_enabled
+        self.auth_username: str | None = auth_username
+        self.auth_password: str | None = auth_password
 
-        self.pid_file = Path(pid_file) if pid_file else _PID_FILE
-        self.log_dir = Path(log_dir) if log_dir else _LOG_DIR
-        self.max_replay = max_replay
+        self.pid_file: Path = Path(pid_file) if pid_file else _PID_FILE
+        self.log_dir: Path = Path(log_dir) if log_dir else _LOG_DIR
+        self.max_replay: int = max_replay
 
         self._broker: Any = None  # amqtt.broker.Broker instance
-        self._running = False
+        self._running: bool = False
 
         # Shared utilities for downstream consumers
-        self.deduplicator = MessageDeduplicator()
-        self.message_store = MessageStore(max_per_conv=max_replay)
+        self.deduplicator: MessageDeduplicator = MessageDeduplicator()
+        self.message_store: MessageStore = MessageStore(max_per_conv=max_replay)
 
     # -- Factory -----------------------------------------------------------
 

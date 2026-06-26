@@ -7,6 +7,8 @@ show an amber badge count. Each channel shows a preview of the last message.
 
 from __future__ import annotations
 
+from typing import Any, ClassVar
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message as TMessage
@@ -20,13 +22,13 @@ class ChannelSelected(TMessage):
 
     def __init__(self, conv_id: str) -> None:
         super().__init__()
-        self.conv_id = conv_id
+        self.conv_id: str = conv_id
 
 
 class ChannelItem(Widget):
     """A single channel entry in the sidebar with unread badge and preview."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     ChannelItem {
         height: auto;
         min-height: 2;
@@ -53,11 +55,11 @@ class ChannelItem(Widget):
     unread_count: reactive[int] = reactive(0)
     is_muted: reactive[bool] = reactive(False)
 
-    def __init__(self, conv_id: str, **kwargs) -> None:
+    def __init__(self, conv_id: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.conv_id = conv_id
-        self._header_label = Label("", classes="channel-header-row")
-        self._preview_label = Label("", classes="channel-preview")
+        self.conv_id: str = conv_id
+        self._header_label: Label = Label("", classes="channel-header-row")
+        self._preview_label: Label = Label("", classes="channel-preview")
 
     def compose(self) -> ComposeResult:
         yield self._header_label
@@ -111,7 +113,7 @@ class ChannelItem(Widget):
 class ChannelList(Vertical):
     """Sidebar listing all conversation channels."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     ChannelList {
         width: 26;
         dock: left;
@@ -131,7 +133,7 @@ class ChannelList(Vertical):
 
     active_channel: reactive[str] = reactive("general")
 
-    def __init__(self, channels: list[str] | None = None, **kwargs) -> None:
+    def __init__(self, channels: list[str] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._channels: list[str] = channels or ["general"]
         self._items: dict[str, ChannelItem] = {}

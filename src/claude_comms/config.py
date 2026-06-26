@@ -13,7 +13,7 @@ import secrets
 import stat
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -162,7 +162,7 @@ def generate_identity_key() -> str:
     return secrets.token_hex(4)
 
 
-def _deep_merge(base: dict, overlay: dict) -> dict:
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge overlay into base, returning a new dict.
 
     Values in overlay take precedence. Missing keys in overlay
@@ -171,7 +171,11 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     result = base.copy()
     for key, value in overlay.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
+            # cast: isinstance-narrowing of Any values yields dict[Unknown, Unknown];
+            # the data here is dynamic YAML config, so dict[str, Any] is correct.
+            result[key] = _deep_merge(
+                cast("dict[str, Any]", result[key]), cast("dict[str, Any]", value)
+            )
         else:
             result[key] = value
     return result
@@ -206,7 +210,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
     if path.exists():
         with open(path) as f:
-            user_config = yaml.safe_load(f) or {}
+            user_config: dict[str, Any] = yaml.safe_load(f) or {}
         config = _deep_merge(_DEFAULT_CONFIG, user_config)
     else:
         config = _DEFAULT_CONFIG.copy()

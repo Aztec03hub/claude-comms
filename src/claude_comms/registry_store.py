@@ -26,6 +26,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import TracebackType
 
 from claude_comms.message import now_iso
 from claude_comms.participant import (
@@ -132,13 +133,15 @@ class RegistryStore:
     """
 
     def __init__(self, db_path: Path, data_dir: Path | None = None) -> None:
-        self._db_path = db_path
+        self._db_path: Path = db_path
         # Conversation metadata lives next to registry.db in the data dir.
         # The 1->2 migration needs this to locate meta.json files for the
         # creator-grandfather backfill (Q6 lock-in, v0.4.2 Step 3.0a).
-        self._data_dir = data_dir if data_dir is not None else db_path.parent
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._data_dir: Path = data_dir if data_dir is not None else db_path.parent
+        self._lock: threading.Lock = threading.Lock()
+        self._conn: sqlite3.Connection = sqlite3.connect(
+            str(db_path), check_same_thread=False
+        )
         # PRAGMAs in spec-prescribed order. WAL keeps reads non-blocking
         # during the rare write; synchronous=NORMAL is the right tradeoff
         # for a single-process daemon; foreign_keys=ON makes cascades work.
@@ -660,5 +663,10 @@ class RegistryStore:
     def __enter__(self) -> RegistryStore:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()

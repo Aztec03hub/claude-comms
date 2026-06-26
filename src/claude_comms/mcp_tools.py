@@ -172,8 +172,8 @@ class ParticipantRegistry:
     """
 
     def __init__(self, store: RegistryStore | None = None) -> None:
-        self._lock = threading.Lock()
-        self._store = store
+        self._lock: threading.Lock = threading.Lock()
+        self._store: RegistryStore | None = store
         if store is not None:
             snapshot = store.load_all()
             # key -> Participant
@@ -301,7 +301,7 @@ class ParticipantRegistry:
     def members(self, conversation: str) -> list[Participant]:
         """Return participants currently in *conversation*."""
         with self._lock:
-            result = []
+            result: list[Participant] = []
             for key, convs in self._memberships.items():
                 if conversation in convs:
                     p = self._participants.get(key)
@@ -740,7 +740,7 @@ async def tool_comms_send(
             )
         # No system-message parents: artifact events, joins, etc. carry
         # sender.key == "00000000" / sender.type == "system".
-        parent_sender = parent.get("sender") or {}
+        parent_sender: dict[str, Any] = parent.get("sender") or {}
         if (
             parent_sender.get("key") == "00000000"
             or parent_sender.get("type") == "system"
@@ -972,8 +972,8 @@ def tool_comms_read(
         decorated: list[dict[str, Any]] = []
         for m in formatted:
             copy = dict(m)
-            mentioned = m.get("mentions") or []
-            recipients = m.get("recipients") or []
+            mentioned: list[str] = m.get("mentions") or []
+            recipients: list[str] = m.get("recipients") or []
             copy["directed_at_me"] = key in mentioned or key in recipients
             if top_level_only and m.get("thread_reply_count"):
                 copy["thread_summary"] = {

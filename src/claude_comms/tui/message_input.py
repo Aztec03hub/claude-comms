@@ -8,7 +8,8 @@ inserts a newline.
 from __future__ import annotations
 
 import re
-from typing import Callable
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -22,7 +23,7 @@ class MessageSubmitted(TMessage):
 
     def __init__(self, body: str) -> None:
         super().__init__()
-        self.body = body
+        self.body: str = body
 
 
 # Pattern to find an in-progress @mention at the cursor position
@@ -58,7 +59,7 @@ class MessageInput(Vertical):
     again cycles to the next match. Enter (without Shift) submits.
     """
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     MessageInput {
         height: auto;
         max-height: 6;
@@ -69,13 +70,13 @@ class MessageInput(Vertical):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._name_provider: Callable[[], list[str]] | None = None
         self._completions: list[str] = []
         self._completion_index: int = 0
         self._last_partial: str = ""
-        self._input = _SubmittableTextArea(
+        self._input: _SubmittableTextArea = _SubmittableTextArea(
             id="message-input",
             language=None,
             soft_wrap=True,

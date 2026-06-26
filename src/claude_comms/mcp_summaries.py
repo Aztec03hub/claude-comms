@@ -60,7 +60,7 @@ def _plural(n: int, word: str = "msg") -> str:
 
 def _sender_name(msg: dict[str, Any]) -> str:
     """Best-effort sender display name from a message dict."""
-    sender = msg.get("sender") or {}
+    sender: dict[str, Any] = msg.get("sender") or {}
     return sender.get("name") or sender.get("key") or "?"
 
 
@@ -113,7 +113,7 @@ def summarize_read(result: dict[str, Any]) -> str:
         return f"⚠️ read failed: {result.get('message', 'unknown error')}"
 
     conv = result.get("conversation", "?")
-    messages = result.get("messages") or []
+    messages: list[dict[str, Any]] = result.get("messages") or []
     count = result.get("count", len(messages))
     has_more = result.get("has_more", False)
 
@@ -157,7 +157,7 @@ def summarize_history(result: dict[str, Any]) -> str:
 
     conv = result.get("conversation", "?")
     query = result.get("query")
-    messages = result.get("messages") or []
+    messages: list[dict[str, Any]] = result.get("messages") or []
     count = result.get("count", len(messages))
     has_more = result.get("has_more", False)
 
@@ -194,7 +194,7 @@ def summarize_members(result: dict[str, Any]) -> str:
         return f"⚠️ members failed: {result.get('message', 'unknown error')}"
 
     conv = result.get("conversation", "?")
-    members = result.get("members") or []
+    members: list[dict[str, Any]] = result.get("members") or []
     total = result.get("count", len(members))
 
     if total == 0:
@@ -226,11 +226,12 @@ def summarize_check(result: dict[str, Any]) -> str:
         return f"⚠️ check failed: {result.get('message', 'unknown error')}"
 
     total_unread = result.get("total_unread", 0)
-    convs = result.get("conversations") or []
+    convs: list[dict[str, Any]] = result.get("conversations") or []
 
     thread_replies = 0
     for c in convs:
-        thread_replies += sum((c.get("thread_unread") or {}).values())
+        thread_unread: dict[str, int] = c.get("thread_unread") or {}
+        thread_replies += sum(thread_unread.values())
 
     if total_unread == 0 and thread_replies == 0:
         return "\U0001f514 all caught up (0 unread)"
@@ -350,8 +351,8 @@ def summarize_conversations(result: dict[str, Any]) -> str:
     if _is_error(result):
         return f"⚠️ conversations failed: {_err_msg(result)}"
 
-    convs = result.get("conversations") or []
-    all_convs = result.get("all_conversations")
+    convs: list[dict[str, Any]] = result.get("conversations") or []
+    all_convs: list[dict[str, Any]] | None = result.get("all_conversations")
 
     if all_convs is not None:
         total = len(all_convs)
@@ -398,7 +399,7 @@ def summarize_conversation_update(result: dict[str, Any]) -> str:
     if _is_error(result):
         return f"⚠️ update failed: {_err_msg(result)}"
     conv = result.get("conversation", "?")
-    fields = result.get("updated_fields") or []
+    fields: list[str] = result.get("updated_fields") or []
     if fields:
         return f"✏️ updated #{conv} ({', '.join(fields)})"
     return f"✏️ updated #{conv}"
@@ -573,11 +574,11 @@ def summarize_artifact_get(result: dict[str, Any]) -> str:
         return f"⚠️ artifact get failed: {_err_msg(result)}"
     name = result.get("name", "?")
     version = result.get("version", "?")
-    versions = result.get("versions") or []
+    versions: list[dict[str, Any]] = result.get("versions") or []
     n_versions = len(versions)
     author = "?"
     if versions:
-        last = versions[-1].get("author") or {}
+        last: dict[str, Any] = versions[-1].get("author") or {}
         author = last.get("name") or last.get("key") or "?"
     return (
         f"\U0001f4c4 '{name}' v{version} "
@@ -595,7 +596,7 @@ def summarize_artifact_list(result: dict[str, Any]) -> str:
     """
     if _is_error(result):
         return f"⚠️ artifact list failed: {_err_msg(result)}"
-    artifacts = result.get("artifacts") or []
+    artifacts: list[dict[str, Any]] = result.get("artifacts") or []
     count = result.get("count", len(artifacts))
     if count == 0:
         conv = result.get("conversation", "?")
@@ -660,7 +661,7 @@ def summarize_reactions_get(result: dict[str, Any]) -> str:
     if _is_error(result):
         return f"⚠️ reactions failed: {_err_msg(result)}"
     msg_id = _short_id(result.get("message_id"))
-    reactions = result.get("reactions") or {}
+    reactions: dict[str, list[Any]] = result.get("reactions") or {}
     total = sum(len(actors) for actors in reactions.values())
     if total == 0:
         return f"\U0001f937 no reactions on {msg_id}"
@@ -753,9 +754,9 @@ def summarize_thread_read(result: dict[str, Any]) -> str:
     if _is_error(result):
         return f"⚠️ thread read failed: {_err_msg(result)}"
 
-    root = result.get("root") or {}
+    root: dict[str, Any] = result.get("root") or {}
     root_id = _short_id(root.get("id"))
-    replies = result.get("replies") or []
+    replies: list[dict[str, Any]] = result.get("replies") or []
     count = result.get("count", len(replies))
     has_more = result.get("has_more", False)
 

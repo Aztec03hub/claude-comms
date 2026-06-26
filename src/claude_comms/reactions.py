@@ -30,7 +30,7 @@ import re
 import threading
 from collections import defaultdict
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -155,7 +155,7 @@ class _PerMessageState:
     Insertion order preserved for deterministic serialization.
     """
 
-    __slots__ = ("_by_emoji",)
+    __slots__: tuple[str, ...] = ("_by_emoji",)
 
     def __init__(self) -> None:
         self._by_emoji: dict[str, dict[str, None]] = {}
@@ -210,8 +210,8 @@ class ReactionsStore:
     step around :meth:`apply`'s return value.
     """
 
-    JSONL_FILENAME = "reactions.jsonl"
-    SNAPSHOT_FILENAME = "reactions.snapshot.json"
+    JSONL_FILENAME: str = "reactions.jsonl"
+    SNAPSHOT_FILENAME: str = "reactions.snapshot.json"
 
     def __init__(
         self,
@@ -220,10 +220,10 @@ class ReactionsStore:
         line_threshold: int = SNAPSHOT_LINE_THRESHOLD,
         msg_threshold: int = SNAPSHOT_MSG_THRESHOLD,
     ) -> None:
-        self._conv_dir = Path(conv_dir)
-        self._line_threshold = line_threshold
-        self._msg_threshold = msg_threshold
-        self._lock = threading.Lock()
+        self._conv_dir: Path = Path(conv_dir)
+        self._line_threshold: int = line_threshold
+        self._msg_threshold: int = msg_threshold
+        self._lock: threading.Lock = threading.Lock()
         self._state: dict[str, _PerMessageState] = defaultdict(_PerMessageState)
         # Number of lines currently in reactions.jsonl on disk (after the most
         # recent snapshot). Used to drive the snapshot trigger.
@@ -335,14 +335,19 @@ class ReactionsStore:
         if self.snapshot_path.is_file():
             try:
                 raw = self.snapshot_path.read_text(encoding="utf-8")
-                snap = json.loads(raw)
+                snap: Any = json.loads(raw)
                 if isinstance(snap, dict):
-                    for message_id, per_msg in snap.items():
+                    # cast: isinstance-narrowing of Any/JSON yields Unknown type
+                    # args; the snapshot is dynamic JSON, so these dynamic shapes
+                    # are correct.
+                    snap_map = cast("dict[str, Any]", snap)
+                    for message_id, per_msg in snap_map.items():
                         if not isinstance(per_msg, dict):
                             continue
-                        normalized = {
-                            str(k): list(v)
-                            for k, v in per_msg.items()
+                        emoji_map = cast("dict[str, Any]", per_msg)
+                        normalized: dict[str, list[str]] = {
+                            str(k): list(cast("list[Any]", v))
+                            for k, v in emoji_map.items()
                             if isinstance(v, list)
                         }
                         self._state[message_id] = _PerMessageState.from_dict(normalized)

@@ -10,7 +10,7 @@ Uses a connection-aware model: one entry per user key, with a
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -44,7 +44,7 @@ class PresenceState(Enum):
 class ParticipantItem(Widget):
     """A single participant entry with presence dot and connection indicators."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     ParticipantItem {
         height: 1;
         padding: 0 1;
@@ -64,14 +64,14 @@ class ParticipantItem(Widget):
         name: str,
         participant_type: str = "claude",
         connections: dict[str, dict[str, Any]] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.participant_key = participant_key
-        self.participant_name = name
-        self.participant_type = participant_type
+        self.participant_key: str = participant_key
+        self.participant_name: str = name
+        self.participant_type: str = participant_type
         self.connections: dict[str, dict[str, Any]] = connections or {}
-        self._label = Label("")
+        self._label: Label = Label("")
 
     def compose(self) -> ComposeResult:
         yield self._label
@@ -115,7 +115,7 @@ class ParticipantList(Vertical):
     awareness.
     """
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     ParticipantList {
         width: 22;
         dock: right;
@@ -124,10 +124,10 @@ class ParticipantList(Vertical):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._items: dict[str, ParticipantItem] = {}
-        self._title = Static("Members", classes="sidebar-title")
+        self._title: Static = Static("Members", classes="sidebar-title")
 
     def compose(self) -> ComposeResult:
         yield self._title
