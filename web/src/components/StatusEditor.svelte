@@ -25,8 +25,10 @@
   @prop {() => void} onCancel
 -->
 <script>
-  /** @type {{ currentStatus: {emoji: string|null, text: string|null, expires_at: string|null} | null, onSave: (emoji: string|null, text: string|null, expiresAt: string|null) => void, onClear: () => void, onCancel: () => void }} */
-  let { currentStatus, onSave, onClear, onCancel } = $props();
+  import Popover from './Popover.svelte';
+
+  /** @type {{ currentStatus: {emoji: string|null, text: string|null, expires_at: string|null} | null, onSave: (emoji: string|null, text: string|null, expiresAt: string|null) => void, onClear: () => void, onCancel: () => void, anchor?: HTMLElement | null }} */
+  let { currentStatus, onSave, onClear, onCancel, anchor = null } = $props();
 
   const EMOJI_CHOICES = ['💬', '🍵', '🎧', '🧠', '🛌', '🏃', '🤒', '🌴'];
   const MAX_TEXT_LEN = 60;
@@ -106,31 +108,34 @@
   function pickEmoji(g) {
     emoji = g;
   }
-
-  function handleKeydown(e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancel();
-    }
-  }
 </script>
 
-<div
-  class="status-backdrop"
-  data-testid="status-editor-backdrop"
-  onclick={handleCancel}
-  onkeydown={handleKeydown}
-  role="presentation"
+<!--
+  Overlay overhaul, Phase 1: StatusEditor now opens in the browser native
+  top layer via <Popover> (Popover API). This is the marquee fix - the
+  editor previously used `position: fixed; z-index: 90/91` while rendered
+  INSIDE Sidebar's `.sidebar-left` (`backdrop-filter` => its own stacking
+  context), so the center column and right-side panels painted OVER it.
+  The top layer escapes every ancestor stacking context, so no backdrop,
+  no `position: fixed`, and no z-index are needed here. Light-dismiss
+  (outside-click / Esc) + focus restore are handled by the `topLayer`
+  action; the editor is anchored to the Sidebar identity row.
+-->
+<Popover
+  {anchor}
+  placement="top-start"
+  offset={8}
+  dismiss="auto"
+  onClose={handleCancel}
+  data-testid="status-editor-popover"
 >
   <div
     class="status-editor"
     data-testid="status-editor"
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={handleKeydown}
     role="dialog"
     aria-label="Set status"
-    aria-modal="true"
     tabindex="-1"
+    data-autofocus
   >
     <div class="se-header">
       <span class="se-title">Set a status</span>
@@ -222,19 +227,10 @@
       </div>
     </div>
   </div>
-</div>
+</Popover>
 
 <style>
-  .status-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 90;
-    background: transparent;
-  }
   .status-editor {
-    position: fixed;
-    left: 14px;
-    bottom: 76px;
     width: 312px;
     background: rgba(37, 37, 40, 0.97);
     backdrop-filter: blur(20px) saturate(1.2);
@@ -245,7 +241,6 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    z-index: 91;
   }
   .se-header {
     display: flex;

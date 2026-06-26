@@ -490,6 +490,11 @@ test.describe('Scenario 06 v0.4.4 enhancements: W-8 top-layer coverage', () => {
   test('Status editor paints on TOP when opened from sidebar (W-8)', async ({ appPage, consoleErrors }) => {
     const editor = await openStatusEditor(appPage);
     await expectLocatorOnTop(appPage, editor);
+    // Overlay overhaul Phase 1: the editor is now a native top-layer
+    // popover (no more position:fixed; z-index:90/91 trap). Pin that the
+    // primitive actually promoted it into the top layer.
+    const popover = appPage.locator('[data-testid="status-editor-popover"]');
+    expect(await popover.evaluate((el) => el.matches(':popover-open'))).toBe(true);
     // Cancel cleanly.
     await editor.locator('[data-testid="status-editor-cancel"]').click();
     await expect(editor).not.toBeVisible({ timeout: 5000 });

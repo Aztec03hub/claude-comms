@@ -83,6 +83,28 @@
   --transition-fast: 0.12s ease;
   --transition-med: 0.2s ease;
   --transition-slow: 0.35s ease;
+
+  /*
+   * -- z-index token scale (Overlay overhaul, Phase 1, design §D) --
+   *
+   * Single source of truth for the RESIDUAL (non-top-layer) stacking
+   * order: docked panels, toasts, banners, and stable in-flow layering.
+   * Floating overlays (modals, menus, dropdowns, anchored popovers,
+   * context menus, tooltips) need NO z-index once migrated to the
+   * browser native top layer via `use:topLayer` (`<dialog>.showModal()`
+   * / Popover API `showPopover()`) - the top layer always wins, ordered
+   * by promotion time.
+   *
+   * Nothing above --z-toast (60) should exist in CSS once the migration
+   * completes. Phase 1 only ADDS these tokens; the app-wide collapse of
+   * the existing z-index jumble onto this scale is Phase 2.
+   */
+  --z-base: 0;       /* in-flow content */
+  --z-sticky: 10;    /* sticky headers, date separators, scroll-to-bottom */
+  --z-banner: 20;    /* connection status, remote-update banner */
+  --z-sidebar: 30;   /* sidebar / docked rails */
+  --z-panel: 40;     /* right-side sheets: thread/artifact/search/settings */
+  --z-toast: 60;     /* notification + undo toasts (passive, NOT top layer) */
 }
 
 /*
