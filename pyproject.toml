@@ -132,36 +132,62 @@ filterwarnings = [
 #      member access, missing imports, redeclarations, attribute errors). These stay ON.
 #   2. INFERENCE-STRICTNESS rules — a project-wide style stance demanding fully
 #      explicit type annotations on every symbol, parameter, attribute, and generic.
-#      This codebase deliberately leans on inference and dynamic dict/JSON payloads,
-#      so these fire in the thousands without indicating any defect.
 #
-# The block below turns OFF the inference-strictness / lint-noise classes ONLY, leaving
-# every correctness rule at its strict default. This is a documented strictness CHOICE,
-# not a way to hide bugs — re-enable any line to audit that class on demand.
+# Policy (see PR "Annotate src/ for real"): the SHIPPED PACKAGE (src/) is held to the
+# HIGH-VALUE strictness rules — every parameter, generic argument, and class attribute is
+# genuinely annotated. To keep that strictness scoped to source WITHOUT churning the test
+# suite, dev scripts, or build hooks (which deliberately lean on inference and dynamic
+# payloads), the global block below keeps every inference-strictness rule OFF — exactly as
+# it shipped — and a single `root = "src"` execution environment turns the high-value ones
+# back ON for the package only. tests/, tools/, scripts/, and hatch_build.py therefore keep
+# their prior, relaxed treatment; src/ is the one tree that must satisfy the strict rules.
+# Re-enable any line to audit that class on demand.
 [tool.basedpyright]
-# "x has type Any" / explicit `Any` annotations — pervasive with dynamic JSON/dict payloads.
+# "x has type Any" / explicit `Any` annotations — pervasive with dynamic JSON/dict payloads
+# (MQTT messages, MCP tool args, YAML config) where a precise static type does not exist;
+# forcing these would push blanket casts everywhere, strictly worse than honest `Any` at the
+# boundary. Kept OFF even for src (correctness rules still flag real misuse of those values).
 reportAny = false
 reportExplicitAny = false
-# "type of x is unknown/partially unknown" inference-completeness noise.
+# "type of x is unknown/partially unknown" inference-completeness noise — turned back ON for
+# src/ via the executionEnvironment below; OFF here so tests/tools/scripts stay relaxed.
 reportUnknownMemberType = false
 reportUnknownVariableType = false
 reportUnknownParameterType = false
 reportUnknownArgumentType = false
 reportUnknownLambdaType = false
-# Demands explicit annotations on every parameter / generic / class attribute.
+# Demands explicit annotations on every parameter / generic / class attribute — turned back
+# ON for src/ below; OFF here for everything else.
 reportMissingParameterType = false
 reportMissingTypeArgument = false
 reportUnannotatedClassAttribute = false
-# Style preferences, not correctness:
+# Style preferences, not correctness (OFF everywhere, src/ included):
 reportImplicitOverride = false            # @override decorator not required here
 reportCallInDefaultInitializer = false    # typer.Option(...) defaults are idiomatic
 reportUnusedCallResult = false            # not every call result must be bound/used
 reportImplicitStringConcatenation = false # intentional multi-line string literals
-# Intra-package access of underscore-prefixed helpers is idiomatic here, and tests
-# legitimately reach into internals; the cross-module correctness signal is low.
+# Intra-package access of module-level underscore-prefixed helpers (`_registry`,
+# `_publish_fn`, `_mqtt_subscriber`, ...) is idiomatic here and the cross-module correctness
+# signal is low; renaming them all to public would be churn without value. OFF everywhere.
 reportPrivateUsage = false
-# Third-party libs (amqtt, etc.) ship without type stubs — not actionable here.
+# Third-party libs (amqtt, textual, mcp, etc.) ship without type stubs — not actionable here.
 reportMissingTypeStubs = false
+
+# SOURCE (src/) is the shipped package and is held to the high-value inference-strictness
+# rules: every parameter, return, generic argument, and class attribute is genuinely
+# annotated (see PR "Annotate src/ for real"). These are turned back ON here at their
+# recommended-mode severities (reportMissingTypeArgument is an error; the rest warnings),
+# overriding the global OFF above for the source tree only.
+[[tool.basedpyright.executionEnvironments]]
+root = "src"
+reportUnknownMemberType = true
+reportUnknownVariableType = true
+reportUnknownParameterType = true
+reportUnknownArgumentType = true
+reportUnknownLambdaType = true
+reportMissingParameterType = true
+reportMissingTypeArgument = true
+reportUnannotatedClassAttribute = true
 
 # SOURCE keeps default unused-symbol / unreachable reporting so genuinely dead code or
 # unreachable branches in src/ still surface (the source-tree hits were cleaned in #34).
@@ -169,6 +195,8 @@ reportMissingTypeStubs = false
 # their side effects, signature-parity params, mock callback args — which are noise, so the
 # unused/unreachable classes are disabled THERE ONLY via a scoped execution environment.
 # (Verified: forcing reportUnusedParameter on globally still reports 0 under tests/.)
+# The inference-strictness rules are already OFF globally, so tests/ inherits that and needs
+# no extra disables for them.
 [[tool.basedpyright.executionEnvironments]]
 root = "tests"
 reportUnusedParameter = false
