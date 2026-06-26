@@ -425,6 +425,59 @@ describe('MessageBubble — sender-key in mentions, viewer is other (§10 Case 1
   });
 });
 
+// ── Broadcast @all / @everyone rendering ───────────────────────────────
+
+describe('MessageBubble — @all / @everyone broadcast highlight', () => {
+  test('test_broadcast_all_renders_self_chip_for_targeted_viewer', () => {
+    // Phil broadcasts "@all standup" with the expanded member keys in the
+    // wire mentions field. Viewer ember is among them → `@all` is a loud
+    // self-chip and the bubble carries the self-mention accent.
+    const message = makeMessage({
+      body: '@all standup',
+      mentions: [EMBER_KEY, SAGE_KEY],
+    });
+    const currentUser = { key: EMBER_KEY, name: 'ember', type: 'claude' };
+    const { container, bubbleEl } = renderBubble({ message, currentUser });
+
+    const selfChip = container.querySelector('.mention-chip-self');
+    expect(selfChip).not.toBeNull();
+    expect(selfChip.textContent).toBe('@all');
+    expect(bubbleEl.classList.contains('has-self-mention')).toBe(true);
+  });
+
+  test('test_broadcast_everyone_renders_other_chip_for_non_targeted_viewer', () => {
+    // Same broadcast, but the viewer (phil, the sender) is NOT in the
+    // expanded mentions → quiet other-chip, no self accent.
+    const message = makeMessage({
+      body: '@everyone ship it',
+      mentions: [EMBER_KEY, SAGE_KEY],
+    });
+    const currentUser = { key: PHIL_KEY, name: 'phil', type: 'human' };
+    const { container, bubbleEl } = renderBubble({ message, currentUser });
+
+    const otherChip = container.querySelector('.mention-chip-other');
+    expect(otherChip).not.toBeNull();
+    expect(otherChip.textContent).toBe('@everyone');
+    expect(container.querySelector('.mention-chip-self')).toBeNull();
+    expect(bubbleEl.classList.contains('has-self-mention')).toBe(false);
+  });
+
+  test('test_literal_at_all_without_mentions_stays_plain_text', () => {
+    // No active mentions field → a literal "@all" in prose must NOT be
+    // highlighted (false-positive defense), mirroring "@example".
+    const message = makeMessage({
+      body: 'reply to @all of these later',
+      mentions: null,
+    });
+    const currentUser = { key: EMBER_KEY, name: 'ember', type: 'claude' };
+    const { container } = renderBubble({ message, currentUser });
+
+    expect(container.querySelector('.mention-chip-self')).toBeNull();
+    expect(container.querySelector('.mention-chip-other')).toBeNull();
+    expect(container.querySelector('.mention')).toBeNull();
+  });
+});
+
 // ── Defensive tests beyond the §10 matrix ──────────────────────────────
 
 describe('MessageBubble — defensive coverage', () => {

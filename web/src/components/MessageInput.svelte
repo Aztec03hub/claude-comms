@@ -28,7 +28,7 @@
     filterCandidates,
     findExactMatch,
     commitMention,
-    tokensToMentions,
+    expandMentions,
     isWordTerminator,
   } from '../lib/mentions.js';
   import { parseDM } from '../lib/dm-parser.js';
@@ -1047,13 +1047,17 @@
       });
     } else {
       // Default path: autocomplete-driven mentions (broadcast highlight).
-      const mentions = tokensToMentions(mentionTokens);
-      // Composer-side sender-key dedup (UX): drop self if it somehow snuck
-      // into the token list. `filterCandidates` already excludes self, so
-      // this is defense in depth against direct token-list manipulation.
-      const filtered = mentions.filter((k) => k !== store.userProfile.key);
+      //
+      // `expandMentions` fans any committed `@all` / `@everyone` token out to
+      // the active channel's CURRENT present members (mirrors the server-side
+      // `tool_comms_send` resolution the web path bypasses), unions in any
+      // explicit `@name` tokens, dedups, and excludes the sender's own key.
+      // For ordinary mentions it's equivalent to the old `tokensToMentions`
+      // + sender-self filter.
+      const memberKeys = (store.activeMembers ?? []).map((m) => m.key);
+      const mentions = expandMentions(mentionTokens, memberKeys, store.userProfile.key);
       store.sendMessage(inputValue, null, {
-        mentions: filtered.length > 0 ? filtered : null,
+        mentions: mentions.length > 0 ? mentions : null,
         recipients: null,
       });
     }

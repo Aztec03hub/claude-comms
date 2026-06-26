@@ -167,6 +167,121 @@ describe('MessageInput — autocomplete commits populate mentions wire field', (
   });
 });
 
+describe('MessageInput — @all / @everyone broadcast mentions', () => {
+  test('test_broadcast_candidate_appears_in_dropdown', async () => {
+    const store = makeStore();
+    const { getByTestId, getAllByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    // Typing just `@` opens the dropdown with the synthetic broadcast rows
+    // present (and labeled with their hint).
+    await typeText(ta, '@');
+    expect(getByTestId('mention-item-__broadcast_all__')).toBeTruthy();
+    expect(getByTestId('mention-item-__broadcast_everyone__')).toBeTruthy();
+    // Both broadcast rows carry a hint label.
+    expect(getAllByTestId('mention-broadcast-hint')).toHaveLength(2);
+  });
+
+  test('test_broadcast_all_expands_to_present_members_minus_self', async () => {
+    // Active channel has phil (self), ember, sage present.
+    const store = makeStore({
+      activeMembers: [
+        { key: 'phil-key', name: 'phil' },
+        { key: 'ember-key', name: 'ember' },
+        { key: 'sage-key', name: 'sage' },
+      ],
+    });
+    const { getByTestId, container } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    // Type `@all` and accept via Tab → single committed broadcast token. No
+    // auto-space (per Phil) — value is exactly `@all`.
+    await typeText(ta, '@all');
+    await pressKey(ta, 'Tab');
+    await tick();
+    expect(ta.value).toBe('@all');
+
+    // Composer renders ONE pill for the broadcast token (not N member pills).
+    const pills = container.querySelectorAll('.mention-confirmed');
+    expect(pills).toHaveLength(1);
+    expect(pills[0].textContent).toBe('@all');
+
+    await fireEvent.click(getByTestId('send-button'));
+    await tick();
+
+    // Wire `mentions` carries every present member's key EXCEPT the sender's.
+    expect(store.sendMessage).toHaveBeenCalledTimes(1);
+    expect(store.sendMessage).toHaveBeenCalledWith(
+      '@all',
+      null,
+      { mentions: ['ember-key', 'sage-key'], recipients: null },
+    );
+  });
+
+  test('test_broadcast_unions_and_dedups_with_explicit_mention', async () => {
+    const store = makeStore({
+      activeMembers: [
+        { key: 'phil-key', name: 'phil' },
+        { key: 'ember-key', name: 'ember' },
+        { key: 'sage-key', name: 'sage' },
+      ],
+    });
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    // `@all @ember` — @ember is already covered by the broadcast expansion,
+    // so the wire field must not list it twice.
+    await typeText(ta, '@all');
+    await pressKey(ta, 'Tab');
+    await tick();
+    await typeText(ta, ' @em');
+    await pressKey(ta, 'Tab');
+    await tick();
+    expect(ta.value).toBe('@all @ember');
+
+    await fireEvent.click(getByTestId('send-button'));
+    await tick();
+
+    expect(store.sendMessage).toHaveBeenCalledWith(
+      '@all @ember',
+      null,
+      { mentions: ['ember-key', 'sage-key'], recipients: null },
+    );
+  });
+
+  test('test_broadcast_with_no_other_members_sends_null_mentions', async () => {
+    // Sender is the only present member → broadcast expands to empty, which
+    // the composer normalizes to a null mentions field (still a valid send).
+    const store = makeStore({
+      activeMembers: [{ key: 'phil-key', name: 'phil' }],
+    });
+    const { getByTestId } = render(MessageInput, {
+      props: { store, channelName: 'general', typingUsers: [], onOpenEmoji: () => {} },
+    });
+    const ta = getByTestId('message-input');
+
+    await typeText(ta, '@everyone');
+    await pressKey(ta, 'Tab');
+    await tick();
+    expect(ta.value).toBe('@everyone');
+
+    await fireEvent.click(getByTestId('send-button'));
+    await tick();
+
+    expect(store.sendMessage).toHaveBeenCalledWith(
+      '@everyone',
+      null,
+      { mentions: null, recipients: null },
+    );
+  });
+});
+
 describe('MessageInput — `/dm` slash-command routes through parser', () => {
   test('test_dm_path_populates_recipients_not_mentions', async () => {
     const store = makeStore();

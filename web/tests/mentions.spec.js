@@ -49,6 +49,8 @@ import {
   tokensToRecipients,
   renderSegments,
   isWordTerminator,
+  isBroadcastMention,
+  expandMentions,
 } from '../src/lib/mentions.js';
 
 // ── computeEditRange ───────────────────────────────────────────────────
@@ -216,11 +218,14 @@ describe('filterCandidates', () => {
 
   it('online participants ranked before offline (with alpha tie-break)', () => {
     const r = filterCandidates(FIXTURE_PARTICIPANTS, '', 'phil-key');
+    // Synthetic broadcast candidates lead the list; strip them to assert the
+    // real-participant ranking.
+    const real = r.filter((c) => !c.broadcast);
     // Online: alice (tui-1), claude-test (mcp-1) → alpha order.
     // Offline: bob, carol → alpha order.
-    expect(r.map((c) => c.name)).toEqual(['alice', 'claude-test', 'bob', 'carol']);
-    expect(r[0].online).toBe(true);
-    expect(r[2].online).toBe(false);
+    expect(real.map((c) => c.name)).toEqual(['alice', 'claude-test', 'bob', 'carol']);
+    expect(real[0].online).toBe(true);
+    expect(real[2].online).toBe(false);
   });
 
   it('excludes self (currentUserKey)', () => {
@@ -244,7 +249,9 @@ describe('filterCandidates', () => {
   it('accepts an array as well as a key→participant map', () => {
     const arr = Object.values(FIXTURE_PARTICIPANTS);
     const r = filterCandidates(arr, 'a', 'phil-key');
-    expect(r.map((c) => c.name).sort()).toEqual(['alice']);
+    // 'all' (broadcast) also prefix-matches 'a'; assert only the real ones.
+    const real = r.filter((c) => !c.broadcast);
+    expect(real.map((c) => c.name).sort()).toEqual(['alice']);
   });
 
   it('non-prefix substrings do NOT match (prefix only)', () => {
@@ -254,7 +261,9 @@ describe('filterCandidates', () => {
 
   it('exposes online flag derived from connections map', () => {
     const r = filterCandidates(FIXTURE_PARTICIPANTS, 'al', 'phil-key');
-    expect(r[0]).toMatchObject({ name: 'alice', online: true });
+    // 'all' (broadcast) leads on the 'al' prefix; assert against real ones.
+    const real = r.filter((c) => !c.broadcast);
+    expect(real[0]).toMatchObject({ name: 'alice', online: true });
   });
 });
 
@@ -395,6 +404,144 @@ describe('renderSegments', () => {
     expect(pend?.text).toBe('@bob');
     // No ghost when query is the exact name.
     expect(segs.find((s) => s.type === 'ghost')).toBeUndefined();
+  });
+});
+
+// ── isBroadcastMention ─────────────────────────────────────────────────
+
+describe('isBroadcastMention', () => {
+  it('recognizes all/everyone case-insensitively, with or without @', () => {
+    for (const t of ['all', 'everyone', '@all', '@everyone', '@All', '@EVERYONE', '  @all  ']) {
+      expect(isBroadcastMention(t)).toBe(true);
+    }
+  });
+  it('rejects ordinary names and non-strings', () => {
+    for (const t of ['alice', 'all-hands', 'everyones', '@bob', '']) {
+      expect(isBroadcastMention(t)).toBe(false);
+    }
+    expect(isBroadcastMention(undefined)).toBe(false);
+    expect(isBroadcastMention(null)).toBe(false);
+  });
+});
+
+// ── filterCandidates — broadcast synthetic candidates ──────────────────
+
+describe('filterCandidates — @all / @everyone', () => {
+  it('surfaces both broadcast candidates at the TOP on an empty query', () => {
+    const r = filterCandidates(FIXTURE_PARTICIPANTS, '', 'phil-key');
+    expect(r[0]).toMatchObject({ name: 'all', broadcast: true });
+    expect(r[1]).toMatchObject({ name: 'everyone', broadcast: true });
+    // They carry a hint and precede every real participant.
+    expect(r[0].hint).toBeTruthy();
+    const firstReal = r.findIndex((c) => !c.broadcast);
+    expect(firstReal).toBe(2);
+  });
+
+  it('prefix-filters broadcast candidates like real ones', () => {
+    // 'a' → only 'all' (everyone does not start with 'a').
+    const a = filterCandidates(FIXTURE_PARTICIPANTS, 'a', 'phil-key')
+      .filter((c) => c.broadcast)
+      .map((c) => c.name);
+    expect(a).toEqual(['all']);
+    // 'ev' → only 'everyone'.
+    const ev = filterCandidates(FIXTURE_PARTICIPANTS, 'ev', 'phil-key')
+      .filter((c) => c.broadcast)
+      .map((c) => c.name);
+    expect(ev).toEqual(['everyone']);
+    // 'cl' → neither broadcast token matches.
+    const cl = filterCandidates(FIXTURE_PARTICIPANTS, 'cl', 'phil-key')
+      .filter((c) => c.broadcast);
+    expect(cl).toEqual([]);
+  });
+
+  it('does not subject broadcast candidates to the 7-cap', () => {
+    const big = {};
+    for (let i = 0; i < 20; i++) {
+      big[`k${i}`] = {
+        key: `k${i}`,
+        name: `all${String(i).padStart(2, '0')}`, // all real names prefix 'all'
+        connections: { 'web-1': {} },
+      };
+    }
+    const r = filterCandidates(big, 'all', 'self');
+    // 1 broadcast ('all') + 7 capped real candidates.
+    expect(r.filter((c) => c.broadcast)).toHaveLength(1);
+    expect(r.filter((c) => !c.broadcast)).toHaveLength(7);
+  });
+});
+
+// ── commitMention — broadcast token flag ───────────────────────────────
+
+describe('commitMention — broadcast token', () => {
+  it('stamps broadcast:true on the committed token and adds NO trailing space', () => {
+    const r = commitMention('@al', [], 0, 3, {
+      name: 'all',
+      key: '__broadcast_all__',
+      broadcast: true,
+    });
+    expect(r.text).toBe('@all');
+    expect(r.text.endsWith(' ')).toBe(false); // no-auto-space preserved
+    expect(r.newCursor).toBe('@all'.length);
+    expect(r.tokens).toHaveLength(1);
+    expect(r.tokens[0]).toMatchObject({
+      start: 0,
+      end: 4,
+      name: 'all',
+      key: '__broadcast_all__',
+      broadcast: true,
+    });
+  });
+
+  it('leaves ordinary tokens with no broadcast key (shape unchanged)', () => {
+    const r = commitMention('@cl', [], 0, 3, { name: 'claude-test', key: 'k1' });
+    expect(r.tokens[0]).toEqual({ start: 0, end: 12, name: 'claude-test', key: 'k1' });
+    expect('broadcast' in r.tokens[0]).toBe(false);
+  });
+});
+
+// ── expandMentions ─────────────────────────────────────────────────────
+
+describe('expandMentions', () => {
+  const MEMBERS = ['m-alice', 'm-bob', 'm-self', 'm-carol'];
+
+  it('expands a broadcast token to all members minus self', () => {
+    const tokens = [{ start: 0, end: 4, name: 'all', key: '__broadcast_all__', broadcast: true }];
+    expect(expandMentions(tokens, MEMBERS, 'm-self')).toEqual(['m-alice', 'm-bob', 'm-carol']);
+  });
+
+  it('recognizes a broadcast token by name even without the flag', () => {
+    const tokens = [{ start: 0, end: 9, name: 'everyone', key: '__x__' }];
+    expect(expandMentions(tokens, MEMBERS, 'm-self')).toEqual(['m-alice', 'm-bob', 'm-carol']);
+  });
+
+  it('unions + dedups a broadcast token with an explicit mention', () => {
+    const tokens = [
+      { start: 0, end: 4, name: 'all', key: '__broadcast_all__', broadcast: true },
+      { start: 5, end: 12, name: 'alice', key: 'm-alice' }, // already covered by @all
+      { start: 13, end: 20, name: 'extern', key: 'm-extern' }, // offline / not a member
+    ];
+    // Present members first (minus self), then the non-member explicit, deduped.
+    expect(expandMentions(tokens, MEMBERS, 'm-self')).toEqual([
+      'm-alice',
+      'm-bob',
+      'm-carol',
+      'm-extern',
+    ]);
+  });
+
+  it('broadcast with zero other present members expands to empty', () => {
+    const tokens = [{ start: 0, end: 4, name: 'all', key: '__broadcast_all__', broadcast: true }];
+    expect(expandMentions(tokens, ['m-self'], 'm-self')).toEqual([]);
+    expect(expandMentions(tokens, [], 'm-self')).toEqual([]);
+  });
+
+  it('passes ordinary tokens through as their own keys (minus self, deduped)', () => {
+    const tokens = [
+      { start: 0, end: 4, name: 'bob', key: 'm-bob' },
+      { start: 5, end: 9, name: 'bob', key: 'm-bob' }, // dup
+      { start: 10, end: 14, name: 'me', key: 'm-self' }, // self → dropped
+    ];
+    expect(expandMentions(tokens, MEMBERS, 'm-self')).toEqual(['m-bob']);
   });
 });
 

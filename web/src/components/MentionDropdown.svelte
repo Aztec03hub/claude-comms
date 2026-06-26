@@ -69,7 +69,9 @@
         </div>
         <div class="mention-info">
           <span class="mention-name" style="color: {color.textColor}">{p.name}</span>
-          {#if p.online}
+          {#if p.broadcast}
+            <span class="mention-hint" data-testid="mention-broadcast-hint">{p.hint}</span>
+          {:else if p.online}
             <span class="mention-online-dot" aria-label="online" title="online"></span>
           {/if}
         </div>
@@ -144,6 +146,12 @@
   .mention-name {
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .mention-hint {
+    font-size: 11px;
+    color: var(--text-faint);
+    font-weight: 500;
   }
 
   .mention-online-dot {
