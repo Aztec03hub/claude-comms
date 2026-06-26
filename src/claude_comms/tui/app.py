@@ -11,11 +11,12 @@ import json
 import logging
 import secrets
 import time as _time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, Static
@@ -41,13 +42,17 @@ from claude_comms.tui.message_input import MessageInput, MessageSubmitted
 from claude_comms.tui.participant_list import ParticipantList, PresenceState
 from claude_comms.tui.status_bar import StatusBar
 
+if TYPE_CHECKING:
+    import aiomqtt
+    from textual._path import CSSPathType
+
 logger = logging.getLogger(__name__)
 
 # Path to the TCSS stylesheet (sibling file)
 CSS_PATH = str(Path(__file__).parent / "styles.tcss")
 
 
-class ClaudeCommsApp(App):
+class ClaudeCommsApp(App[None]):
     """Claude Comms terminal chat client.
 
     Connects directly to the MQTT broker via aiomqtt for real-time
@@ -55,11 +60,11 @@ class ClaudeCommsApp(App):
     listener loop.
     """
 
-    TITLE = "Claude Comms"
-    SUB_TITLE = "Terminal Chat"
-    CSS_PATH = "styles.tcss"
+    TITLE: str | None = "Claude Comms"
+    SUB_TITLE: str | None = "Terminal Chat"
+    CSS_PATH: ClassVar[CSSPathType | None] = "styles.tcss"
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+n", "new_conversation", "New Conv", show=True),
         Binding(
@@ -68,46 +73,52 @@ class ClaudeCommsApp(App):
         Binding("f1", "show_help", "Help", show=True),
     ]
 
-    def __init__(self, config: dict[str, Any] | None = None, **kwargs) -> None:
+    def __init__(self, config: dict[str, Any] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         # Load config
-        self._config = config or load_config()
+        self._config: dict[str, Any] = config or load_config()
         identity = self._config.get("identity", {})
 
         # Build our participant identity
-        self._key = identity.get("key", "00000000")
-        self._name = identity.get("name", "") or f"user-{self._key}"
-        self._type = identity.get("type", "human")
+        self._key: str = identity.get("key", "00000000")
+        self._name: str = identity.get("name", "") or f"user-{self._key}"
+        # Dynamic config value; feeds Message.create's ParticipantType literal,
+        # so kept as Any (the config "type" field is not statically constrained).
+        self._type: Any = identity.get("type", "human")
 
         # Per-session instance ID (4 hex chars)
-        self._instance_id = secrets.token_hex(2)
+        self._instance_id: str = secrets.token_hex(2)
 
         # MQTT connection info
         broker_cfg = self._config.get("broker", {})
-        self._mqtt_host = broker_cfg.get("host", "127.0.0.1")
-        self._mqtt_port = broker_cfg.get("port", 1883)
+        self._mqtt_host: str = broker_cfg.get("host", "127.0.0.1")
+        self._mqtt_port: int = broker_cfg.get("port", 1883)
         auth_cfg = broker_cfg.get("auth", {})
-        self._mqtt_user = auth_cfg.get("username") if auth_cfg.get("enabled") else None
-        self._mqtt_pass = auth_cfg.get("password") if auth_cfg.get("enabled") else None
+        self._mqtt_user: str | None = (
+            auth_cfg.get("username") if auth_cfg.get("enabled") else None
+        )
+        self._mqtt_pass: str | None = (
+            auth_cfg.get("password") if auth_cfg.get("enabled") else None
+        )
 
         # State
-        self._active_conv = self._config.get("default_conversation", "general")
+        self._active_conv: str = self._config.get("default_conversation", "general")
         auto_join = self._config.get("mcp", {}).get("auto_join", ["general"])
         self._conversations: list[str] = list(auto_join) if auto_join else ["general"]
 
         # Artifact data directory
-        self._artifact_dir = Path(
+        self._artifact_dir: Path = Path(
             self._config.get("artifacts", {}).get(
                 "data_dir", "~/.claude-comms/artifacts"
             )
         ).expanduser()
 
         # MQTT client reference (set by worker)
-        self._mqtt_client = None
+        self._mqtt_client: aiomqtt.Client | None = None
 
         # Heartbeat task reference (cancelled on disconnect)
-        self._heartbeat_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
 
         # Typing indicator debounce: publish at most once per 2 seconds
         self._last_typing_publish: float = 0.0
@@ -294,7 +305,7 @@ class ClaudeCommsApp(App):
                 self._heartbeat_task.cancel()
                 self._heartbeat_task = None
 
-    async def _heartbeat_loop(self, client) -> None:
+    async def _heartbeat_loop(self, client: aiomqtt.Client) -> None:
         """Re-publish presence every 60 seconds to keep lastSeen fresh."""
         try:
             while True:
@@ -325,12 +336,16 @@ class ClaudeCommsApp(App):
         except Exception:
             pass
 
-    async def _subscribe_conv_topics(self, client, conv_id: str) -> None:
+    async def _subscribe_conv_topics(
+        self, client: aiomqtt.Client, conv_id: str
+    ) -> None:
         """Subscribe to presence and typing topics for a conversation (old format)."""
         await client.subscribe(f"claude-comms/conv/{conv_id}/presence/+", qos=0)
         await client.subscribe(f"claude-comms/conv/{conv_id}/typing/+", qos=0)
 
-    async def _unsubscribe_conv_topics(self, client, conv_id: str) -> None:
+    async def _unsubscribe_conv_topics(
+        self, client: aiomqtt.Client, conv_id: str
+    ) -> None:
         """Unsubscribe from conversation-specific topics."""
         await client.unsubscribe(f"claude-comms/conv/{conv_id}/presence/+")
         await client.unsubscribe(f"claude-comms/conv/{conv_id}/typing/+")
@@ -369,7 +384,7 @@ class ClaudeCommsApp(App):
             # History fetch failed — not critical, live messages still work
             pass
 
-    async def _publish_presence(self, client, status: str) -> None:
+    async def _publish_presence(self, client: aiomqtt.Client, status: str) -> None:
         """Publish our presence to the new per-instance topic.
 
         Also publishes to the old conv-level and system topics for
@@ -830,10 +845,10 @@ class ClaudeCommsApp(App):
 # ---------------------------------------------------------------------------
 
 
-class NewConversationScreen(ModalScreen):
+class NewConversationScreen(ModalScreen[None]):
     """Modal dialog for creating a new conversation."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     NewConversationScreen {
         align: center middle;
     }
@@ -857,9 +872,9 @@ class NewConversationScreen(ModalScreen):
     }
     """
 
-    def __init__(self, callback, **kwargs) -> None:
+    def __init__(self, callback: Callable[[str], None], **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._callback = callback
+        self._callback: Callable[[str], None] = callback
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-conv-dialog"):
@@ -878,15 +893,15 @@ class NewConversationScreen(ModalScreen):
         self.dismiss()
 
 
-class HelpScreen(ModalScreen):
+class HelpScreen(ModalScreen[None]):
     """Modal overlay showing keybinding help."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "dismiss", "Close"),
         Binding("f1", "dismiss", "Close"),
     ]
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     HelpScreen {
         align: center middle;
     }

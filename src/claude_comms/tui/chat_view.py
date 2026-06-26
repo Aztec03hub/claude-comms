@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from rich import box
+from rich.console import RenderableType
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
@@ -217,7 +219,7 @@ def classify_mention_segments(
     # treatment.
     is_whisper = bool(recipients)
     mentions_active = bool(mentions) and not is_whisper
-    mentions_set = set(mentions) if mentions_active and mentions else set()
+    mentions_set: set[str] = set(mentions) if mentions_active and mentions else set()
     viewer_is_sender = (
         viewer_key is not None and sender_key is not None and viewer_key == sender_key
     )
@@ -292,8 +294,26 @@ def _render_segments_as_text(
     return result
 
 
+def _name_key_pair(entry: Any) -> tuple[str, str] | None:
+    """Extract a ``(name, key)`` string pair from a participant entry.
+
+    Returns ``None`` when *entry* is not a mapping or lacks string
+    ``name``/``key`` fields.
+    """
+    if not isinstance(entry, dict):
+        return None
+    # isinstance() narrows an `Any` value to `dict[Unknown, Unknown]`, which
+    # leaves `.get` untyped; cast to the real dynamic-payload shape.
+    entry_map = cast("dict[str, Any]", entry)
+    name = entry_map.get("name")
+    key = entry_map.get("key")
+    if isinstance(name, str) and isinstance(key, str):
+        return name, key
+    return None
+
+
 def _name_to_key_from_participants(
-    participants: dict | list | None,
+    participants: dict[str, Any] | list[Any] | None,
 ) -> dict[str, str]:
     """Coerce a participants map / list into the case-folded name→key dict
     the classifier expects.
@@ -318,21 +338,18 @@ def _name_to_key_from_participants(
         if isinstance(sample, dict):
             out: dict[str, str] = {}
             for entry in participants.values():
-                name = entry.get("name") if isinstance(entry, dict) else None
-                key = entry.get("key") if isinstance(entry, dict) else None
-                if isinstance(name, str) and isinstance(key, str):
-                    out[name] = key
+                pair = _name_key_pair(entry)
+                if pair is not None:
+                    out[pair[0]] = pair[1]
             return out
         return dict(participants)  # already name→key
     # List / iterable of {name, key, ...}
-    out = {}
+    out_list: dict[str, str] = {}
     for entry in participants:
-        if isinstance(entry, dict):
-            name = entry.get("name")
-            key = entry.get("key")
-            if isinstance(name, str) and isinstance(key, str):
-                out[name] = key
-    return out
+        pair = _name_key_pair(entry)
+        if pair is not None:
+            out_list[pair[0]] = pair[1]
+    return out_list
 
 
 def _render_text_with_mentions(  # pyright: ignore[reportUnusedFunction]
@@ -340,7 +357,7 @@ def _render_text_with_mentions(  # pyright: ignore[reportUnusedFunction]
     *,
     message: Message,
     viewer_key: str | None,
-    participants: dict | list | None,
+    participants: dict[str, Any] | list[Any] | None,
 ) -> Text:
     """Render *text* with @-mention classification spans (Phase E entrypoint).
 
@@ -386,12 +403,12 @@ class MessageBubble(Static):
         *,
         viewer_key: str | None = None,
         name_to_key: dict[str, str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self._message = message
-        self._viewer_key = viewer_key
-        self._name_to_key = name_to_key or {}
+        self._message: Message = message
+        self._viewer_key: str | None = viewer_key
+        self._name_to_key: dict[str, str] = name_to_key or {}
 
     def render(self) -> Panel | Text:
         """Render the message as a Rich Panel with sender-colored border."""
@@ -453,7 +470,11 @@ class MessageBubble(Static):
     # renderables that respect existing code-block + multi-segment paths.
     # ------------------------------------------------------------------
 
-    def _render_body(self, msg: Message, is_whisper: bool):  # pyright: ignore[reportUnusedParameter]
+    def _render_body(
+        self,
+        msg: Message,
+        is_whisper: bool,  # pyright: ignore[reportUnusedParameter]
+    ) -> tuple[RenderableType, bool]:
         """Render the body and return (renderable, has_self_mention).
 
         ``has_self_mention`` is True iff any text segment classified to
@@ -466,7 +487,7 @@ class MessageBubble(Static):
         sections = _extract_code_blocks(msg.body)
 
         any_self = False
-        rendered: list = []
+        rendered: list[RenderableType] = []
         for seg_type, lang, content in sections:
             if seg_type == "code":
                 rendered.append(
@@ -511,7 +532,7 @@ class MessageBubble(Static):
 class SystemMessage(Static):
     """A system message (join/leave) displayed as centered dim text with a rule."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     SystemMessage {
         text-align: center;
         color: #6a6a6a;
@@ -521,14 +542,14 @@ class SystemMessage(Static):
     }
     """
 
-    def __init__(self, text: str, **kwargs) -> None:
+    def __init__(self, text: str, **kwargs: Any) -> None:
         super().__init__(text, **kwargs)
 
 
 class EmptyChannelMessage(Static):
     """Placeholder shown when a channel has no messages yet."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     EmptyChannelMessage {
         text-align: center;
         color: #6a6a6a;
@@ -537,7 +558,7 @@ class EmptyChannelMessage(Static):
     }
     """
 
-    def __init__(self, conv_id: str, **kwargs) -> None:
+    def __init__(self, conv_id: str, **kwargs: Any) -> None:
         text = f"This is the beginning of # {conv_id}\nNo messages yet. Say hello!"
         super().__init__(text, **kwargs)
 
@@ -556,7 +577,7 @@ class ChatView(VerticalScroll):
         apply the self/other/legacy classification at render time.
     """
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     ChatView {
         height: 1fr;
         background: #141416;
@@ -569,7 +590,7 @@ class ChatView(VerticalScroll):
 
     current_conv: reactive[str] = reactive("general")
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Track seen message IDs for client-side dedup
         self._seen_ids: set[str] = set()

@@ -7,6 +7,8 @@ and the current user identity.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from rich.text import Text
 from textual.reactive import reactive
 from textual.widgets import Static
@@ -15,7 +17,7 @@ from textual.widgets import Static
 class StatusBar(Static):
     """Single-line status bar with connection info and typing indicators."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     StatusBar {
         height: 1;
         background: #1a1a1c;
