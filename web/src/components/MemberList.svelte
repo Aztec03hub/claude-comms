@@ -475,7 +475,7 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
-    z-index: 1;
+    z-index: var(--z-raised);
   }
 
   @media (max-width: 640px) {

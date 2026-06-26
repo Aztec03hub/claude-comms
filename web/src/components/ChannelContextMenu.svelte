@@ -65,7 +65,7 @@
 -->
 <script>
   import { tick } from 'svelte';
-  import { portal } from '../lib/portal.js';
+  import { topLayer } from '../lib/top-layer.svelte.js';
   import {
     Star,
     StarOff,
@@ -219,20 +219,33 @@
   });
 
   // -----------------------------------------------------------------
-  // Position state. Default to 0,0; once the menu has mounted the
-  // $effect below reads `anchorEvent.clientX/Y`, measures the rendered
-  // rect, and sets the final coords (possibly flipped). The component
-  // is mounted/unmounted on each right-click in the parent shell, so a
-  // stale anchorEvent value cannot occur during a single instance.
+  // Positioning is delegated to `use:topLayer` (Overlay overhaul, Phase
+  // 2): both the menu and its submenu are promoted into the browser
+  // native top layer (Popover API) anchored to cursor / parent-row
+  // coords, escaping EVERY ancestor stacking context - no portal, no
+  // z-index, no manual flip math (the action clamps to the viewport).
+  // The component is mounted/unmounted on each right-click in the
+  // parent shell, so a stale anchorEvent value cannot occur.
   // -----------------------------------------------------------------
-  let menuX = $state(0);
-  let menuY = $state(0);
-  let menuEl = $state(null);
+  let menuEl = $state(/** @type {HTMLElement | null} */ (null));
+
+  // Cursor rect for the main-menu anchor: a zero-size rect at the
+  // contextmenu event coords.
+  const anchorRect = () =>
+    typeof DOMRect !== 'undefined'
+      ? new DOMRect(anchorEvent?.clientX ?? 0, anchorEvent?.clientY ?? 0, 0, 0)
+      : null;
 
   // Submenu state.
   let submenuOpenIndex = $state(/** @type {number | null} */ (null));
   let submenuX = $state(0);
   let submenuY = $state(0);
+
+  // Submenu anchor: a zero-size rect at the right edge of the parent row
+  // (computed in openSubmenu BEFORE the submenu renders, so the action
+  // positions it correctly on mount).
+  const submenuRect = () =>
+    typeof DOMRect !== 'undefined' ? new DOMRect(submenuX, submenuY, 0, 0) : null;
 
   // Active item index for keyboard navigation. Defaults to 0 once the
   // menu mounts; ArrowUp / ArrowDown move it.
@@ -240,40 +253,18 @@
   let submenuActiveIndex = $state(0);
 
   // -----------------------------------------------------------------
-  // Position + initial focus after mount. We use $effect with a
-  // run-once latch instead of onMount so jsdom test environments
-  // (which do not run microtask animation frames) still execute the
-  // measurement pass before assertions.
+  // Initial focus after mount. We use $effect with a run-once latch
+  // instead of onMount so jsdom test environments (which do not run
+  // microtask animation frames) still execute it before assertions.
+  // The topLayer action's own initial-focus is disabled
+  // (trapInitialFocus:false) so it does not fight this.
   // -----------------------------------------------------------------
-  let positioned = false;
+  let focused = false;
   $effect(() => {
-    if (!menuEl || positioned) return;
-    positioned = true;
-
-    const initialX = anchorEvent?.clientX ?? 0;
-    const initialY = anchorEvent?.clientY ?? 0;
-
-    // Default to the raw cursor coords, then flip if we would overflow.
-    const rect = menuEl.getBoundingClientRect();
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
-
-    let nextY = initialY;
-    if (initialY + rect.height > vh && initialY - rect.height >= 0) {
-      nextY = Math.max(0, initialY - rect.height);
-    }
-    let nextX = initialX;
-    if (initialX + rect.width > vw && initialX - rect.width >= 0) {
-      nextX = Math.max(0, initialX - rect.width);
-    }
-    menuX = nextX;
-    menuY = nextY;
-
-    // Focus the first menuitem.
-    tick().then(() => {
-      const first = menuEl?.querySelector('[role="menuitem"]');
-      if (first instanceof HTMLElement) first.focus();
-    });
+    if (!menuEl || focused) return;
+    focused = true;
+    const first = menuEl.querySelector('[role="menuitem"]');
+    if (first instanceof HTMLElement) first.focus();
   });
 
   // -----------------------------------------------------------------
@@ -284,10 +275,11 @@
     const target = event.target;
     if (target instanceof Node) {
       if (menuEl.contains(target)) return;
-      // The Mute submenu is portaled to <body> (see {@attach portal()} on
-      // the submenu root), so it is NOT inside `menuEl`. Without this check a
-      // real mouse click on a submenu item fires mousedown first → we'd close
-      // the menu before the click/action fired (mouse Mute was unreachable).
+      // The Mute submenu is a SEPARATE top-layer popover (its own
+      // use:topLayer), so it is NOT a DOM descendant of `menuEl`. Without
+      // this check a real mouse click on a submenu item fires mousedown
+      // first -> we'd close the menu before the click/action fired (mouse
+      // Mute was unreachable).
       const submenuEl = document.querySelector('[data-testid="channel-ctx-submenu"]');
       if (submenuEl && submenuEl.contains(target)) return;
     }
@@ -355,22 +347,23 @@
   }
 
   async function openSubmenu(index) {
-    submenuOpenIndex = index;
     submenuActiveIndex = 0;
-    // Position the submenu to the right of the parent row.
-    await tick();
+    // Measure the parent row and set the submenu anchor coords BEFORE the
+    // submenu renders, so `use:topLayer` positions it correctly on mount
+    // (to the right of the parent row).
     const row = menuEl?.querySelector(`[data-row-index="${index}"]`);
     if (row instanceof HTMLElement) {
       const rect = row.getBoundingClientRect();
       submenuX = rect.right;
       submenuY = rect.top;
-      // Focus the first submenu item.
-      await tick();
-      const firstSub = document.querySelector(
-        '[data-testid="channel-ctx-submenu"] [role="menuitem"]'
-      );
-      if (firstSub instanceof HTMLElement) firstSub.focus();
     }
+    submenuOpenIndex = index;
+    // Focus the first submenu item once it has rendered.
+    await tick();
+    const firstSub = document.querySelector(
+      '[data-testid="channel-ctx-submenu"] [role="menuitem"]'
+    );
+    if (firstSub instanceof HTMLElement) firstSub.focus();
   }
 
   function closeSubmenu() {
@@ -493,12 +486,15 @@
 />
 
 <!--
-  v0.4.4 hotfix (Bug 1): portal the menu into ``document.body`` via the
-  ``portal`` attachment so it escapes any ancestor stacking context
-  created by ``backdrop-filter`` on neighbouring panels (ArtifactPanel /
-  ThreadPanel / SearchPanel / SettingsPanel all use it). Combined with
-  ``z-index: 9999`` below the menu paints above all other UI regardless
-  of where in the DOM it was declared.
+  Overlay overhaul Phase 2 (supersedes the v0.4.4 portal+z9999 fix):
+  `use:topLayer` promotes the menu into the browser native top layer
+  (Popover API) anchored to the cursor, escaping EVERY ancestor stacking
+  context (the backdrop-filter panels that trapped it) - no portal, no
+  z-index. `dismiss: 'manual'`: the component owns outside-click + Escape
+  closing (see handleWindowMouseDown / handleMenuKeydown), which already
+  excludes the submenu so a click on a submenu item never closes the
+  parent (design §F.8) - the browser's auto light-dismiss would not make
+  that distinction across the two sibling top-layer popovers.
 -->
 <div
   bind:this={menuEl}
@@ -506,10 +502,14 @@
   role="menu"
   tabindex="-1"
   data-testid="channel-ctx-menu"
-  style:left="{menuX}px"
-  style:top="{menuY}px"
   onkeydown={handleMenuKeydown}
-  {@attach portal()}
+  use:topLayer={{
+    anchor: anchorRect,
+    placement: 'bottom-start',
+    offset: 0,
+    dismiss: 'manual',
+    trapInitialFocus: false,
+  }}
 >
   {#each items as item, idx (item.id)}
     <button
@@ -540,15 +540,25 @@
 
 {#if submenuOpenIndex !== null}
   {@const sub = items[submenuOpenIndex]?.submenu ?? []}
+  <!--
+    Nested submenu as a SECOND top-layer popover (design §F.8). `manual`
+    so it is fully owned by the parent's open/close logic; anchored to the
+    right edge of the parent row via submenuRect.
+  -->
   <div
     class="channel-ctx-menu submenu"
     role="menu"
     tabindex="-1"
     data-testid="channel-ctx-submenu"
-    style:left="{submenuX}px"
-    style:top="{submenuY}px"
     onkeydown={handleSubmenuKeydown}
-    {@attach portal()}
+    use:topLayer={{
+      anchor: submenuRect,
+      placement: 'bottom-start',
+      offset: 0,
+      dismiss: 'manual',
+      trapInitialFocus: false,
+      restoreFocus: false,
+    }}
   >
     {#each sub as subItem, subIdx (subItem.id)}
       <button
@@ -578,14 +588,9 @@
 
 <style>
   .channel-ctx-menu {
-    position: fixed;
-    /* v0.4.4 hotfix (Bug 1): max-out z-index above every other layer.
-       Used alongside the {@attach portal()} relocation which lifts the
-       element to <body>, escaping any ancestor stacking context
-       (backdrop-filter / filter / transform create them). Either fix
-       in isolation is fragile; both together guarantee top-layer
-       paint. */
-    z-index: 9999;
+    /* Position + top-layer promotion are owned by `use:topLayer` (it sets
+       position:fixed + left/top inline and calls showPopover()); no manual
+       z-index - the native top layer always paints above the app. */
     min-width: 200px;
     background: rgba(37, 37, 40, 0.96);
     backdrop-filter: blur(20px) saturate(1.2);

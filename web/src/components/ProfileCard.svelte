@@ -1,28 +1,52 @@
 <!--
   @component ProfileCard
-  @description Compact popup card showing a participant's avatar, name, handle, and role badge. Provides action buttons for sending a direct message or viewing the full profile. Dismisses on backdrop click or Escape.
+  @description Compact popup card showing a participant's avatar, name, handle, and role badge. Provides action buttons for sending a direct message or viewing the full profile. Dismisses on outside click or Escape.
+
+  Overlay overhaul, Phase 2: the card now opens in the browser native top
+  layer via <Popover> (Popover API), so it escapes every ancestor stacking
+  context with NO position:fixed and NO z-index. The old full-screen
+  `.profile-backdrop` element is gone (the top layer + a window-level
+  outside-click handler replace it); the card is viewport-positioned by the
+  popover wrapper class (see :global(.profile-card-popover)).
+
   @prop {object} participant - Participant object with name, key, and type fields.
   @prop {Function} onClose - Callback invoked to dismiss the profile card.
   @prop {Function} onMessage - Optional callback invoked with the participant to start a direct message.
   @prop {Function} onViewProfile - Optional callback invoked with the participant to open the full profile view.
 -->
 <script>
+  import Popover from './Popover.svelte';
   import { Star } from 'lucide-svelte';
   import { getParticipantColor, getInitials } from '../lib/utils.js';
 
   let { participant, onClose, onMessage, onViewProfile } = $props();
 
   let color = $derived(getParticipantColor(participant.key));
+
+  // The card root, used to detect outside clicks. We no longer render a
+  // full-screen backdrop; a window-level mousedown closes the card when the
+  // click lands outside it. This keeps dismissal identical in jsdom (no
+  // Popover light-dismiss there) and real Chromium.
+  let cardEl = $state(/** @type {HTMLElement | null} */ (null));
+
+  function handleOutsideMousedown(e) {
+    const t = e.target;
+    const el = t instanceof Element ? t : (t?.parentElement ?? null);
+    if (el && cardEl && cardEl.contains(el)) return;
+    onClose();
+  }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') onClose(); }} />
+<svelte:window
+  onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
+  onmousedown={handleOutsideMousedown}
+/>
 
-<div class="profile-backdrop" onclick={onClose} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClose(); }} role="presentation" data-testid="profile-card-close">
+<Popover dismiss="manual" class="profile-card-popover">
   <div
+    bind:this={cardEl}
     class="profile-card"
     data-testid="profile-card"
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
     role="dialog"
     aria-label="Profile card for {participant.name}"
     aria-modal="true"
@@ -47,20 +71,21 @@
       </div>
     </div>
   </div>
-</div>
+</Popover>
 
 <style>
-  .profile-backdrop {
+  /* Viewport-positioned popover wrapper (the native top-layer element).
+     Global because the class lands on <Popover>'s own <div>, outside this
+     component's scope. inset:auto cancels the popover UA centering. */
+  :global(.profile-card-popover) {
     position: fixed;
-    inset: 0;
-    z-index: 49;
+    inset: auto;
+    bottom: 70px;
+    left: 14px;
+    margin: 0;
   }
 
   .profile-card {
-    position: fixed;
-    bottom: 70px;
-    left: 14px;
-    z-index: 50;
     width: 240px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
@@ -91,7 +116,7 @@
     color: #0a0a0c;
     border: 3px solid var(--bg-elevated);
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    z-index: 1;
+    z-index: var(--z-raised);
   }
 
   .profile-card-body { padding: 28px 16px 16px; }

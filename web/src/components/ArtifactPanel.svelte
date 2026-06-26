@@ -730,7 +730,7 @@
     /* width comes from the inline style bound to `panelWidth` */
     min-width: 320px;
     max-width: 900px;
-    z-index: 104;
+    z-index: var(--z-panel);
     background: rgba(20, 20, 22, 0.96);
     backdrop-filter: blur(16px);
     border-left: 1px solid var(--border);
@@ -758,7 +758,7 @@
     width: 6px;
     height: 100%;
     cursor: ew-resize;
-    z-index: 110;
+    z-index: var(--z-panel);
     background: transparent;
     transition: background 120ms ease;
     /* Keep the hit-target easy to grab without shifting layout. */
@@ -894,7 +894,7 @@
     font-weight: 600;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     animation: toastIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
-    z-index: 20;
+    z-index: var(--z-banner);
   }
 
   @keyframes toastIn {

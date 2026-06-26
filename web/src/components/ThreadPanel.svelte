@@ -289,7 +289,7 @@
     /* width comes from the inline style bound to `panelWidth` (v0.4.3 drag-resize) */
     min-width: 280px;
     max-width: 720px;
-    z-index: 45;
+    z-index: var(--z-panel);
     background: rgba(17, 17, 19, 0.97);
     backdrop-filter: blur(24px) saturate(1.3);
     border-left: 1px solid var(--border);
@@ -317,7 +317,7 @@
     width: 6px;
     height: 100%;
     cursor: ew-resize;
-    z-index: 110;
+    z-index: var(--z-panel);
     background: transparent;
     transition: background 120ms ease;
     /* Keep the hit-target easy to grab without shifting layout. */

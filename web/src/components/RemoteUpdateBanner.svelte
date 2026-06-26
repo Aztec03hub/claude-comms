@@ -142,7 +142,7 @@
     border-left: 3px solid var(--ember-500);
     border-bottom: 1px solid var(--border);
     animation: banner-slide-in 200ms ease-out both;
-    z-index: 15;
+    z-index: var(--z-banner);
   }
 
   .remote-update-banner:focus {

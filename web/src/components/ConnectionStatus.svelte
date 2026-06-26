@@ -202,7 +202,7 @@
     font-size: 11.5px;
     font-weight: 500;
     position: relative;
-    z-index: 2;
+    z-index: var(--z-banner);
     transition: all 0.3s ease;
   }
 

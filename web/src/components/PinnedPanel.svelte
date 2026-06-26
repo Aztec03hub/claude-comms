@@ -47,7 +47,7 @@
     position: absolute;
     top: 88px;
     right: 16px;
-    z-index: 105;
+    z-index: var(--z-panel);
     width: 340px;
     background: rgba(37, 37, 40, 0.92);
     backdrop-filter: blur(20px) saturate(1.2);

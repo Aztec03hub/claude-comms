@@ -38,7 +38,7 @@
     border-radius: 8px;
     padding: 2px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
-    z-index: 10;
+    z-index: var(--z-sticky);
   }
 
   :global(.msg-row.human) .msg-actions { right: auto; left: 10px; }

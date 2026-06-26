@@ -865,7 +865,7 @@
     transition: opacity var(--transition-fast);
     white-space: nowrap;
     pointer-events: none;
-    z-index: 5;
+    z-index: var(--z-elevated);
   }
 
   /* Human bubbles align right, but the tooltip stays centered above the

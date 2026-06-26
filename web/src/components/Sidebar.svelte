@@ -469,7 +469,7 @@
 </aside>
 
 <style>
-  .sidebar-left { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg-sidebar); backdrop-filter: blur(20px); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; position: relative; z-index: 1; }
+  .sidebar-left { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg-sidebar); backdrop-filter: blur(20px); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; position: relative; z-index: var(--z-sidebar); }
   .sidebar-left::after { content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: linear-gradient(180deg, rgba(245,158,11,0.06), transparent 30%, transparent 70%, rgba(245,158,11,0.04)); pointer-events: none; }
   .sidebar-brand { padding: 22px 18px 16px; display: flex; align-items: center; gap: 11px; }
   .sidebar-brand h1 { font-size: 17px; font-weight: 800; letter-spacing: -0.4px; background: linear-gradient(135deg, var(--ember-400), var(--ember-300), var(--gold)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }

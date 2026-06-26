@@ -23,6 +23,8 @@
   @prop {Function} onCancel - Called when the user dismisses the dialog.
 -->
 <script>
+  import { topLayer } from '../lib/top-layer.svelte.js';
+
   let {
     channel,
     messageCount = 0,
@@ -78,15 +80,12 @@
    * Implemented at the dialog root via onkeydown so we don't need to
    * attach per-button handlers and stay robust if a third focusable is
    * added later (it falls back to default Tab order between them).
+   * Escape is owned by the `topLayer` action (it intercepts Escape on the
+   * dialog node, calls onClose, and stops propagation so only the topmost
+   * overlay closes); we only implement the Tab trap here.
    * @param {KeyboardEvent} e
    */
   function handleDialogKeydown(e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      onCancel?.();
-      return;
-    }
     if (e.key !== 'Tab') return;
     if (!dialogEl) return;
     const focusables = /** @type {HTMLElement[]} */ (
@@ -126,8 +125,11 @@
     }
   }
 
-  function handleOverlayClick() {
-    onCancel?.();
+  function handleOverlayClick(e) {
+    // Native <dialog> backdrop: a click on the ::backdrop fires on the
+    // dialog element itself (target === currentTarget). Content clicks land
+    // on inner nodes (and are stopped by handleContentClick).
+    if (e.target === e.currentTarget) onCancel?.();
   }
 
   function handleContentClick(e) {
@@ -138,16 +140,19 @@
 </script>
 
 <!--
-  Overlay is a sibling of dialog; clicking it cancels. We render plain DOM
-  rather than bits-ui Dialog.Portal so tests can mount and observe focus
-  state without a portal escape hatch.
+  Overlay overhaul, Phase 2: the host is a native <dialog> driven by
+  showModal() (via use:topLayer), so it lives in the browser top layer with
+  a free ::backdrop, focus-trap, and inert background - no portal, no
+  position:fixed, no z-index. The action capability-guards for jsdom (the
+  show/hide calls are skipped), so the component keeps its own focus
+  management + Escape/overlay-click handlers for unit-test coverage.
 -->
-<div
+<dialog
   class="leave-overlay"
   data-testid="leave-channel-overlay"
+  use:topLayer={{ modal: true, trapInitialFocus: false, restoreFocus: false, onClose: onCancel }}
   onclick={handleOverlayClick}
   onkeydown={handleDialogKeydown}
-  role="presentation"
 >
   <div
     bind:this={dialogEl}
@@ -202,18 +207,22 @@
       >Leave channel</button>
     </div>
   </div>
-</div>
+</dialog>
 
 <style>
   .leave-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
+    margin: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: 100vw;
+    max-height: 100vh;
+    overflow: visible;
+  }
+
+  .leave-overlay::backdrop {
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     animation: overlayIn 0.2s ease both;
   }
 

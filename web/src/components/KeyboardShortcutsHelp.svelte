@@ -16,6 +16,7 @@
 -->
 <script>
   import { X, Keyboard } from 'lucide-svelte';
+  import { topLayer } from '../lib/top-layer.svelte.js';
 
   let {
     open = $bindable(false),
@@ -69,31 +70,26 @@
   }
 
   function handleBackdropClick(event) {
-    // Only fire when the click lands on the backdrop itself (not on the
-    // panel content). React-style ``event.target === event.currentTarget``.
+    // Native <dialog> backdrop click (target === currentTarget); content
+    // clicks land on inner nodes.
     if (event.target === event.currentTarget) {
-      close();
-    }
-  }
-
-  function handleKeydown(event) {
-    // Escape close is owned by App.svelte's global ``Escape`` binding (the
-    // registry's universal-close path). The local stopPropagation here
-    // would otherwise eat keydowns the parent listener needs.
-    if (event.key === 'Escape') {
-      event.stopPropagation();
       close();
     }
   }
 </script>
 
 {#if open}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
+  <!--
+    Overlay overhaul, Phase 2: native <dialog> via use:topLayer (showModal,
+    ::backdrop, inert) - no position:fixed, no z-index. Escape is owned by
+    the action (onClose -> close); the component keeps initial-focus +
+    restore management and the backdrop-click handler.
+  -->
+  <dialog
     class="kbd-help-backdrop"
     data-testid="kbd-help-backdrop"
+    use:topLayer={{ modal: true, trapInitialFocus: false, restoreFocus: false, onClose: close }}
     onclick={handleBackdropClick}
-    onkeydown={handleKeydown}
   >
     <div
       bind:this={dialogEl}
@@ -140,19 +136,22 @@
         </ul>
       {/if}
     </div>
-  </div>
+  </dialog>
 {/if}
 
 <style>
   .kbd-help-backdrop {
-    position: fixed;
-    inset: 0;
+    margin: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: 100vw;
+    max-height: 100vh;
+    overflow: visible;
+  }
+
+  .kbd-help-backdrop::backdrop {
     background: rgba(0, 0, 0, 0.55);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9000;
-    padding: 24px;
     backdrop-filter: blur(2px);
   }
 

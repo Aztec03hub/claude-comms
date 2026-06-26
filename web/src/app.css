@@ -95,16 +95,26 @@
    * / Popover API `showPopover()`) - the top layer always wins, ordered
    * by promotion time.
    *
-   * Nothing above --z-toast (60) should exist in CSS once the migration
-   * completes. Phase 1 only ADDS these tokens; the app-wide collapse of
-   * the existing z-index jumble onto this scale is Phase 2.
+   * Phase 2 collapsed the whole app onto this scale: every bare z-index
+   * is now a token. The low `--z-raised/content/elevated` rungs cover
+   * LOCAL intra-component stacking (a child above a decorative
+   * pseudo-element, layered inputs, hover accents) - they are
+   * value-preserving so no stacking order changed. Floating overlays
+   * (modals, menus, dropdowns, popovers, context menus, tooltips) carry
+   * NO z-index: they live in the browser native top layer, which always
+   * wins regardless of these tokens.
    */
   --z-base: 0;       /* in-flow content */
-  --z-sticky: 10;    /* sticky headers, date separators, scroll-to-bottom */
+  --z-raised: 1;     /* local: content above a decorative ::before/::after */
+  --z-content: 2;    /* local: layered content / inputs */
+  --z-elevated: 5;   /* local: hover actions, accents, scroll-to-bottom */
+  --z-sticky: 10;    /* sticky headers, date separators, message actions */
   --z-banner: 20;    /* connection status, remote-update banner */
   --z-sidebar: 30;   /* sidebar / docked rails */
   --z-panel: 40;     /* right-side sheets: thread/artifact/search/settings */
   --z-toast: 60;     /* notification + undo toasts (passive, NOT top layer) */
+  --z-noise: 999;    /* decorative full-screen noise; topmost PASSIVE layer
+                        (still below the native top layer, which has no index) */
 }
 
 /*
@@ -279,7 +289,7 @@ body::after {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 999;
+  z-index: var(--z-noise);
   opacity: 0.015;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;

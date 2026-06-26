@@ -25,7 +25,7 @@
     bottom: 90px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 5;
+    z-index: var(--z-elevated);
     width: 38px;
     height: 38px;
     border-radius: 50%;

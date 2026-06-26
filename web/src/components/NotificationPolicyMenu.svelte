@@ -34,6 +34,7 @@
 -->
 <script>
   import { tick, untrack } from 'svelte';
+  import Popover from './Popover.svelte';
 
   let {
     channelId,
@@ -108,6 +109,16 @@
   }}
 />
 
+<!--
+  Overlay overhaul, Phase 2: this menu now opens in the browser native top
+  layer via <Popover> (Popover API), so it escapes every ancestor stacking
+  context with NO position:fixed and NO z-index. It is viewport-centered by
+  the popover wrapper class (see :global(.notif-policy-popover)); dismissal
+  is component-controlled (dismiss="manual") via the existing Escape handler
+  and the Cancel button. The inner element keeps role="dialog" + the focus
+  effect; the action does not steal focus from it.
+-->
+<Popover dismiss="manual" class="notif-policy-popover">
 <div
   bind:this={rootEl}
   class="notif-policy-menu"
@@ -203,14 +214,23 @@
     </button>
   </div>
 </div>
+</Popover>
 
 <style>
-  .notif-policy-menu {
+  /* Viewport-centered popover wrapper (the native top-layer element). Global
+     because the class lands on <Popover>'s own <div>, outside this
+     component's scope. inset:auto cancels the popover UA centering so our
+     explicit translate centering (and the open animation) take effect. */
+  :global(.notif-policy-popover) {
     position: fixed;
+    inset: auto;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    z-index: 260;
+    margin: 0;
+  }
+
+  .notif-policy-menu {
     min-width: 320px;
     max-width: 400px;
     background: rgba(37, 37, 40, 0.96);
@@ -226,11 +246,11 @@
   @keyframes menuIn {
     from {
       opacity: 0;
-      transform: translate(-50%, calc(-50% - 4px));
+      transform: translateY(-4px);
     }
     to {
       opacity: 1;
-      transform: translate(-50%, -50%);
+      transform: translateY(0);
     }
   }
 
