@@ -21,11 +21,20 @@ import time
 import warnings
 import webbrowser
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.routing import Route, WebSocketRoute
+    from starlette.websockets import WebSocket
 
 from claude_comms import __version__
 from claude_comms.config import (
@@ -179,7 +188,7 @@ def _cors_headers(
 _LOOPBACK_BIND_ADDRESSES = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1"})
 
 
-def _web_cors_allow_list(web_cfg: dict) -> list[str]:
+def _web_cors_allow_list(web_cfg: dict[str, Any]) -> list[str]:
     """Allowed CORS origins for the web UI calling the API cross-port.
 
     Base = loopback web origins (localhost/127.0.0.1 on the web port) + the vite
@@ -198,7 +207,7 @@ def _web_cors_allow_list(web_cfg: dict) -> list[str]:
         "http://localhost:5174",
         "http://127.0.0.1:5174",
     ]
-    api_base = web_cfg.get("api_base")
+    api_base: str | None = web_cfg.get("api_base")
     if api_base:
         allow.append(api_base)
         from urllib.parse import urlsplit
@@ -206,13 +215,14 @@ def _web_cors_allow_list(web_cfg: dict) -> list[str]:
         parts = urlsplit(api_base)
         if parts.scheme and parts.hostname:
             allow.append(f"{parts.scheme}://{parts.hostname}:{web_port}")
-    for origin in web_cfg.get("extra_cors_origins", []) or []:
+    extra_origins: list[str] = web_cfg.get("extra_cors_origins", []) or []
+    for origin in extra_origins:
         if origin:
             allow.append(origin)
     return allow
 
 
-def _external_reachable_host(config: dict) -> str | None:
+def _external_reachable_host(config: dict[str, Any]) -> str | None:
     """Best-effort discovery of an explicit, browser-reachable host for the daemon.
 
     Returns a single hostname (no scheme/port) that every browser on the
@@ -231,8 +241,8 @@ def _external_reachable_host(config: dict) -> str | None:
     """
     from urllib.parse import urlsplit
 
-    web_cfg = config.get("web", {}) or {}
-    broker_cfg = config.get("broker", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
+    broker_cfg: dict[str, Any] = config.get("broker", {}) or {}
 
     def _host_of(origin: str) -> str | None:
         if not origin:
@@ -243,18 +253,20 @@ def _external_reachable_host(config: dict) -> str | None:
             return host
         return None
 
-    api_base = web_cfg.get("api_base")
+    api_base: str | None = web_cfg.get("api_base")
     if api_base:
         host = _host_of(api_base)
         if host:
             return host
 
-    for origin in web_cfg.get("csp_extra_connect_src", []) or []:
+    csp_extra: list[str] = web_cfg.get("csp_extra_connect_src", []) or []
+    for origin in csp_extra:
         host = _host_of(origin)
         if host:
             return host
 
-    for origin in web_cfg.get("extra_cors_origins", []) or []:
+    extra_cors: list[str] = web_cfg.get("extra_cors_origins", []) or []
+    for origin in extra_cors:
         host = _host_of(origin)
         if host:
             return host
@@ -266,7 +278,7 @@ def _external_reachable_host(config: dict) -> str | None:
     return None
 
 
-def _web_ui_urls(config: dict) -> tuple[str, str | None]:
+def _web_ui_urls(config: dict[str, Any]) -> tuple[str, str | None]:
     """Return ``(local_url, external_url_or_none)`` for the web UI.
 
     The local URL always uses ``localhost`` (terminals linkify it and it's
@@ -276,12 +288,12 @@ def _web_ui_urls(config: dict) -> tuple[str, str | None]:
     same source the CORS allow-list and broker-WS advertisement trust. It is
     ``None`` when only a loopback/bind-all host is configured.
     """
-    web_cfg = config.get("web", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
     web_port = web_cfg.get("port", 9921)
     local_url = f"http://localhost:{web_port}"
 
     external_url: str | None = None
-    api_base = web_cfg.get("api_base")
+    api_base: str | None = web_cfg.get("api_base")
     if api_base:
         external_url = api_base.rstrip("/")
     else:
@@ -291,7 +303,7 @@ def _web_ui_urls(config: dict) -> tuple[str, str | None]:
     return local_url, external_url
 
 
-def _advertised_broker_ws(config: dict) -> dict:
+def _advertised_broker_ws(config: dict[str, Any]) -> dict[str, Any]:
     """Compute the broker WebSocket coordinates the daemon advertises to the UI.
 
     Returns a dict with always-present ``broker_ws_port`` + ``broker_ws_path``
@@ -305,7 +317,7 @@ def _advertised_broker_ws(config: dict) -> dict:
     case the client falls back to its own page-host, which is correct for
     localhost AND for a LAN/Tailscale name the user typed into the address bar.
     """
-    broker_cfg = config.get("broker", {}) or {}
+    broker_cfg: dict[str, Any] = config.get("broker", {}) or {}
     ws_port = broker_cfg.get("ws_port", 9001)
     ws_path = "/mqtt"
     # Single-origin Phase 2: the web app now bridges the embedded broker at
@@ -317,7 +329,7 @@ def _advertised_broker_ws(config: dict) -> dict:
     # ``broker_ws_port`` / ``broker_ws_url`` fields stay for back-compat with
     # cached SPA bundles that still derive ``ws://host:9001/mqtt`` (the native
     # ``:9001`` listener is kept bound; CSP collapse is Phase 3).
-    out: dict = {
+    out: dict[str, Any] = {
         "broker_ws_same_origin": True,
         "broker_ws_port": ws_port,
         "broker_ws_path": ws_path,
@@ -350,7 +362,7 @@ def _broker_origins_for_host(host: str, ws_port: int) -> list[str]:
     return [f"ws://{host}:{ws_port}", f"wss://{host}:{ws_port}"]
 
 
-def build_csp(config: dict) -> str:
+def build_csp(config: dict[str, Any]) -> str:
     """Construct a Content-Security-Policy header value from config.
 
     Single-origin Phase 3: with the SPA, REST/MCP API, and broker WebSocket all
@@ -382,11 +394,11 @@ def build_csp(config: dict) -> str:
     lists every reachable host's REST origin explicitly. Same-origin requests
     skip CORS entirely, so ``'self'`` alone suffices in the default mode.
     """
-    web_cfg = config.get("web", {}) or {}
-    mcp_cfg = config.get("mcp", {}) or {}
-    broker_cfg = config.get("broker", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
+    mcp_cfg: dict[str, Any] = config.get("mcp", {}) or {}
+    broker_cfg: dict[str, Any] = config.get("broker", {}) or {}
 
-    api_base = web_cfg.get("api_base")
+    api_base: str | None = web_cfg.get("api_base")
     # mcp_port / ws_port only feed the LEGACY (api_base set) enumeration below;
     # the default single-origin branch needs no port knowledge at all.
     mcp_port = mcp_cfg.get("port", 9920)
@@ -427,7 +439,7 @@ def build_csp(config: dict) -> str:
     # ── DEFAULT single-origin: connect-src is just 'self' (+ escape hatch).
     # No REST/broker origin enumeration — same-origin covers everything.
 
-    extra = web_cfg.get("csp_extra_connect_src") or []
+    extra: list[Any] = web_cfg.get("csp_extra_connect_src") or []
     connect_origins.extend(extra)
 
     # Dedup while preserving first-seen order.
@@ -461,7 +473,7 @@ def build_csp(config: dict) -> str:
     )
 
 
-def security_headers(config: dict) -> dict[str, str]:
+def security_headers(config: dict[str, Any]) -> dict[str, str]:
     """Standard security headers injected on static-file responses."""
     return {
         "Content-Security-Policy": build_csp(config),
@@ -504,7 +516,7 @@ def inject_api_base_meta(html: str, api_base: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_capabilities_route(config: dict):
+def build_capabilities_route(config: dict[str, Any]) -> Route:
     """GET /api/capabilities — same-origin, no auth, cacheable 60s.
 
     Returns a Starlette ``Route`` describing the deployment's writable status
@@ -514,9 +526,9 @@ def build_capabilities_route(config: dict):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         del request  # framework-required signature param, intentionally unused
-        web_cfg = config.get("web", {}) or {}
+        web_cfg: dict[str, Any] = config.get("web", {}) or {}
         allow_remote_edits = bool(web_cfg.get("allow_remote_edits", False))
         writable = allow_remote_edits and not is_reverse_proxy_mode(config)
         payload = {
@@ -563,7 +575,10 @@ def _empty_cors_headers(*args: object) -> dict[str, str]:
     return {}
 
 
-def build_notifications_route(_config: dict | None = None, cors=None):
+def build_notifications_route(
+    _config: dict[str, Any] | None = None,
+    cors: Callable[..., dict[str, str]] | None = None,
+) -> Route:
     """GET /api/notifications/{key} — fetch-and-drain queued notification cues.
 
     Lets a REMOTE Claude Code host pull its pending cues over HTTP instead of
@@ -591,7 +606,7 @@ def build_notifications_route(_config: dict | None = None, cors=None):
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         key = request.path_params.get("key", "")
         if not _NOTIF_KEY_RE.match(key):
             return JSONResponse(
@@ -637,7 +652,9 @@ def build_notifications_route(_config: dict | None = None, cors=None):
     return Route("/api/notifications/{key}", _handler, methods=["GET"])
 
 
-def build_identity_route(config: dict, cors=None):
+def build_identity_route(
+    config: dict[str, Any], cors: Callable[..., dict[str, str]] | None = None
+) -> Route:
     """GET /api/identity — return the daemon's configured identity.
 
     Extracted from the ``_run()`` closure so it can be exercised via a
@@ -656,8 +673,8 @@ def build_identity_route(config: dict, cors=None):
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
-        identity = config.get("identity", {}) or {}
+    async def _handler(request: Request) -> JSONResponse:
+        identity: dict[str, Any] = config.get("identity", {}) or {}
         return JSONResponse(
             {
                 "key": identity.get("key", ""),
@@ -670,7 +687,9 @@ def build_identity_route(config: dict, cors=None):
     return Route("/api/identity", _handler, methods=["GET"])
 
 
-def build_identity_options_route(_config: dict, cors=None):
+def build_identity_options_route(
+    _config: dict[str, Any], cors: Callable[..., dict[str, str]] | None = None
+) -> Route:
     """OPTIONS preflight for CORS on /api/identity."""
     del _config
     from starlette.responses import JSONResponse
@@ -678,13 +697,17 @@ def build_identity_options_route(_config: dict, cors=None):
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         return JSONResponse({}, headers=cors_fn(request))
 
     return Route("/api/identity", _handler, methods=["OPTIONS"])
 
 
-def build_conversations_route(config: dict, get_conversations, cors=None):
+def build_conversations_route(
+    config: dict[str, Any],
+    get_conversations: Callable[..., list[dict[str, Any]]],
+    cors: Callable[..., dict[str, str]] | None = None,
+) -> Route:
     """GET /api/conversations — the daemon's full known conversation set,
     visibility-filtered per the configured caller.
 
@@ -697,11 +720,11 @@ def build_conversations_route(config: dict, get_conversations, cors=None):
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         # ``?all`` is accepted for back-compat but is a no-op — the endpoint
         # always returns the full known set (visibility-filtered per caller).
         _ = request.query_params.get("all", "false")
-        identity = config.get("identity", {}) or {}
+        identity: dict[str, Any] = config.get("identity", {}) or {}
         identity_key = identity.get("key", "")
         conversations = get_conversations(caller_key=identity_key)
         return JSONResponse(
@@ -712,7 +735,9 @@ def build_conversations_route(config: dict, get_conversations, cors=None):
     return Route("/api/conversations", _handler, methods=["GET"])
 
 
-def build_conversations_options_route(_config: dict, cors=None):
+def build_conversations_options_route(
+    _config: dict[str, Any], cors: Callable[..., dict[str, str]] | None = None
+) -> Route:
     """OPTIONS preflight for CORS on /api/conversations."""
     del _config
     from starlette.responses import JSONResponse
@@ -720,13 +745,16 @@ def build_conversations_options_route(_config: dict, cors=None):
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         return JSONResponse({}, headers=cors_fn(request))
 
     return Route("/api/conversations", _handler, methods=["OPTIONS"])
 
 
-def build_reactions_route(get_conversation_reactions, cors=None):
+def build_reactions_route(
+    get_conversation_reactions: Callable[[str], dict[str, dict[str, list[str]]]],
+    cors: Callable[..., dict[str, str]] | None = None,
+) -> Route:
     """GET /api/reactions/{conversation} — all reactions for a conversation.
 
     Returns ``{conversation, reactions: {message_id: {emoji: [actor_key,...]}}}``
@@ -748,7 +776,7 @@ def build_reactions_route(get_conversation_reactions, cors=None):
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         conversation = request.path_params["conversation"]
         if not validate_conv_id(conversation):
             return JSONResponse(
@@ -764,20 +792,22 @@ def build_reactions_route(get_conversation_reactions, cors=None):
     return Route("/api/reactions/{conversation}", _handler, methods=["GET"])
 
 
-def build_reactions_options_route(cors=None):
+def build_reactions_options_route(
+    cors: Callable[..., dict[str, str]] | None = None,
+) -> Route:
     """OPTIONS preflight for CORS on /api/reactions/{conversation}."""
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
     cors_fn = cors or _empty_cors_headers
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         return JSONResponse({}, headers=cors_fn(request))
 
     return Route("/api/reactions/{conversation}", _handler, methods=["OPTIONS"])
 
 
-def build_web_token_route():
+def build_web_token_route() -> Route:
     """GET /api/web-token — loopback-only. Returns the in-memory bearer token.
 
     R3-4 fix. Non-loopback requests are rejected with 403. ``X-Forwarded-For``
@@ -786,7 +816,7 @@ def build_web_token_route():
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    async def _handler(request):  # type: ignore[no-untyped-def]
+    async def _handler(request: Request) -> JSONResponse:
         if not _is_loopback(request):
             return JSONResponse({"error": "loopback only"}, status_code=403)
         token = get_web_token()
@@ -833,12 +863,12 @@ class _ASGIWebSocketReader:
     loop treats the empty/short read as a clean disconnect.
     """
 
-    def __init__(self, websocket) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, websocket: WebSocket) -> None:
         import io
 
-        self._ws = websocket
-        self._stream = io.BytesIO(b"")
-        self._eof = False
+        self._ws: WebSocket = websocket
+        self._stream: io.BytesIO = io.BytesIO(b"")
+        self._eof: bool = False
 
     async def read(self, n: int = -1) -> bytes | None:
         await self._feed_buffer(n)
@@ -875,7 +905,11 @@ class _ASGIWebSocketReader:
                 # adapter's ``suppress(ConnectionClosed)`` + break-on-None).
                 self._eof = True
                 break
-            if message is None:  # defensive; receive_bytes returns bytes
+            # Starlette types ``receive_bytes`` as returning ``bytes`` (never
+            # None), so the type checker proves this guard dead — but it is an
+            # intentional belt-and-braces check, kept as-is. The two ignores
+            # below cover only that provably-dead defensive branch.
+            if message is None:  # pyright: ignore[reportUnnecessaryComparison]
                 self._eof = True
                 break
             buffer.extend(message)
@@ -898,12 +932,12 @@ class _ASGIWebSocketWriter:
     terminated by the front proxy / uvicorn before this layer).
     """
 
-    def __init__(self, websocket) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, websocket: WebSocket) -> None:
         import io
 
-        self._ws = websocket
-        self._stream = io.BytesIO(b"")
-        self._closed = False
+        self._ws: WebSocket = websocket
+        self._stream: io.BytesIO = io.BytesIO(b"")
+        self._closed: bool = False
 
     def write(self, data: bytes) -> None:
         _ = self._stream.write(data)
@@ -946,7 +980,9 @@ class _ASGIWebSocketWriter:
             pass
 
 
-def build_mqtt_ws_route(broker_provider):  # type: ignore[no-untyped-def]
+def build_mqtt_ws_route(
+    broker_provider: Callable[[], Any] | None,
+) -> WebSocketRoute:
     """Build the ``WebSocketRoute("/mqtt", ...)`` broker bridge.
 
     ``broker_provider`` is a zero-arg callable returning the live
@@ -967,7 +1003,7 @@ def build_mqtt_ws_route(broker_provider):  # type: ignore[no-untyped-def]
     from starlette.routing import WebSocketRoute
     from starlette.websockets import WebSocketDisconnect
 
-    async def _endpoint(websocket):  # type: ignore[no-untyped-def]
+    async def _endpoint(websocket: WebSocket) -> None:
         # Echo the mqtt subprotocol (REQUIRED for MQTT-over-WS clients).
         await websocket.accept(subprotocol="mqtt")
 
@@ -993,12 +1029,12 @@ def build_mqtt_ws_route(broker_provider):  # type: ignore[no-untyped-def]
 
 
 def build_artifact_post_route(
-    config: dict,
+    config: dict[str, Any],
     *,
-    registry_provider,
-    publish_fn_provider,
-    data_dir_provider,
-):
+    registry_provider: Callable[[], Any],
+    publish_fn_provider: Callable[[], Any],
+    data_dir_provider: Callable[[], Any],
+) -> Route | None:
     """Conditional POST /api/artifacts/{conversation}/{name} (R1-1 + R2-1 + R2-2).
 
     The route is registered ONLY when
@@ -1012,11 +1048,10 @@ def build_artifact_post_route(
         data_dir. Indirection (not direct values) lets tests and the daemon
         both point at live module state initialised later in startup.
     """
-    from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    web_cfg = config.get("web", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
     allow_remote_edits = bool(web_cfg.get("allow_remote_edits", False))
     if not allow_remote_edits or is_reverse_proxy_mode(config):
         return None
@@ -1055,17 +1090,22 @@ def build_artifact_post_route(
             return JSONResponse({"error": "Invalid conversation ID"}, status_code=400)
 
         try:
-            body = await request.json()
+            raw_body = await request.json()
         except Exception:
             return JSONResponse(
                 {"error": "Request body must be valid JSON"},
                 status_code=400,
             )
-        if not isinstance(body, dict):
+        if not isinstance(raw_body, dict):
             return JSONResponse(
                 {"error": "Request body must be a JSON object"},
                 status_code=400,
             )
+        # Validated dict; its JSON values are dynamic (Any). ``cast`` is needed
+        # because ``isinstance``-narrowing an ``Any`` yields
+        # ``dict[Unknown, Unknown]`` that no annotation can refine in place
+        # (a plain ``dict[str, Any]`` annotation gets re-narrowed by assignment).
+        body = cast("dict[str, Any]", raw_body)
 
         key = body.get("key", "")
         content = body.get("content", "")
@@ -1151,17 +1191,16 @@ def build_artifact_post_route(
     )
 
 
-def build_artifact_post_options_route(config: dict):
+def build_artifact_post_options_route(config: dict[str, Any]) -> Route:
     """OPTIONS preflight for POST /api/artifacts/{conv}/{name}.
 
     Registered alongside the POST route. Uses the same CORS policy as the
     other endpoints but advertises POST + Authorization.
     """
-    from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    web_cfg = config.get("web", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
     allow_list = _web_cors_allow_list(web_cfg)
 
@@ -1198,12 +1237,12 @@ def build_artifact_post_options_route(config: dict):
 
 
 def build_invite_post_route(
-    config: dict,
+    config: dict[str, Any],
     *,
-    registry_provider,
-    publish_fn_provider,
-    conv_data_dir_provider,
-):
+    registry_provider: Callable[[], Any],
+    publish_fn_provider: Callable[[], Any],
+    conv_data_dir_provider: Callable[[], Any],
+) -> Route:
     """POST /api/invite — bridge to ``tool_comms_invite``.
 
     Body schema: ``{"conversation_id": str, "invitee_key": str, "note": str?}``.
@@ -1220,7 +1259,6 @@ def build_invite_post_route(
     ``claude-comms/conv/general/messages``). This handler is the REST
     surface only.
     """
-    from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
@@ -1228,11 +1266,11 @@ def build_invite_post_route(
     from claude_comms.message import validate_conv_id
     from claude_comms.participant import validate_key
 
-    web_cfg = config.get("web", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
     allow_list = _web_cors_allow_list(web_cfg)
 
-    identity_cfg = config.get("identity", {}) or {}
+    identity_cfg: dict[str, Any] = config.get("identity", {}) or {}
     caller_key_default = identity_cfg.get("key", "")
 
     def _cors(request: Request) -> dict[str, str]:
@@ -1246,19 +1284,22 @@ def build_invite_post_route(
 
     async def _handler(request: Request) -> JSONResponse:
         try:
-            body = await request.json()
+            raw_body = await request.json()
         except Exception:
             return JSONResponse(
                 {"error": "Request body must be valid JSON"},
                 status_code=400,
                 headers=_cors(request),
             )
-        if not isinstance(body, dict):
+        if not isinstance(raw_body, dict):
             return JSONResponse(
                 {"error": "Request body must be a JSON object"},
                 status_code=400,
                 headers=_cors(request),
             )
+        # Validated dict; cast to refine the isinstance-narrowed Unknown dict
+        # (see artifact handler note).
+        body = cast("dict[str, Any]", raw_body)
 
         conversation_id = body.get("conversation_id", "")
         invitee_key = body.get("invitee_key", "")
@@ -1390,13 +1431,12 @@ def build_invite_post_route(
     return Route("/api/invite", _handler, methods=["POST"])
 
 
-def build_invite_options_route(config: dict):
+def build_invite_options_route(config: dict[str, Any]) -> Route:
     """OPTIONS preflight for POST /api/invite — matches the POST CORS policy."""
-    from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    web_cfg = config.get("web", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
     strict = bool(web_cfg.get("strict_cors", True))
     allow_list = _web_cors_allow_list(web_cfg)
 
@@ -1576,7 +1616,7 @@ def _warn_deprecated_cross_origin_config(config: dict[str, Any]) -> None:
     later pass. Each warning fires once at daemon startup, and ONLY when the
     corresponding key is actually set / non-empty.
     """
-    web_cfg = config.get("web", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
 
     if web_cfg.get("api_base"):
         logger.warning(
@@ -1751,7 +1791,7 @@ def start(
         # ``EmbeddedBroker | None`` for the type checker (a plain local would be
         # narrowed to ``None`` and the shutdown body flagged unreachable).
         broker_holder: list[EmbeddedBroker | None] = [None]
-        broker_task: asyncio.Task | None = None
+        broker_task: asyncio.Task[None] | None = None
         loop = asyncio.get_running_loop()
 
         # Write PID immediately so `stop` can find us
@@ -1842,16 +1882,26 @@ def start(
             starlette_app = mcp.streamable_http_app()
 
             # ── REST API: message history for the web UI ──
-            from starlette.requests import Request
             from starlette.responses import JSONResponse
             from starlette.routing import Route
-            from claude_comms.mcp_server import (
-                get_channel_messages,
-                get_channel_participants,
-                get_conversation_artifacts,
-                get_conversation_reactions,
-                get_artifact,
-                get_all_conversations_full,
+            from claude_comms.mcp_server import get_conversation_reactions
+
+            # The remaining mcp_server REST accessors are annotated upstream with
+            # bare ``list[dict]`` returns (partially-unknown to basedpyright) in a
+            # module outside this file's edit scope. Bind them here with precise
+            # callable types so every downstream use is fully typed.
+            get_channel_messages: Callable[[str, int], list[dict[str, Any]]] = (
+                _mcp_mod.get_channel_messages
+            )
+            get_channel_participants: Callable[[str], list[dict[str, Any]]] = (
+                _mcp_mod.get_channel_participants
+            )
+            get_conversation_artifacts: Callable[[str], list[dict[str, Any]]] = (
+                _mcp_mod.get_conversation_artifacts
+            )
+            get_artifact: Callable[..., dict[str, Any] | None] = _mcp_mod.get_artifact
+            get_all_conversations_full: Callable[..., list[dict[str, Any]]] = (
+                _mcp_mod.get_all_conversations_full
             )
             from claude_comms.message import validate_conv_id
 
@@ -1860,7 +1910,7 @@ def start(
             # accepted as an origin (this does not weaken loopback/token
             # enforcement on the POST route — that is refused entirely when
             # ``is_reverse_proxy_mode`` is true).
-            web_cfg = config.get("web", {}) or {}
+            web_cfg: dict[str, Any] = config.get("web", {}) or {}
             cors_origins = _web_cors_allow_list(web_cfg)
             # R2-3 + R6-4: default to exact-match CORS. ``strict_cors=false``
             # re-enables the legacy (buggy) substring-match path with a
@@ -2244,7 +2294,7 @@ def start(
             )
 
             # 3) Web server
-            web_task: asyncio.Task | None = None
+            web_task: asyncio.Task[None] | None = None
             web_uvi_server: uvicorn.Server | None = None
             if web_enabled:
                 from starlette.applications import Starlette
@@ -2269,10 +2319,14 @@ def start(
                 # security headers; rewrites the HTML payload when it's
                 # index.html and ``web.api_base`` is set.
                 _security_headers_snapshot = security_headers(config)
-                _meta_api_base = (config.get("web", {}) or {}).get("api_base") or ""
+                _meta_api_base: str = web_cfg.get("api_base") or ""
 
                 class _StaticHardeningMiddleware(BaseHTTPMiddleware):
-                    async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+                    async def dispatch(
+                        self,
+                        request: Request,
+                        call_next: Callable[[Request], Awaitable[Response]],
+                    ) -> Response:
                         response = await call_next(request)
                         # Apply security headers to every response from the
                         # static file server.
@@ -2552,10 +2606,10 @@ class _UpdateStepError(RuntimeError):
     def __init__(
         self, cmd: list[str], returncode: int, stdout: str, stderr: str
     ) -> None:
-        self.cmd = cmd
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
+        self.cmd: list[str] = cmd
+        self.returncode: int = returncode
+        self.stdout: str = stdout
+        self.stderr: str = stderr
         super().__init__(
             f"Command {' '.join(cmd)!r} failed with exit code {returncode}"
         )
@@ -2616,7 +2670,7 @@ def _installed_package_version() -> str | None:
 
 
 def _select_web_package_manager(
-    web_dir: Path, which=shutil.which
+    web_dir: Path, which: Callable[[str], str | None] = shutil.which
 ) -> tuple[str, list[str], list[str]] | None:
     """Pick the JS package manager for rebuilding the web UI.
 
@@ -2928,7 +2982,7 @@ def send(
     async def _publish() -> None:
         import aiomqtt  # type: ignore[import-untyped]
 
-        client_kwargs: dict = {
+        client_kwargs: dict[str, Any] = {
             "hostname": host,
             "port": port,
         }
@@ -3045,7 +3099,7 @@ def doctor() -> None:
             )
             critical_failed = True
         else:
-            identity = config.get("identity", {}) or {}
+            identity: dict[str, Any] = config.get("identity", {}) or {}
             key = identity.get("key")
             if key:
                 _doctor_emit(
@@ -3067,9 +3121,9 @@ def doctor() -> None:
         console.print("\n[red]Critical checks failed.[/red]")
         raise typer.Exit(1)
 
-    web_cfg = config.get("web", {}) or {}
-    mcp_cfg = config.get("mcp", {}) or {}
-    broker_cfg = config.get("broker", {}) or {}
+    web_cfg: dict[str, Any] = config.get("web", {}) or {}
+    mcp_cfg: dict[str, Any] = config.get("mcp", {}) or {}
+    broker_cfg: dict[str, Any] = config.get("broker", {}) or {}
     web_host = web_cfg.get("host", "127.0.0.1")
     web_port = web_cfg.get("port", 9921)
     # The probe must use a connectable host: a bind-all 0.0.0.0 means "reachable
@@ -3095,7 +3149,9 @@ def doctor() -> None:
         except Exception:
             return 0, b""
 
-    def _http_post(url: str, payload: dict, timeout: float = 3.0) -> tuple[int, bytes]:
+    def _http_post(
+        url: str, payload: dict[str, Any], timeout: float = 3.0
+    ) -> tuple[int, bytes]:
         try:
             req = urllib.request.Request(
                 url,
@@ -3242,13 +3298,13 @@ def doctor() -> None:
     broker_probe_host = (
         "127.0.0.1" if broker_host in ("0.0.0.0", "::", "") else broker_host
     )
-    auth = broker_cfg.get("auth", {}) or {}
+    auth: dict[str, Any] = broker_cfg.get("auth", {}) or {}
 
     async def _probe_tcp() -> bool:
         try:
             import aiomqtt  # type: ignore[import-untyped]
 
-            kw: dict = {"hostname": broker_probe_host, "port": broker_port}
+            kw: dict[str, Any] = {"hostname": broker_probe_host, "port": broker_port}
             if auth.get("enabled") and auth.get("username") and auth.get("password"):
                 kw["username"] = auth["username"]
                 kw["password"] = auth["password"]
@@ -3416,7 +3472,7 @@ def status() -> None:
             try:
                 import aiomqtt  # type: ignore[import-untyped]
 
-                kw: dict = {"hostname": host, "port": port}
+                kw: dict[str, Any] = {"hostname": host, "port": port}
                 if (
                     auth.get("enabled")
                     and auth.get("username")
@@ -3651,7 +3707,7 @@ def conv_create(
     async def _publish_meta() -> None:
         import aiomqtt  # type: ignore[import-untyped]
 
-        kw: dict = {"hostname": host, "port": port}
+        kw: dict[str, Any] = {"hostname": host, "port": port}
         if auth.get("enabled") and auth.get("username") and auth.get("password"):
             kw["username"] = auth["username"]
             kw["password"] = auth["password"]
@@ -3712,7 +3768,7 @@ def conv_delete(
     async def _clear_meta() -> None:
         import aiomqtt  # type: ignore[import-untyped]
 
-        kw: dict = {"hostname": host, "port": port}
+        kw: dict[str, Any] = {"hostname": host, "port": port}
         if auth.get("enabled") and auth.get("username") and auth.get("password"):
             kw["username"] = auth["username"]
             kw["password"] = auth["password"]
