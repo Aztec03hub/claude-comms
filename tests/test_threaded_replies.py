@@ -268,6 +268,7 @@ def test_rebuild_thread_metadata_idempotent() -> None:
     )
     _rebuild_thread_metadata(store)
     root = store.find_by_id("general", "r1")
+    assert root is not None
     assert root["thread_reply_count"] == 2
     assert root["thread_last_ts"] == "T2"
     assert root["thread_last_author"] == "sage"
@@ -275,6 +276,7 @@ def test_rebuild_thread_metadata_idempotent() -> None:
     # Idempotency: second call yields same state.
     _rebuild_thread_metadata(store)
     root2 = store.find_by_id("general", "r1")
+    assert root2 is not None
     assert root2["thread_reply_count"] == 2
     assert root2["thread_last_ts"] == "T2"
     assert set(root2["thread_participants"]) == {"bbbb2222", "cccc3333"}
@@ -304,6 +306,7 @@ def test_rebuild_thread_metadata_includes_mentions() -> None:
     )
     _rebuild_thread_metadata(store)
     root = store.find_by_id("general", "r1")
+    assert root is not None
     assert root["thread_reply_count"] == 1
     assert "bbbb2222" in root["thread_participants"]
     assert "dddd4444" in root["thread_participants"]
@@ -351,6 +354,7 @@ def test_rebuild_thread_metadata_stamps_thread_root_id_on_replies() -> None:
     )
     _rebuild_thread_metadata(store)
     reply = store.find_by_id("general", "p1")
+    assert reply is not None
     assert reply["thread_root_id"] == "r1"
 
 
@@ -384,6 +388,7 @@ def test_replay_jsonl_logs_runs_thread_metadata_pass(tmp_path: Path) -> None:
     )
     store = replay_jsonl_logs(tmp_path)
     root = store.find_by_id("general", "r1")
+    assert root is not None
     assert root["thread_reply_count"] == 2
     assert root["thread_last_ts"] == "T2"
     assert set(root["thread_participants"]) == {"bbbb2222", "cccc3333"}

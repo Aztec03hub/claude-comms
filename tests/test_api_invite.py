@@ -153,7 +153,8 @@ def test_invite_happy_path(tmp_path: Path) -> None:
     }
     # tool_comms_invite published a system message on the general topic.
     assert spy.call_count == 1
-    topic, payload, _retain = spy.last_call  # type: ignore[misc]
+    assert spy.last_call is not None
+    topic, payload, _retain = spy.last_call
     assert topic == "claude-comms/conv/general/messages"
     assert b"invited" in payload
 
@@ -176,7 +177,8 @@ def test_invite_happy_path_propagates_note(tmp_path: Path) -> None:
     )
     assert r.status_code == 200, r.text
     assert spy.call_count == 1
-    _, payload, _ = spy.last_call  # type: ignore[misc]
+    assert spy.last_call is not None
+    _, payload, _ = spy.last_call
     assert b"welcome aboard" in payload
 
 

@@ -36,7 +36,8 @@ from __future__ import annotations
 import functools
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Awaitable, Callable, ParamSpec, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, ParamSpec, TypeVar
 
 
 logger = logging.getLogger(__name__)

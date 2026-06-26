@@ -513,6 +513,7 @@ class TestResurrectPublishesOnline:
 
         assert "mcp" in reg.get("abcd1234").connections  # pyright: ignore[reportOptionalMemberAccess]
         publish_fn.assert_awaited()
+        assert publish_fn.await_args is not None
         topic, payload, kwargs = (
             publish_fn.await_args.args[0],
             publish_fn.await_args.args[1],

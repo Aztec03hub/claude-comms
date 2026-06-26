@@ -21,7 +21,7 @@ import time
 import warnings
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -84,7 +84,11 @@ def _persist_web_token(token: str, path: Path = _WEB_TOKEN_PATH) -> None:
 def set_web_token(token: str | None) -> None:
     """Set the module-level bearer token. Used by daemon startup and tests."""
     global _WEB_TOKEN
-    _WEB_TOKEN = token
+    # _WEB_TOKEN is an intentionally mutable module-level token store; the
+    # uppercase name predates this code and is load-bearing across the module,
+    # so the reassignment here is by design rather than an accidental
+    # constant overwrite.
+    _WEB_TOKEN = token  # pyright: ignore[reportConstantRedefinition]
 
 
 def get_web_token() -> str | None:
@@ -2862,7 +2866,7 @@ def send(
         "--conversation",
         help="Target conversation (default from config).",
     ),
-    to: Optional[str] = typer.Option(
+    to: str | None = typer.Option(
         None,
         "-t",
         "--to",
