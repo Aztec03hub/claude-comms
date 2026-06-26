@@ -121,6 +121,16 @@ export function topLayer(node, opts = {}) {
   let rafId = 0;
   let isOpen = false;
   let disposed = false;
+  // onClose must fire EXACTLY once per open cycle. Multiple native signals
+  // can race for a single dismiss (e.g. our Esc handler calls close(), whose
+  // hidePopover() then fires a `toggle` event); this latch collapses them.
+  let notified = false;
+
+  function notifyClose() {
+    if (notified || disposed) return;
+    notified = true;
+    o.onClose?.();
+  }
 
   function rectOf() {
     if (typeof o.anchor === 'function') return o.anchor();
@@ -176,6 +186,7 @@ export function topLayer(node, opts = {}) {
 
   function open() {
     if (isOpen) return;
+    notified = false;
     if (o.modal) {
       // The <Modal> wrapper guarantees `node` is a <dialog>. Guarded so
       // jsdom (no showModal) still mounts.
@@ -207,19 +218,34 @@ export function topLayer(node, opts = {}) {
     isOpen = false;
   }
 
-  // Native dismiss surfaces: popover light-dismiss/Esc -> `toggle`
+  // Native dismiss surfaces: popover light-dismiss (outside-click) -> `toggle`
   // (newState 'closed'); dialog Esc -> `cancel`. Both notify the parent via
-  // onClose. We do NOT call onClose from destroy() (the parent already
+  // notifyClose. We do NOT notify from destroy() (the parent already
   // initiated that close), so listeners are removed first in destroy().
   const onToggle = (e) => {
-    if (disposed) return;
-    if (e.newState === 'closed') o.onClose?.();
+    if (e.newState === 'closed') notifyClose();
   };
-  const onCancel = () => {
-    if (!disposed) o.onClose?.();
+  const onCancel = () => notifyClose();
+
+  // Esc dismiss is handled HERE, not left to the browser's native popover
+  // light-dismiss, because the app registers a window-level `keydown`
+  // listener that calls `event.preventDefault()` on Escape (keyboard.svelte.js
+  // "universal close") - that preventDefault SUPPRESSES the browser's built-in
+  // popover/dialog Esc close. This listener sits on the overlay node (which is
+  // a DOM ancestor of the overlay content, so it bubbles here first) and
+  // stops propagation so Escape closes ONLY the topmost overlay - not the
+  // panel behind it - then drives our own close + notify.
+  const onKeydown = (e) => {
+    if (e.key !== 'Escape') return;
+    if (!o.modal && o.dismiss !== 'auto') return; // manual popover: owner controls
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+    notifyClose();
   };
   node.addEventListener('toggle', onToggle);
   node.addEventListener('cancel', onCancel);
+  node.addEventListener('keydown', onKeydown);
 
   if (o.open !== false) open();
 
@@ -238,6 +264,7 @@ export function topLayer(node, opts = {}) {
       disposed = true;
       node.removeEventListener('toggle', onToggle);
       node.removeEventListener('cancel', onCancel);
+      node.removeEventListener('keydown', onKeydown);
       close();
       if (o.restoreFocus) prevFocus?.focus?.();
     },
