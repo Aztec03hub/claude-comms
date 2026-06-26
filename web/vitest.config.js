@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: [],
+    setupFiles: ['tests/setup.js'],
     // Exclude Playwright e2e specs so Vitest only picks up unit tests.
     include: ['tests/**/*.spec.js'],
     exclude: ['node_modules', 'dist', 'e2e', 'test-results'],
